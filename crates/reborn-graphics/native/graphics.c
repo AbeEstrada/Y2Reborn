@@ -97,6 +97,7 @@ static _Thread_local char last_error[256];
 const char *rb_graphics_error(void) { return last_error; }
 typedef struct {
   int fd, width, height, modeset;
+  bool sleeping;
   uint32_t crtc, connector;
   drmModeCrtc *old;
   drmModeModeInfo mode;
@@ -110,6 +111,29 @@ typedef struct {
   struct flip flip;
   char info[1024];
 } RbGraphics;
+/* Normal DRM master operation: stop the CRTC/bridge before idle; retain GBM,
+ * EGL and the current buffer so wake restores exactly the owned mode. No
+ * platform register access or display-domain power sequencing in userspace. */
+int rb_graphics_sleep(RbGraphics *g, int off) {
+  if (!g) return -EINVAL;
+  if (g->sleeping == !!off) return 0;
+  if (g->flip.waiting && wait_flip(g->fd, &g->flip)) return -ETIMEDOUT;
+  if (g->modeset || off) {
+    int ret;
+    if (off) {
+      ret = drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
+    } else {
+      if (!g->current) return -EINVAL;
+      struct fb *f = framebuffer(g->fd, g->current);
+      if (!f) return -EIO;
+      ret = drmModeSetCrtc(g->fd, g->crtc, f->id, 0, 0,
+                           &g->connector, 1, &g->mode);
+    }
+    if (ret) return -errno;
+  }
+  g->sleeping = !!off;
+  return 0;
+}
 void rb_graphics_close(RbGraphics *g) {
   if (!g)
     return;
@@ -121,6 +145,9 @@ void rb_graphics_close(RbGraphics *g) {
                 : drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
     if (r)
       drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
+  } else if (g->modeset && !g->sleeping) {
+    /* Stop owned scanout before releasing its current GBM buffer. */
+    drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
   }
   if (g->context != EGL_NO_CONTEXT) {
     if (g->program)
@@ -452,6 +479,7 @@ int rb_graphics_test(RbGraphics *g) {
   return ok ? 0 : -EIO;
 }
 int rb_graphics_present(RbGraphics *g) {
+  if (g->sleeping) return -EHOSTDOWN;
   if (glGetError() != GL_NO_ERROR || !eglSwapBuffers(g->display, g->window))
     return -EIO;
   struct gbm_bo *bo = gbm_surface_lock_front_buffer(g->surface);

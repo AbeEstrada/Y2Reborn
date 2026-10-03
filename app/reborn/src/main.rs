@@ -1056,6 +1056,12 @@ impl Runtime {
                 }
                 if !self.headless {
                     power::blank(true)?;
+                    if let Some(graphics) = self.graphics.as_mut() {
+                        if let Err(error) = graphics.sleep(true) {
+                            let _ = power::blank(false);
+                            return Err(error);
+                        }
+                    }
                 }
                 self.model.apply(Event::ScreenSleep);
                 self.log.emit(
@@ -1072,7 +1078,15 @@ impl Runtime {
                     return Ok(());
                 }
                 if !self.headless {
-                    power::blank(false)?;
+                    if let Some(graphics) = self.graphics.as_mut() {
+                        graphics.sleep(false)?;
+                    }
+                    if let Err(error) = power::blank(false) {
+                        if let Some(graphics) = self.graphics.as_mut() {
+                            let _ = graphics.sleep(true);
+                        }
+                        return Err(error);
+                    }
                 }
                 self.model.apply(Event::ScreenWake);
                 self.last_activity = Instant::now();

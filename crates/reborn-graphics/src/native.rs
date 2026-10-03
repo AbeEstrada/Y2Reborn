@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
+    fn rb_graphics_sleep(p: *mut c_void, off: c_int) -> c_int;
 }
 pub struct Renderer {
     raw: NonNull<c_void>,
@@ -43,6 +44,17 @@ pub struct Renderer {
     log: Observer,
 }
 impl Renderer {
+    pub fn sleep(&mut self, off: bool) -> Result<(), String> {
+        // SAFETY: the UI thread owns DRM master and retained scanout buffers;
+        // the C call synchronously disables/restores the CRTC before returning.
+        let ret = unsafe { rb_graphics_sleep(self.raw.as_ptr(), i32::from(off)) };
+        if ret < 0 {
+            return Err(format!("graphics screen sleep {ret}"));
+        }
+        self.log
+            .gauge("graphics_scanout_active", if off { 0.0 } else { 1.0 });
+        Ok(())
+    }
     pub fn open(
         ui_font: &[u8],
         display_font: &[u8],
