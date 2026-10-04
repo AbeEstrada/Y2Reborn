@@ -88,6 +88,7 @@ def main():
     parser.add_argument('--benchmark', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--profile-audio', action='store_true', help='Untimed one-second syscall sample after playback counters')
+    parser.add_argument('--qualify-audio-controls', action='store_true', help='Untimed seek/reopen/pause/resume/stop and active shutdown on the last private start')
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     original = call('status')
@@ -254,6 +255,32 @@ def main():
             wait_ready(process)
             events = call('logs', last=30, subsystem='startup', level=None, since_ms=None)
             receipt['startup_runs'].append({'exec_started_s':started,'events':events,'trace':trace_name})
+            if n == 3 and args.qualify_audio_controls:
+                checks = []
+                for action, expected in [('resume','playing'),('seek','playing'),('wired','playing'),
+                                         ('pause','paused'),('resume','playing'),('stop','stopped'),('resume','playing')]:
+                    command = {'action':action}
+                    if action == 'seek': command['value'] = 1000
+                    began = time.monotonic()
+                    call('playback', action=command)
+                    deadline = began+3
+                    while call('status')['playback']['state'] != expected:
+                        if time.monotonic() > deadline: raise RuntimeError('audio control did not reach '+expected)
+                        time.sleep(.02)
+                    # Also wait for the audio worker, rather than only the UI.
+                    if expected == 'playing':
+                        while call('audio')['audio'].get('state') != 'playing':
+                            if time.monotonic() > deadline: raise RuntimeError('native audio did not resume')
+                            time.sleep(.02)
+                    checks.append({'action':action,'expected_state':expected,'elapsed_ms':(time.monotonic()-began)*1000})
+                    time.sleep(.1)
+                receipt['audio_controls'] = checks
+                receipt['audio_control_metrics'] = call('metrics')
+                receipt['audio_before_active_shutdown'] = call('audio')
+                began = time.monotonic()
+                process.terminate(); process.wait(timeout=10); process = None
+                receipt['active_shutdown_ms'] = (time.monotonic()-began)*1000
+                continue
             process.terminate(); process.wait(timeout=10); process = None
     finally:
         if process:

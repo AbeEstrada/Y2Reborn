@@ -24,6 +24,8 @@ def summarize(directory):
     injected = receipt['injected']
     groups = collections.defaultdict(lambda:collections.defaultdict(list))
     actions = collections.Counter()
+    wheel_invariants = {'injected_steps':sum(v['label']=='wheel_1000' for v in injected),
+                        'routed_steps':0, 'selection_mismatches':0, 'non_single_steps':0}
     frames = [s for s in samples if s['kind']=='frame']
     for i, event in enumerate(samples):
         if event['kind'] != 'input': continue
@@ -49,6 +51,12 @@ def summarize(directory):
         elif action != expected: continue
         state = next((v for v in samples[i+1:] if v['kind']=='state'), None)
         if state is None or state['data']['action'] != data['action']: continue
+        if label == 'wheel_1000':
+            direction = 1 if 'wheel_clockwise' in action else -1
+            steps = next(iter(action.values()))
+            wheel_invariants['routed_steps'] += 1
+            wheel_invariants['non_single_steps'] += steps != 1
+            wheel_invariants['selection_mismatches'] += state['data']['focus']-data['focus'] != direction*steps
         groups[label]['input_to_handler_complete_ms'].append((state['monotonic_s']-at)*1000)
         groups[label]['handler_ms'].append(state['data']['action_ms'])
         groups[label]['evdev_to_dispatch_ms'].append((event['monotonic_s']-at)*1000)
@@ -80,12 +88,16 @@ def summarize(directory):
             'startup_statistics':{k:stats(v) for k,v in startup.items()},
             'latency':{k:{n:len(v) if n=='coalesced' else stats(v) for n,v in d.items()} for k,d in groups.items()},
             'actions':dict(actions),'idle':idle,'frames':library['frames'],'ui':library['ui'],
+            'wheel_invariants':wheel_invariants,
             'database':library['database']['measurements'],'artwork':library.get('artwork',[]),
             'allocations':library.get('allocations'),
             'large_collections':library.get('large_collections'),
             'metrics':receipt['metrics'],'playing_status':receipt.get('playing_status'),
             'audio_during_playback':receipt.get('audio_during_playback'),
             'metrics_before_audio_profile':receipt.get('metrics_before_audio_profile'),
+            'audio_controls':receipt.get('audio_controls'),
+            'audio_control_metrics':receipt.get('audio_control_metrics'),
+            'active_shutdown_ms':receipt.get('active_shutdown_ms'),
             'background_observation':stats([s['data']['elapsed_ms'] for s in samples if s['kind']=='background_observation']),
             'live_frames':{k:stats([s['data'][k] for s in frames]) for k in ('layout_ms','frame_ms')},
             'screens':dict(collections.Counter(v['data']['screen'] for v in frames))}
