@@ -18,6 +18,13 @@ pub struct PinnedTrack {
     logical_path: PathBuf,
     revision: fs::Metadata,
 }
+/// Immutable source/file evidence for caches; owns no descriptor or mount pin.
+#[derive(Clone)]
+pub struct TrackClaim {
+    source: Source,
+    logical_path: PathBuf,
+    revision: fs::Metadata,
+}
 pub struct PinnedSidecar {
     _file: fs::File,
     path: PathBuf,
@@ -39,32 +46,51 @@ impl PinnedTrack {
     pub fn mount_id(&self) -> Option<u64> {
         self.source.mount_id
     }
+    pub fn claim(&self) -> TrackClaim {
+        TrackClaim {
+            source: self.source.clone(),
+            logical_path: self.logical_path.clone(),
+            revision: self.revision.clone(),
+        }
+    }
     pub fn matches_revision(&self, size: u64, mtime: i64) -> bool {
-        self._file.metadata().is_ok_and(|m| {
-            m.len() == size
-                && m.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .is_some_and(|t| t.as_nanos().min(i64::MAX as u128) as i64 == mtime)
+        self.claim().matches_revision(size, mtime)
+    }
+    pub fn is_current(&self) -> bool {
+        self.claim().is_current()
+    }
+    pub fn open_sidecar(&self, name: &str) -> Result<PinnedSidecar, String> {
+        let mut components = Path::new(name).components();
+        let Some(std::path::Component::Normal(name)) = components.next() else {
+            return Err("invalid sidecar name".into());
+        };
+        if components.next().is_some() {
+            return Err("invalid sidecar name".into());
+        }
+        let file = source_file(&self._parent, name)?;
+        Ok(PinnedSidecar {
+            path: PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd())),
+            _file: file,
         })
+    }
+}
+impl TrackClaim {
+    pub fn matches_revision(&self, size: u64, mtime: i64) -> bool {
+        self.revision.len() == size
+            && self
+                .revision
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .is_some_and(|t| t.as_nanos().min(i64::MAX as u128) as i64 == mtime)
     }
     /// Fast freshness check for a previously admitted source. No blkid probe,
     /// helper, mutation or cached claim can qualify a replacement mount/card.
     pub fn is_current(&self) -> bool {
-        let (Ok(pinned), Ok(live)) = (
-            self._file.metadata(),
-            fs::symlink_metadata(&self.logical_path),
-        ) else {
+        let Ok(live) = fs::symlink_metadata(&self.logical_path) else {
             return false;
         };
-        if pinned.len() != self.revision.len()
-            || pinned.mtime() != self.revision.mtime()
-            || pinned.mtime_nsec() != self.revision.mtime_nsec()
-            || pinned.ctime() != self.revision.ctime()
-            || pinned.ctime_nsec() != self.revision.ctime_nsec()
-        {
-            return false;
-        }
+        let pinned = &self.revision;
         if !live.is_file()
             || pinned.dev() != live.dev()
             || pinned.ino() != live.ino()
@@ -116,20 +142,6 @@ impl PinnedTrack {
             }
         }
         true
-    }
-    pub fn open_sidecar(&self, name: &str) -> Result<PinnedSidecar, String> {
-        let mut components = Path::new(name).components();
-        let Some(std::path::Component::Normal(name)) = components.next() else {
-            return Err("invalid sidecar name".into());
-        };
-        if components.next().is_some() {
-            return Err("invalid sidecar name".into());
-        }
-        let file = source_file(&self._parent, name)?;
-        Ok(PinnedSidecar {
-            path: PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd())),
-            _file: file,
-        })
     }
 }
 fn source_file(parent: &fs::File, name: &std::ffi::OsStr) -> Result<fs::File, String> {
@@ -538,8 +550,15 @@ impl TransferRefresh {
         }
         self.copying = copying;
     }
-    pub fn ready(&self, scanner_busy: bool, media_ready: bool, now: Instant) -> bool {
+    pub fn ready(
+        &self,
+        scanner_busy: bool,
+        media_ready: bool,
+        sleep_prepared: bool,
+        now: Instant,
+    ) -> bool {
         self.seen != self.requested
+            && !sleep_prepared
             && !self.copying
             && !scanner_busy
             && media_ready
@@ -559,16 +578,26 @@ mod tests {
         let mut refresh = TransferRefresh::default();
         let now = Instant::now();
         refresh.observe(5, true, now);
-        assert!(!refresh.ready(false, true, now + Duration::from_secs(10)));
+        assert!(!refresh.ready(false, true, false, now + Duration::from_secs(10)));
         refresh.observe(6, false, now + Duration::from_secs(10));
-        assert!(!refresh.ready(false, true, now + Duration::from_secs(11)));
-        assert!(!refresh.ready(true, true, now + Duration::from_secs(12)));
-        assert!(!refresh.ready(false, false, now + Duration::from_secs(12)));
-        assert!(refresh.ready(false, true, now + Duration::from_secs(12)));
+        assert!(!refresh.ready(false, true, false, now + Duration::from_secs(11)));
+        assert!(!refresh.ready(true, true, false, now + Duration::from_secs(12)));
+        assert!(!refresh.ready(false, false, false, now + Duration::from_secs(12)));
+        assert!(refresh.ready(false, true, false, now + Duration::from_secs(12)));
         refresh.requested();
-        assert!(!refresh.ready(false, true, now + Duration::from_secs(15)));
+        assert!(!refresh.ready(false, true, false, now + Duration::from_secs(15)));
         refresh.observe(7, false, now + Duration::from_secs(16));
-        assert!(refresh.ready(false, true, now + Duration::from_secs(18)));
+        assert!(refresh.ready(false, true, false, now + Duration::from_secs(18)));
+    }
+    #[test]
+    fn durable_usb_refresh_waits_for_restore_without_losing_its_generation() {
+        let mut refresh = TransferRefresh::default();
+        let now = Instant::now();
+        refresh.observe(23, false, now);
+        assert!(!refresh.ready(false, true, true, now + Duration::from_secs(3)));
+        assert!(refresh.ready(false, true, false, now + Duration::from_secs(3)));
+        refresh.requested();
+        assert!(!refresh.ready(false, true, false, now + Duration::from_secs(4)));
     }
     #[test]
     fn mount_names_not_block_numbers() {

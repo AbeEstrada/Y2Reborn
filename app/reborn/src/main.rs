@@ -55,7 +55,6 @@ struct Runtime {
     power: Value,
     kernel_events: Arc<Mutex<Vec<String>>>,
     background: background::Gate,
-    sleep_prepared: bool,
     art: bool,
     dirty: DirtyState,
     root: PathBuf,
@@ -70,6 +69,22 @@ struct Runtime {
     sink_release_started: bool,
     transition_generation: Option<u64>,
     active_transport_generation: Option<u64>,
+    input_resume: bool,
+    sleep_prepared: bool,
+}
+
+fn sleep_control_allowed(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Status
+            | Command::Audio
+            | Command::Health
+            | Command::Metrics
+            | Command::Snapshot
+            | Command::Events { .. }
+            | Command::Logs { .. }
+            | Command::SleepRestore
+    )
 }
 
 /// Read-only periodic I/O runs on the existing watchdog. The UI remains the
@@ -412,6 +427,96 @@ impl Runtime {
         );
         self.dirty.mark_render();
     }
+    fn prepare_sleep(&mut self) -> Result<Value, String> {
+        if self.sleep_prepared {
+            return Err("sleep_operation_in_progress".into());
+        }
+        if matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            return Err("playback_active".into());
+        }
+        if self.playback.has_pending_start()
+            || self.pending_reconfiguration.is_some()
+            || self.model.library.scanning
+            || self.query.is_some()
+        {
+            return Err("sleep_preparation_busy".into());
+        }
+        if !self.background.quiesce() {
+            self.background.update(
+                &self.model.settings.music_directory,
+                &self.model.sources,
+                false,
+            );
+            return Err("sleep_preparation_busy".into());
+        }
+        let scan_ready = self.scanner.quiesce();
+        let art_ready = self
+            .collection_art
+            .as_mut()
+            .is_none_or(|worker| worker.quiesce());
+        if !scan_ready || !art_ready {
+            self.scanner.resume();
+            self.background.update(
+                &self.model.settings.music_directory,
+                &self.model.sources,
+                false,
+            );
+            return Err("sleep_preparation_busy".into());
+        }
+        let prepared = (|| {
+            self.model.platform.snapshot.sleep.phase =
+                reborn_core::platform::SleepPhase::SleepPreparing;
+            self.model
+                .checkpoint(&self.root.join("state/session.json"))
+                .map_err(|e| e.to_string())?;
+            self.playback.stop_and_wait(self.model.generation)?;
+            self.effect_inner(Effect::ScreenSleep)?;
+            Ok::<(), String>(())
+        })();
+        if let Err(error) = prepared {
+            self.scanner.resume();
+            self.background.update(
+                &self.model.settings.music_directory,
+                &self.model.sources,
+                false,
+            );
+            return Err(error);
+        }
+        self.sleep_prepared = true;
+        Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
+    }
+
+    fn restore_sleep(&mut self) -> Result<Value, String> {
+        // A failed display restore must also discard the wake gesture before
+        // input is accepted again, so its release cannot request another sleep.
+        self.input_resume = true;
+        self.sleep_prepared = false;
+        self.scanner.resume();
+        self.background.update(
+            &self.model.settings.music_directory,
+            &self.model.sources,
+            false,
+        );
+        self.model.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Waking;
+        self.effect_inner(Effect::ScreenWake)?;
+        if let Some(graphics) = self.graphics.as_mut() {
+            graphics.render(
+                &self
+                    .ui
+                    .draw(&self.model, &self.model.library.tracks, self.art),
+            )?;
+        } else if !self.headless {
+            return Err("display_restoration_failed".into());
+        }
+        self.playback_hints.clear();
+        self.last_activity = Instant::now();
+        self.dirty.mark_render();
+        Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
+    }
+
     fn checkpoint(&mut self) {
         self.dirty.mark_persistence();
         if self.playback.has_pending_start() || self.pending_reconfiguration.is_some() {
@@ -712,6 +817,9 @@ impl Runtime {
         self.with_model_action(|runtime| runtime.effect_inner(e))
     }
     fn effect_inner(&mut self, e: Effect) -> Result<(), String> {
+        if self.sleep_prepared && !matches!(e, Effect::None) {
+            return Err("sleep_operation_in_progress".into());
+        }
         self.dirty.mark_render();
         match e {
             Effect::None => {}
@@ -726,7 +834,7 @@ impl Runtime {
                         PlaybackState::Playing | PlaybackState::Buffering
                     ) {
                         self.model.platform.snapshot.sleep = SleepState {
-                            phase: SleepPhase::Refused,
+                            phase: SleepPhase::SleepRefused,
                             problem: Some(SleepProblem::PlaybackActive),
                             ..Default::default()
                         };
@@ -742,7 +850,7 @@ impl Runtime {
                 self.model.platform.busy = Some(task);
                 if task == reborn_core::PlatformTask::SleepRequest {
                     self.model.platform.snapshot.sleep.phase =
-                        reborn_core::platform::SleepPhase::Requested;
+                        reborn_core::platform::SleepPhase::SleepRequested;
                 }
                 if task != reborn_core::PlatformTask::Refresh {
                     self.model.platform.failure = None;
@@ -1382,7 +1490,7 @@ impl Runtime {
                         p.failure = None;
                     }
                     Err(error) => {
-                        p.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+                        p.snapshot.sleep.phase = reborn_core::platform::SleepPhase::SleepRefused;
                         p.snapshot.sleep.problem = Some(reborn_core::platform::SleepProblem::Other);
                         p.failure = Some(error.clone());
                         self.ui.flash(error);
@@ -2120,7 +2228,6 @@ fn run() -> Result<(), String> {
         power: power::status(),
         kernel_events: Arc::new(Mutex::new(Vec::new())),
         background,
-        sleep_prepared: false,
         art: false,
         dirty: DirtyState {
             render: true,
@@ -2138,6 +2245,8 @@ fn run() -> Result<(), String> {
         sink_release_started: false,
         transition_generation: None,
         active_transport_generation: None,
+        input_resume: false,
+        sleep_prepared: false,
     };
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
@@ -2239,6 +2348,7 @@ fn run() -> Result<(), String> {
         if let Some(worker) = &mut rt.collection_art {
             let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
                 && !rt.model.screen_off
+                && !rt.sleep_prepared
             {
                 rt.ui
                     .collection_track(&rt.model, &rt.model.library.tracks)
@@ -2339,6 +2449,12 @@ fn run() -> Result<(), String> {
         if rt.model.screen_off {
             rt.interaction_hints.clear();
         }
+        if std::mem::take(&mut rt.input_resume) {
+            if let Some(input) = &mut inputs {
+                input.resumed();
+            }
+            action_router.reset();
+        }
         if let Some(input) = &mut inputs {
             if input_screen_off != rt.model.screen_off {
                 input.reset_wheel();
@@ -2348,7 +2464,7 @@ fn run() -> Result<(), String> {
             for event in input.poll() {
                 // The first frame is revealed under the boot cover; input only
                 // counts once the finished UI is fully visible.
-                if rt.boot_fade > 0 {
+                if rt.boot_fade > 0 || rt.sleep_prepared {
                     continue;
                 }
                 if !rt.model.screen_off {
@@ -2682,8 +2798,14 @@ fn run() -> Result<(), String> {
             let req = env.request;
             let id = req.id;
             let reply = env.reply;
+            if rt.sleep_prepared && !sleep_control_allowed(&req.command) {
+                let _ = reply.try_send(Response::error(id, "sleep_operation_in_progress"));
+                continue;
+            }
             let result: Result<Value, String> = match req.command.clone() {
                 Command::Status => Ok(rt.status()),
+                Command::SleepPrepare => rt.prepare_sleep(),
+                Command::SleepRestore => rt.restore_sleep(),
                 Command::Audio => Ok(
                     json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components_if_loaded()}),
                 ),
@@ -2947,8 +3069,12 @@ fn run() -> Result<(), String> {
                 let (generation, copying) = storage::usb_changes();
                 let now = Instant::now();
                 usb_refresh.observe(generation, copying, now);
-                if usb_refresh.ready(rt.model.library.scanning, !rt.model.sources.is_empty(), now)
-                    && rt.scanner.scan(rt.model.sources.clone()).is_ok()
+                if usb_refresh.ready(
+                    rt.model.library.scanning,
+                    !rt.model.sources.is_empty(),
+                    rt.sleep_prepared,
+                    now,
+                ) && rt.scanner.scan(rt.model.sources.clone()).is_ok()
                 {
                     usb_refresh.requested();
                     rt.model.apply(Event::LibraryScanStarted);
@@ -3875,5 +4001,26 @@ mod codec_reconnect_tests {
             guard.next(&s, PlaybackState::Stopped, false).as_deref(),
             Some("AA")
         );
+    }
+    #[test]
+    fn prepared_sleep_allows_restore_and_observation_and_refuses_mutations() {
+        for command in [
+            Command::Status,
+            Command::Audio,
+            Command::Health,
+            Command::Metrics,
+            Command::Snapshot,
+            Command::SleepRestore,
+        ] {
+            assert!(sleep_control_allowed(&command));
+        }
+        for command in [
+            Command::SleepPrepare,
+            Command::Scan,
+            Command::Diagnose,
+            Command::Tests,
+        ] {
+            assert!(!sleep_control_allowed(&command));
+        }
     }
 }

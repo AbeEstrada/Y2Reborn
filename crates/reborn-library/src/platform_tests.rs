@@ -446,3 +446,43 @@ fn resident_catalog_counts_offline_rows_towards_unchanged_capacity() {
     drop(c);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn prepared_scanner_rejects_usb_and_rebuild_work_until_restore() {
+    let root = scratch("prepared-scan");
+    let log = Observer::new(&root.join("logs")).unwrap();
+    let db = Database::spawn(root.join("library.db"), log.clone()).unwrap();
+    let scanner = Scanner::spawn(db.clone(), log).unwrap();
+    assert!(scanner.quiesce());
+    assert_eq!(
+        scanner.scan(vec![]).unwrap_err(),
+        "sleep_operation_in_progress"
+    );
+    assert_eq!(
+        scanner.rebuild(vec![]).unwrap_err(),
+        "sleep_operation_in_progress"
+    );
+    assert!(matches!(
+        scanner.results.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    scanner.resume();
+    scanner.scan(vec![]).unwrap();
+    assert!(
+        scanner
+            .results
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .complete
+    );
+    let until = Instant::now() + Duration::from_secs(1);
+    while !scanner.quiesce() {
+        assert!(Instant::now() < until);
+        thread::yield_now();
+    }
+    assert!(scanner.scan(vec![]).is_err());
+    scanner.stop();
+    db.shutdown(Duration::from_secs(5)).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

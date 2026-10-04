@@ -758,6 +758,20 @@ impl Ui {
         match action {
             Action::ScreenSleep => return Effect::ScreenSleep,
             Action::ScreenWake => return Effect::ScreenWake,
+            Action::PowerShort => {
+                if matches!(
+                    m.playback,
+                    reborn_core::PlaybackState::Playing | reborn_core::PlaybackState::Buffering
+                ) {
+                    return Effect::ScreenSleep;
+                }
+                Self::go(m, Screen::Sleep, "");
+                return Effect::Platform(reborn_core::PlatformTask::SleepRequest);
+            }
+            Action::PowerHold => {
+                Self::open_modal(m, Modal::Confirm(ConfirmAction::PowerOff));
+                return Effect::None;
+            }
             Action::PlayPause => return Effect::TogglePlayback,
             Action::ShowNowPlaying
                 if !m.screen_off

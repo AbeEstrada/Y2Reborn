@@ -1,11 +1,12 @@
 //! Bounded collection art loader. Native decoding never runs on the UI thread.
 use reborn_core::Track;
 use reborn_media::{external_artwork, folder_artwork_candidates, Cancel, MediaFile};
-use reborn_platform::storage::{pin_track, PinnedTrack};
+use reborn_platform::storage::{pin_track, PinnedTrack, TrackClaim};
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{sync_channel, Receiver, SyncSender},
         Arc,
     },
@@ -53,28 +54,39 @@ pub struct Reply {
     pub pixels: Option<Vec<u8>>,
     pub decode_ms: f64,
     pub cache_hit: bool,
-    pub source: Option<Arc<PinnedTrack>>,
+    pub source: Option<TrackClaim>,
 }
 pub struct Worker {
     requests: SyncSender<(Key, Cancel)>,
     pub replies: Receiver<Reply>,
     pub selected: Option<Key>,
     cancel: Option<Cancel>,
+    active: Arc<AtomicBool>,
 }
 struct Cached {
     key: Key,
     pixels: Vec<u8>,
-    source: Arc<PinnedTrack>,
+    source: TrackClaim,
 }
 impl Worker {
     pub fn spawn() -> Result<Self, std::io::Error> {
         let (requests, rx) = sync_channel::<(Key, Cancel)>(1);
         let (tx, replies) = sync_channel(1);
+        let active = Arc::new(AtomicBool::new(false));
+        let activity = active.clone();
         std::thread::Builder::new()
             .name("collection-art".into())
             .spawn(move || {
                 let mut cache: VecDeque<Cached> = VecDeque::new();
                 while let Ok((key, cancel)) = rx.recv() {
+                    struct Activity<'a>(&'a AtomicBool);
+                    impl Drop for Activity<'_> {
+                        fn drop(&mut self) {
+                            self.0.store(false, Ordering::Release);
+                        }
+                    }
+                    activity.store(true, Ordering::Release);
+                    let _activity = Activity(&activity);
                     let started = std::time::Instant::now();
                     if cancel.is_cancelled() {
                         continue;
@@ -98,6 +110,7 @@ impl Worker {
                             .map(|source| load(&key, source, &cancel))
                             .unwrap_or((None, false));
                         let pixels = pixels.filter(|v| v.len() == 160 * 160 * 4);
+                        let source = source.map(|pin| pin.claim());
                         if !cancel.is_cancelled()
                             && cacheable
                             && source.as_ref().is_some_and(|s| s.is_current())
@@ -122,6 +135,7 @@ impl Worker {
                         pixels = None;
                     }
                     // One bounded route result; stale/cancelled work cannot publish artwork.
+                    drop(_activity);
                     if tx
                         .send(Reply {
                             key,
@@ -141,7 +155,12 @@ impl Worker {
             replies,
             selected: None,
             cancel: None,
+            active,
         })
+    }
+    pub fn quiesce(&mut self) -> bool {
+        self.select(None);
+        !self.active.load(Ordering::Acquire)
     }
     pub fn select(&mut self, key: Option<Key>) -> bool {
         if key == self.selected {
@@ -259,6 +278,13 @@ mod tests {
             assert!(r.pixels.is_some());
             assert!(!r.cache_hit);
         }
+        let open_pins = std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|e| std::fs::read_link(e.path()).ok())
+            .filter(|path| path.starts_with(&root))
+            .count();
+        assert_eq!(open_pins, 0, "art cache must not keep SD eject pins");
         std::fs::write(root.join("bad.flac"), b"bad media").unwrap();
         let bad = Key::new(&fixture_track(&root, "bad.flac", 5, true), None, &root);
         assert!(reply(&mut worker, bad).pixels.is_none());

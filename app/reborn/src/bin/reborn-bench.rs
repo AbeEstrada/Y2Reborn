@@ -369,6 +369,9 @@ fn run() -> Result<(), String> {
                 "static_repeat_suppressed":true,
                 "decode_ms":reply.decode_ms,"rgba_bytes":reply.pixels.as_ref().map(Vec::len),"upload_ms":upload_ms}));
         }
+        if !worker.quiesce() {
+            return Err("artwork benchmark did not quiesce".into());
+        }
     }
     let scan = if args.iter().any(|a| a == "--scan") {
         Some(scanner(&root, tracks)?)

@@ -13,7 +13,7 @@ use std::{
     os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
         Arc,
     },
@@ -963,6 +963,8 @@ pub struct Scanner {
     tx: SyncSender<(Vec<Source>, bool)>,
     pub results: Receiver<Result<ScanMetrics, String>>,
     cancel: Arc<AtomicBool>,
+    prepared: Arc<AtomicBool>,
+    pending: Arc<AtomicUsize>,
 }
 impl Scanner {
     pub fn spawn(db: Database, log: Observer) -> Result<Self, String> {
@@ -970,6 +972,9 @@ impl Scanner {
         let (rt, rr) = sync_channel(2);
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
+        let prepared = Arc::new(AtomicBool::new(false));
+        let pending = Arc::new(AtomicUsize::new(0));
+        let running = pending.clone();
         thread::Builder::new()
             .name("scanner".into())
             .spawn(move || {
@@ -989,6 +994,7 @@ impl Scanner {
                         reuse,
                     );
                     let _ = rt.try_send(result);
+                    running.fetch_sub(1, Ordering::AcqRel);
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -996,20 +1002,39 @@ impl Scanner {
             tx,
             results: rr,
             cancel,
+            prepared,
+            pending,
         })
     }
     /// Incremental scan: unchanged files keep their indexed metadata.
     pub fn scan(&self, s: Vec<Source>) -> Result<(), String> {
-        self.tx
-            .try_send((s, true))
-            .map_err(|_| "scanner busy".into())
+        self.submit(s, true)
     }
-    /// Rebuild: every supported file is read again; no indexed row is reused.
-    /// Existing rows stay browsable until their replacement is published.
+    /// Rebuild every supported file, preserving rows until replacement publication.
     pub fn rebuild(&self, s: Vec<Source>) -> Result<(), String> {
-        self.tx
-            .try_send((s, false))
-            .map_err(|_| "scanner busy".into())
+        self.submit(s, false)
+    }
+    fn submit(&self, sources: Vec<Source>, reuse: bool) -> Result<(), String> {
+        if self.prepared.load(Ordering::Acquire) {
+            return Err("sleep_operation_in_progress".into());
+        }
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        if self.prepared.load(Ordering::Acquire) {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
+            return Err("sleep_operation_in_progress".into());
+        }
+        if self.tx.try_send((sources, reuse)).is_err() {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
+            return Err("scanner busy".into());
+        }
+        Ok(())
+    }
+    pub fn quiesce(&self) -> bool {
+        self.prepared.store(true, Ordering::Release);
+        self.pending.load(Ordering::Acquire) == 0
+    }
+    pub fn resume(&self) {
+        self.prepared.store(false, Ordering::Release);
     }
     pub fn stop(&self) {
         self.cancel.store(true, Ordering::Relaxed)

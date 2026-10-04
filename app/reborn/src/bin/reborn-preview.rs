@@ -434,12 +434,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.navigation.modal_focus = 14;
     });
     case!("56-sleep-refused", at(Screen::Sleep, ""), |_, m| {
-        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::SleepRefused;
         m.platform.snapshot.sleep.problem =
             Some(reborn_core::platform::SleepProblem::QualificationPending);
     });
     case!("57-sleep-playback", at(Screen::Sleep, ""), |_, m| {
-        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::SleepRefused;
         m.platform.snapshot.sleep.problem =
             Some(reborn_core::platform::SleepProblem::PlaybackActive);
     });

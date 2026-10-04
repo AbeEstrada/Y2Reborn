@@ -229,6 +229,19 @@ pub struct InputManager {
 }
 
 impl InputManager {
+    /// Saved press ages and wheel cadence do not cross whole-system sleep.
+    /// Unmatched releases remain Cancel events; evdev overflow recovery is kept.
+    pub fn resumed(&mut self) {
+        // Closing evdev drops all old edges, even beyond the bounded read
+        // budget. Rediscover current identities and retry if resume hides one.
+        self.files.clear();
+        self.pressed.clear();
+        self.wheel.clear();
+        self.dropping.clear();
+        self.rescan(devices());
+        self.next_rescan = Instant::now();
+    }
+
     pub fn open() -> Self {
         Self {
             files: devices()
@@ -836,15 +849,15 @@ impl ActionRouter {
                 _ => vec![],
             },
             NormalizedInput::LongPress(control) => {
-                // A dark Power gesture belongs to wake even if another wake
-                // source already lit the display. Never turn it into a menu.
-                if control == PhysicalControl::Power && self.power_started_on == Some(false) {
-                    return vec![];
-                }
                 self.long_pressed.insert(control);
                 if self.dark_navigation.contains(&control)
                     || (!screen_on
-                        && !matches!(control, PhysicalControl::Previous | PhysicalControl::Next))
+                        && !matches!(
+                            control,
+                            PhysicalControl::Previous
+                                | PhysicalControl::Next
+                                | PhysicalControl::Power
+                        ))
                 {
                     return vec![];
                 }
@@ -854,7 +867,8 @@ impl ActionRouter {
                     PhysicalControl::Previous => vec![Action::SeekBackward],
                     PhysicalControl::Next => vec![Action::SeekForward],
                     PhysicalControl::PlayPause => vec![Action::ShowNowPlaying],
-                    PhysicalControl::Power => vec![Action::PowerMenu],
+                    PhysicalControl::Power if screen_on => vec![Action::PowerHold],
+                    PhysicalControl::Power => vec![Action::ScreenWake, Action::PowerHold],
                     _ => vec![],
                 }
             }
@@ -889,7 +903,7 @@ impl ActionRouter {
                         if power_started_on.is_some_and(|started| started != screen_on) {
                             vec![]
                         } else if screen_on {
-                            vec![Action::ScreenSleep]
+                            vec![Action::PowerShort]
                         } else {
                             vec![Action::ScreenWake]
                         }
@@ -1751,7 +1765,7 @@ mod tests {
                 &event(NormalizedInput::Release(PhysicalControl::Power)),
                 true
             ),
-            vec![Action::ScreenSleep]
+            vec![Action::PowerShort]
         );
     }
 
@@ -1820,7 +1834,7 @@ mod tests {
                 Action::PlayPause,
                 Action::ShowNowPlaying,
             ),
-            (PMIC_KEYS, 116, Action::ScreenSleep, Action::PowerMenu),
+            (PMIC_KEYS, 116, Action::PowerShort, Action::PowerHold),
         ] {
             for held in [false, true] {
                 let mut input = InputManager::empty();
@@ -1917,5 +1931,71 @@ mod tests {
                 assert!(input.tick(now + Duration::from_secs(10)).is_empty());
             }
         }
+    }
+
+    #[test]
+    fn power_hold_works_with_the_screen_off_and_its_release_is_consumed() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: PMIC_KEYS.into(),
+            input,
+            kernel_mono_us: None,
+        };
+        assert_eq!(
+            router.route(
+                &event(NormalizedInput::LongPress(PhysicalControl::Power)),
+                false
+            ),
+            vec![Action::ScreenWake, Action::PowerHold]
+        );
+        assert!(router
+            .route(
+                &event(NormalizedInput::Release(PhysicalControl::Power)),
+                true
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn resume_drops_old_press_age_and_wheel_cadence() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
+        input.resumed();
+        assert!(input.tick(now + Duration::from_secs(60)).is_empty());
+        assert_eq!(
+            input.feed(PMIC_KEYS, EV_KEY, 116, 0, now)[0].input,
+            NormalizedInput::Cancel(PhysicalControl::Power)
+        );
+    }
+
+    #[test]
+    fn resume_does_not_carry_an_overflow_drop_into_new_input() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
+        input.feed(PMIC_KEYS, EV_SYN, SYN_DROPPED, 0, now);
+        input.resumed();
+        assert_eq!(
+            input.feed(PMIC_KEYS, EV_KEY, 116, 1, now)[0].input,
+            NormalizedInput::Press(PhysicalControl::Power)
+        );
+    }
+    #[test]
+    fn resume_closes_a_pre_sleep_queue_larger_than_the_read_budget() {
+        use std::io::Write;
+        let (mut input, mut writer) = queued_input(PMIC_KEYS);
+        let mut bytes = vec![];
+        for _ in 0..800 {
+            bytes.extend(record_bytes(EV_SYN, SYN_REPORT, 0, 1_000_000));
+        }
+        bytes.extend(record_bytes(EV_KEY, 116, 1, 1_000_000));
+        bytes.extend(record_bytes(EV_KEY, 116, 0, 1_100_000));
+        writer.write_all(&bytes).unwrap();
+        input.resumed();
+        assert!(input.poll().is_empty());
+        assert!(input
+            .tick(Instant::now() + Duration::from_secs(60))
+            .is_empty());
     }
 }
