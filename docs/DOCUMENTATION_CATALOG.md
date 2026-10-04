@@ -9,7 +9,7 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](../../Y2Linux/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **58**. Explicit historical/contract scope notices:
+Indexed pages: **63**. Explicit historical/contract scope notices:
 **40**.
 
 ## Entry
@@ -109,3 +109,13 @@ Indexed pages: **58**. Explicit historical/contract scope notices:
 | [Reborn audio fixtures](../assets/fixtures/README.md) | Source asset reference |
 | [Reborn UI v1 font](../assets/fonts/README.md) | Source asset reference |
 | [Reborn Simple icon atlas](../assets/icons/README.md) | Source asset reference |
+
+## Platform 1.0 integration source and evidence
+
+| Page | Scope |
+| --- | --- |
+| [Platform 1.0 input ownership](architecture/platform-v1-input.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
+| [Reborn Platform 1.0: FFmpeg, metadata and library ingest](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
+| [Platform 1.0 paired integration](validation/REBORN-PLATFORM-V1-INTEGRATION.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
+| [Reborn Platform 1.0 library/database performance pass](validation/REBORN-PLATFORM-V1-LIBRARY-DB.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
+| [Reborn Platform 1.0 performance and responsiveness](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |

@@ -1,5 +1,11 @@
 # Current Reborn state on the Y2
 
+## Platform 1.0 integration — 2026-10-04
+
+Selected source from all eleven finished handoffs is composed on `codex/platform-v1-integration`. All 324 workspace tests, formatting and strict Clippy pass. Fresh production ARM and one integrated physical campaign remain pending. Canonical source/card claims, bounded TEMP scanner, source-aware zero-FD cover cache, one observation worker, sleep quiescence and durable USB refresh share one runtime. Native wired hardware remains S16/44.1/48; wider AFE admission and Bluetooth peer/codecs require evidence.
+
+Installed owner receipts identify Baseline02 Linux `8584ccd8` / Reborn `b71b4688`, boot `88b85fa3` after the failed RTC wake; temporary optimized binary tests are separate from installed stock and the new integrated image. The [master](../../Y2Linux/docs/release/Y2-PLATFORM-V1-MASTER.md), [source ledger](validation/REBORN-PLATFORM-V1-INTEGRATION.md) and [physical plan](../../Y2Linux/docs/release/Y2-PLATFORM-V1-PHYSICAL-QUALIFICATION.md) are current; the dated observations below retain their original scope.
+
 Updated 2026-10-01. **Software candidate (not flashed, not physically
 qualified):** Reborn **Product UI v2** (0.2.0) on the CPU Final Fix03
 platform. Smaller product surface, typed platform boundary, one-detent wheel,
