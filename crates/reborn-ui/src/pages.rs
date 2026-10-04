@@ -619,28 +619,31 @@ fn equalizer(m: &AppModel) -> Page {
 fn sleep(m: &AppModel) -> Page {
     let s = m.platform.snapshot.sleep;
     let (title, body) = match s.phase {
-        SleepPhase::Requested => ("Preparing to Sleep…", "The player is checking that it can sleep safely."),
+        SleepPhase::SleepRequested | SleepPhase::SleepPreparing => ("Preparing to Sleep…", "The player is checking that it can sleep safely."),
         SleepPhase::Sleeping => ("Sleeping", "Press Power to wake the player."),
-        SleepPhase::Restoring => ("Waking…", "Restoring your player."),
+        SleepPhase::Waking => ("Waking…", "Restoring your player."),
         SleepPhase::Restored => ("Ready", match s.wake {
             WakeReason::Power => "The Power button woke your player.",
             WakeReason::Rtc => "The wake timer woke your player.",
             WakeReason::Unknown => "Your player is awake again.",
         }),
         SleepPhase::RestoreFailed => ("Wake Needs Attention", "Save your place and restart the player. Diagnostics has the last sleep result."),
-        SleepPhase::Refused => ("Player Stayed Awake", match s.problem {
+        SleepPhase::SleepRefused => ("Player Stayed Awake", match s.problem {
             Some(SleepProblem::ChargerActive) => "Disconnect the charger before putting the player to sleep.",
             Some(SleepProblem::PlaybackActive) => "Pause music before putting the player to sleep. Power can turn off the screen while music plays.",
             Some(SleepProblem::QualificationPending) => "Sleep needs a system update before it can be used. You can turn off the screen or power off.",
             Some(SleepProblem::Busy) => "The player is finishing another task. Try again when it finishes.",
             _ => "The player could not sleep safely. Try again or power off.",
         }),
-        SleepPhase::Awake => ("Sleep", "Pause music, then sleep. A short press of Power only turns off the screen."),
+        SleepPhase::Awake => ("Sleep", "Power sleeps the player when music is paused. During playback, it turns off the screen."),
     };
     let busy = m.platform.busy.is_some()
         || matches!(
             s.phase,
-            SleepPhase::Requested | SleepPhase::Sleeping | SleepPhase::Restoring
+            SleepPhase::SleepRequested
+                | SleepPhase::SleepPreparing
+                | SleepPhase::Sleeping
+                | SleepPhase::Waking
         );
     Page::hero(title, body).with_rows(vec![
         disabled(Item::new("Sleep Now", "task:sleep"), !busy),

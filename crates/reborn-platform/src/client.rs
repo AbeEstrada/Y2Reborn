@@ -517,10 +517,11 @@ pub fn sleep(value: &Value) -> SleepState {
         return SleepState::default();
     }
     let mut phase = match value["state"].as_str() {
-        Some("requested") => SleepPhase::Requested,
-        Some("refused") => SleepPhase::Refused,
+        Some("requested") => SleepPhase::SleepRequested,
+        Some("preparing") => SleepPhase::SleepPreparing,
+        Some("refused") => SleepPhase::SleepRefused,
         Some("sleeping") => SleepPhase::Sleeping,
-        Some("restoring") => SleepPhase::Restoring,
+        Some("restoring" | "waking") => SleepPhase::Waking,
         Some("restored") => SleepPhase::Restored,
         Some("restore_failed") => SleepPhase::RestoreFailed,
         _ => SleepPhase::Awake,
@@ -1181,9 +1182,24 @@ mod feature_completion_tests {
     use super::*;
 
     #[test]
+    fn sleep_preparation_and_waking_are_typed_and_legacy_restoring_is_supported() {
+        for (state, expected) in [
+            ("requested", SleepPhase::SleepRequested),
+            ("preparing", SleepPhase::SleepPreparing),
+            ("waking", SleepPhase::Waking),
+            ("restoring", SleepPhase::Waking),
+        ] {
+            assert_eq!(
+                sleep(&json!({"schema":"org.y2linux.sleep/v1","state":state})).phase,
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn sleep_requires_complete_same_boot_restoration_and_names_refusal() {
         let mut v = json!({"schema":"org.y2linux.sleep/v1", "state":"refused", "reason":"physical_qualification_required"});
-        assert_eq!(sleep(&v).phase, SleepPhase::Refused);
+        assert_eq!(sleep(&v).phase, SleepPhase::SleepRefused);
         assert_eq!(sleep(&v).problem, Some(SleepProblem::QualificationPending));
         v["state"] = json!("restored");
         assert_eq!(sleep(&v).phase, SleepPhase::RestoreFailed);

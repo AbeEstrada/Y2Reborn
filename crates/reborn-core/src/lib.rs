@@ -284,6 +284,8 @@ pub enum Action {
     ScreenWake,
     ScreenSleep,
     PowerMenu,
+    PowerShort,
+    PowerHold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -176,6 +176,16 @@ pub struct InputManager {
 }
 
 impl InputManager {
+    /// Saved press ages and wheel cadence do not cross whole-system sleep.
+    /// Unmatched releases remain Cancel events; evdev overflow recovery is kept.
+    pub fn resumed(&mut self) {
+        // Drop queued wake edges. A still-held wake key's later release is
+        // unmatched and becomes Cancel, so it cannot request another sleep.
+        let _ = self.poll();
+        self.pressed.clear();
+        self.wheel.clear();
+    }
+
     pub fn open() -> Self {
         Self {
             files: devices()
@@ -587,7 +597,7 @@ impl ActionRouter {
                 _ => vec![],
             },
             NormalizedInput::LongPress(control) => {
-                if !screen_on {
+                if !screen_on && control != PhysicalControl::Power {
                     return vec![];
                 }
                 self.long_pressed.insert(control);
@@ -597,7 +607,8 @@ impl ActionRouter {
                     PhysicalControl::Previous => vec![Action::SeekBackward],
                     PhysicalControl::Next => vec![Action::SeekForward],
                     PhysicalControl::PlayPause => vec![Action::ShowNowPlaying],
-                    PhysicalControl::Power => vec![Action::PowerMenu],
+                    PhysicalControl::Power if screen_on => vec![Action::PowerHold],
+                    PhysicalControl::Power => vec![Action::ScreenWake, Action::PowerHold],
                     _ => vec![],
                 }
             }
@@ -617,7 +628,7 @@ impl ActionRouter {
                     PhysicalControl::PlayPause => vec![Action::PlayPause],
                     PhysicalControl::Power => {
                         if screen_on {
-                            vec![Action::ScreenSleep]
+                            vec![Action::PowerShort]
                         } else {
                             vec![Action::ScreenWake]
                         }
@@ -1121,5 +1132,39 @@ mod tests {
             Some(replacement)
         );
         assert_eq!(rediscover_device(&original, &[reused_node]), None);
+    }
+    #[test]
+    fn power_hold_works_with_the_screen_off_and_its_release_is_consumed() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: PMIC_KEYS.into(),
+            input,
+        };
+        assert_eq!(
+            router.route(
+                &event(NormalizedInput::LongPress(PhysicalControl::Power)),
+                false
+            ),
+            vec![Action::ScreenWake, Action::PowerHold]
+        );
+        assert!(router
+            .route(
+                &event(NormalizedInput::Release(PhysicalControl::Power)),
+                true
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn resume_drops_old_press_age_and_wheel_cadence() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
+        input.resumed();
+        assert!(input.tick(now + Duration::from_secs(60)).is_empty());
+        assert_eq!(
+            input.feed(PMIC_KEYS, EV_KEY, 116, 0, now)[0].input,
+            NormalizedInput::Cancel(PhysicalControl::Power)
+        );
     }
 }

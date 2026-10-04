@@ -27,6 +27,8 @@ pub struct Request {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Status,
+    SleepPrepare,
+    SleepRestore,
     Audio,
     Health,
     Metrics,

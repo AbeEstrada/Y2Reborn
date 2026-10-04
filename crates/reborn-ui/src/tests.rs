@@ -971,7 +971,7 @@ fn sleep_and_screen_off_are_distinct_product_actions_with_recoverable_refusal() 
         ui.model_action(&mut m, Action::Select),
         Effect::Platform(PlatformTask::SleepRequest)
     );
-    m.platform.snapshot.sleep.phase = SleepPhase::Refused;
+    m.platform.snapshot.sleep.phase = SleepPhase::SleepRefused;
     for (problem, wording) in [
         (SleepProblem::QualificationPending, "system update"),
         (SleepProblem::ChargerActive, "Disconnect the charger"),
@@ -1077,5 +1077,34 @@ fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
     assert_eq!(
         select_key(&mut ui, &mut m, "sbc_quality"),
         Effect::Platform(PlatformTask::SbcQuality(SbcQuality::Xq))
+    );
+}
+
+#[test]
+fn power_short_sleeps_when_paused_and_blanks_during_playback() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    m.playback = reborn_core::PlaybackState::Paused;
+    assert_eq!(
+        ui.model_action(&mut m, Action::PowerShort),
+        Effect::Platform(PlatformTask::SleepRequest)
+    );
+    assert_eq!(m.screen, Screen::Sleep);
+    for state in [
+        reborn_core::PlaybackState::Playing,
+        reborn_core::PlaybackState::Buffering,
+    ] {
+        m.playback = state;
+        assert_eq!(
+            ui.model_action(&mut m, Action::PowerShort),
+            Effect::ScreenSleep
+        );
+    }
+    ui.model_action(&mut m, Action::PowerHold);
+    assert_eq!(
+        m.navigation.modal,
+        Some(reborn_core::Modal::Confirm(
+            reborn_core::ConfirmAction::PowerOff
+        ))
     );
 }

@@ -21,10 +21,11 @@ pub struct BatteryState {
 pub enum SleepPhase {
     #[default]
     Awake,
-    Requested,
-    Refused,
+    SleepRequested,
+    SleepPreparing,
+    SleepRefused,
     Sleeping,
-    Restoring,
+    Waking,
     Restored,
     RestoreFailed,
 }
