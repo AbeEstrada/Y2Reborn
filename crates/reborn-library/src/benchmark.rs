@@ -15,6 +15,7 @@ pub fn summary(name: &str, times: &[u64]) -> Value {
     json!({"operation":name,"samples":times.len(),"p50_ms":percentile(50),
         "p95_ms":percentile(95),"p99_ms":percentile(99),"max_ms":percentile(100),
         "elapsed_ms":times.iter().sum::<u64>() as f64/1_000_000.,
+        "samples_ms":times.iter().map(|v|*v as f64/1_000_000.).collect::<Vec<_>>(),
         "operations_per_second":if times.iter().sum::<u64>()>0 {Some(times.len() as f64*1e9/times.iter().sum::<u64>() as f64)} else {None}})
 }
 
@@ -191,7 +192,7 @@ pub fn database(root: &Path, count: usize) -> Result<(Value, Vec<Track>), String
             &c,
             &Filter {
                 limit: count,
-                ..Filter::default()
+                ..Default::default()
             },
         )
     })?;
@@ -271,6 +272,380 @@ pub fn scanner(root: &Path, count: usize) -> Result<Value, String> {
     Ok(
         json!({"workload":"synthetic short WAV metadata, not audio decode throughput","results":results}),
     )
+}
+
+/// Platform pass: deterministic tags and actual scanner reuse, without timing
+/// FFmpeg initial parsing (owned by the metadata pass). Each process is isolated.
+pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), String> {
+    if ![100, 1_000, 10_000, 25_000, 50_000].contains(&count) {
+        return Err("platform dataset must be 100, 1000, 10000, 25000 or 50000".into());
+    }
+    let media = root.join("media");
+    fs::create_dir(&media).map_err(|e| e.to_string())?;
+    let mut fixtures = Vec::with_capacity(count);
+    let bytes = wave();
+    for i in 0..count {
+        let album = i / 24;
+        let directory = media.join(format!("release{album:05}"));
+        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let path = directory.join(format!("{i:05}.wav"));
+        fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+        let missing = album % 29 == 0;
+        let compilation = album % 7 == 0;
+        fixtures.push(Track {
+            source_id: "fixture".into(),
+            path,
+            filename: format!("{i:05}.wav"),
+            size: meta.len(),
+            mtime: meta
+                .modified()
+                .map_err(|e| e.to_string())?
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos() as i64,
+            title: format!("Song {:03}", i % 89),
+            artist: if missing {
+                String::new()
+            } else {
+                format!(
+                    "Artist {:03}",
+                    if compilation { i % 127 } else { album % 127 }
+                )
+            },
+            album: if missing {
+                String::new()
+            } else {
+                format!("Release {:04}", album % 509)
+            },
+            album_artist: if missing {
+                String::new()
+            } else if compilation {
+                "Various Artists".into()
+            } else {
+                format!("Artist {:03}", album % 127)
+            },
+            track: (i % 12 + 1) as u32,
+            disc: (i % 24 / 12 + 1) as u32,
+            duration_ms: 180_000 + (i % 180) as u64 * 1000,
+            codec: "pcm_s16le".into(),
+            sample_rate: 44_100,
+            channels: 2,
+            bitrate: 1_411_200,
+            online: true,
+            ..Track::default()
+        });
+    }
+    let mut measurements = vec![];
+    let mut times = vec![];
+    let path = root.join("library.sqlite");
+    let mut c = open(&path).map_err(open_message)?;
+    for repetition in 0..5 {
+        let trial = root.join(format!("population{repetition}.sqlite"));
+        let mut populate = open(&trial).map_err(open_message)?;
+        populate
+            .execute(
+                "INSERT INTO sources VALUES('fixture',?1,1)",
+                [media.to_string_lossy()],
+            )
+            .map_err(err)?;
+        timed(&mut times, || {
+            for chunk in fixtures.chunks(64) {
+                batch(&mut populate, chunk.to_vec(), 1)?;
+            }
+            Ok(())
+        })?;
+        drop(populate);
+        fs::remove_file(trial).map_err(|e| e.to_string())?;
+    }
+    measurements.push(summary("initial_population", &times));
+    c.execute(
+        "INSERT INTO sources VALUES('fixture',?1,1)",
+        [media.to_string_lossy()],
+    )
+    .map_err(err)?;
+    for chunk in fixtures.chunks(64) {
+        batch(&mut c, chunk.to_vec(), 1)?;
+    }
+    let album = fixtures
+        .iter()
+        .find(|t| !t.album.is_empty())
+        .unwrap()
+        .album
+        .clone();
+    let artist = fixtures
+        .iter()
+        .find(|t| !t.artist.is_empty())
+        .unwrap()
+        .artist
+        .clone();
+    for (name, f) in [
+        (
+            "songs_page",
+            Filter {
+                limit: 64,
+                ..Default::default()
+            },
+        ),
+        (
+            "deep_page",
+            Filter {
+                limit: 64,
+                offset: count.saturating_sub(64),
+                ..Default::default()
+            },
+        ),
+        (
+            "album_contents",
+            Filter {
+                album: Some(album.clone()),
+                limit: 512,
+                ..Default::default()
+            },
+        ),
+        (
+            "artist_contents",
+            Filter {
+                artist: Some(artist.clone()),
+                limit: 512,
+                ..Default::default()
+            },
+        ),
+    ] {
+        times.clear();
+        for _ in 0..41 {
+            timed(&mut times, || list(&c, &f))?;
+        }
+        measurements.push(summary(name, &times));
+    }
+    let queries = [
+        ("songs_page",format!("{SELECT} WHERE t.deleted=0 ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT 64")),
+        ("artists_sql", "SELECT DISTINCT artist FROM tracks WHERE deleted=0 ORDER BY artist".into()),
+        ("albums_sql", "SELECT DISTINCT album_artist,album FROM tracks WHERE deleted=0 ORDER BY album_artist,album".into()),
+        ("album_contents",format!("{SELECT} WHERE t.deleted=0 AND t.album='Release 0001' ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT 512")),
+        ("artist_contents",format!("{SELECT} WHERE t.deleted=0 AND t.artist='Artist 001' ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT 512")),
+        ("search_diagnostic", "SELECT id FROM tracks WHERE deleted=0 AND (title LIKE '%Song 088%' OR artist LIKE '%088%' OR album LIKE '%088%') LIMIT 64".into()),
+        ("now_playing_id", "SELECT title FROM tracks WHERE id=7".into()),
+        ("prune_legacy", "UPDATE tracks SET deleted=1 WHERE source_id='fixture' AND seen<>2".into()),
+    ];
+    let mut plans = serde_json::Map::new();
+    for (name, sql) in queries {
+        let mut q = c
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .map_err(err)?;
+        let plan = q
+            .query_map([], |r| r.get::<_, String>(3))
+            .map_err(err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(err)?;
+        plans.insert(name.into(), json!(plan));
+        if name.ends_with("sql") || name == "search_diagnostic" || name == "now_playing_id" {
+            times.clear();
+            for _ in 0..41 {
+                timed(&mut times, || {
+                    let mut q = c.prepare_cached(&sql).map_err(err)?;
+                    let mut rows = q.query([]).map_err(err)?;
+                    while rows.next().map_err(err)?.is_some() {}
+                    Ok(())
+                })?;
+            }
+            measurements.push(summary(name, &times));
+        }
+    }
+    let mutation_paths: Vec<_> = fixtures.iter().take(21).map(|t| t.path.clone()).collect();
+    drop(fixtures);
+    times.clear();
+    let mut library = vec![];
+    for _ in 0..7 {
+        library = timed(&mut times, || {
+            let mut result = vec![];
+            for offset in (0..count).step_by(512) {
+                result.extend(list(
+                    &c,
+                    &Filter {
+                        offset,
+                        limit: 512,
+                        ..Default::default()
+                    },
+                )?);
+            }
+            Ok(result)
+        })?;
+    }
+    measurements.push(summary("startup_library_pages", &times));
+    let settings = json!({"journal_mode":c.pragma_query_value(None,"journal_mode",|r|r.get::<_,String>(0)).map_err(err)?,
+        "synchronous":c.pragma_query_value(None,"synchronous",|r|r.get::<_,i64>(0)).map_err(err)?,
+        "cache_size":c.pragma_query_value(None,"cache_size",|r|r.get::<_,i64>(0)).map_err(err)?,
+        "page_size":c.pragma_query_value(None,"page_size",|r|r.get::<_,i64>(0)).map_err(err)?,
+        "wal_autocheckpoint":c.pragma_query_value(None,"wal_autocheckpoint",|r|r.get::<_,i64>(0)).map_err(err)?});
+    drop(c);
+    times.clear();
+    for _ in 0..21 {
+        timed(&mut times, || open(&path).map_err(open_message))?;
+    }
+    measurements.push(summary("database_open", &times));
+    let log = Observer::new(&root.join("logs")).map_err(|e| e.to_string())?;
+    let db = Database::spawn(path.clone(), log.clone())?;
+    let source = Source {
+        id: "fixture".into(),
+        kind: MediaSource::Internal,
+        root: media.clone(),
+        online: true,
+        mount: "scratch".into(),
+        mount_id: None,
+    };
+    db.sources(vec![source.clone()])?;
+    let scanner = Scanner::spawn(db.clone(), log)?;
+    let mut scans = vec![];
+    let before_writes = proc_write_bytes();
+    times.clear();
+    for _ in 0..7 {
+        let result = timed(&mut times, || {
+            scanner.scan(vec![source.clone()])?;
+            scanner
+                .results
+                .recv_timeout(Duration::from_secs(180))
+                .map_err(|e| e.to_string())?
+        })?;
+        if !result.complete || result.reused != count as u64 {
+            return Err("unchanged scan mismatch".into());
+        }
+        scans.push(json!(result));
+    }
+    measurements.push(summary("unchanged_scan", &times));
+    let unchanged_write_bytes = proc_write_bytes().saturating_sub(before_writes);
+    // Real mutation: new, changed, removed and rename. Scan has no destructive
+    // replacement, and unrelated rows retain their stable IDs.
+    times.clear();
+    let mut mutations = vec![];
+    for sample in 0..7 {
+        fs::write(media.join(format!("new{sample}.wav")), &bytes).map_err(|e| e.to_string())?;
+        fs::remove_file(&mutation_paths[sample * 3]).map_err(|e| e.to_string())?;
+        fs::rename(
+            &mutation_paths[sample * 3 + 1],
+            media.join(format!("moved{sample}.wav")),
+        )
+        .map_err(|e| e.to_string())?;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&mutation_paths[sample * 3 + 2])
+            .map_err(|e| e.to_string())?
+            .write_all(&[0; 8])
+            .map_err(|e| e.to_string())?;
+        let mutation = timed(&mut times, || {
+            scanner.scan(vec![source.clone()])?;
+            scanner
+                .results
+                .recv_timeout(Duration::from_secs(180))
+                .map_err(|e| e.to_string())?
+        })?;
+        if !mutation.complete || mutation.rescanned != 3 || mutation.reused != (count - 3) as u64 {
+            return Err("mutation count mismatch".into());
+        }
+        mutations.push(mutation);
+    }
+    measurements.push(summary("incremental_mutation_scan", &times));
+    let check = db
+        .test()?
+        .recv_timeout(Duration::from_secs(15))
+        .map_err(|e| e.to_string())??;
+    if check["tracks"] != count {
+        return Err("mutation row count mismatch".into());
+    }
+    let replacement = Source {
+        id: "replacement".into(),
+        ..source.clone()
+    };
+    times.clear();
+    for _ in 0..21 {
+        timed(&mut times, || {
+            db.sources(vec![replacement.clone()])?;
+            let rows = db
+                .list(Filter {
+                    limit: 1,
+                    ..Default::default()
+                })?
+                .recv_timeout(Duration::from_secs(15))
+                .map_err(|e| e.to_string())??;
+            if rows.first().is_none_or(|t| t.online) {
+                return Err("old media still online".into());
+            }
+            Ok(())
+        })?;
+        db.sources(vec![source.clone()])?;
+        db.list(Filter {
+            limit: 1,
+            ..Default::default()
+        })?
+        .recv_timeout(Duration::from_secs(15))
+        .map_err(|e| e.to_string())??;
+    }
+    measurements.push(summary("replace_media_identity", &times));
+    scanner.stop();
+    db.shutdown(Duration::from_secs(15))?;
+    c = open(&path).map_err(open_message)?;
+    c.execute_batch("CREATE TEMP TABLE IF NOT EXISTS scan_seen(id INTEGER PRIMARY KEY);")
+        .map_err(err)?;
+    times.clear();
+    for _ in 0..7 {
+        c.execute_batch("UPDATE tracks SET deleted=0,seen=CASE WHEN id%100=0 THEN 1 ELSE 2 END; DELETE FROM scan_seen; INSERT INTO scan_seen SELECT id FROM tracks WHERE id%100<>0;").map_err(err)?;
+        timed(&mut times, || benchmark_prune(&mut c, &source))?;
+    }
+    measurements.push(summary("delete_missing_rows", &times));
+    c.execute("UPDATE tracks SET deleted=0 WHERE deleted<>0", [])
+        .map_err(err)?;
+    // Restore tombstones from the seven controlled remove/move iterations.
+    for file in mutation_paths
+        .iter()
+        .take(21)
+        .enumerate()
+        .filter(|(i, _)| i % 3 != 2)
+        .map(|(_, p)| p)
+    {
+        c.execute(
+            "UPDATE tracks SET deleted=1 WHERE source_id='fixture' AND path=?1",
+            [file.to_string_lossy()],
+        )
+        .map_err(err)?;
+    }
+    let count_rows: i64 = c
+        .query_row("SELECT count(*) FROM tracks WHERE deleted=0", [], |r| {
+            r.get(0)
+        })
+        .map_err(err)?;
+    let retained_rows: i64 = c
+        .query_row("SELECT count(*) FROM tracks", [], |r| r.get(0))
+        .map_err(err)?;
+    Ok((
+        json!({"tracks":count,"fixture":"deterministic v1; 24-track multi-disc, 127 artists, compilations, missing tags, duplicate titles/releases",
+        "sqlite_version":rusqlite::version(),"measurements":measurements,"query_plans":plans,"settings":settings,
+        "db_bytes":fs::metadata(&path).map_err(|e|e.to_string())?.len(),"unchanged_scan_write_bytes":unchanged_write_bytes,
+        "write_metric":"/proc/self/io write_bytes; includes log/temp I/O, excludes already dirty pages and physical flash amplification",
+        "unchanged_scans":scans,"mutations":mutations,"live_rows":count_rows,"retained_rows":retained_rows,
+        "memory":fs::read_to_string("/proc/self/status").ok()}),
+        library,
+    ))
+}
+
+fn proc_write_bytes() -> u64 {
+    fs::read_to_string("/proc/self/io")
+        .ok()
+        .and_then(|s| {
+            s.lines().find_map(|line| {
+                line.strip_prefix("write_bytes: ")
+                    .and_then(|v| v.trim().parse().ok())
+            })
+        })
+        .unwrap_or(0)
+}
+
+fn benchmark_prune(c: &mut Connection, source: &Source) -> Result<(), String> {
+    c.execute(
+        "UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>2",
+        [&source.id],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 #[cfg(test)]
