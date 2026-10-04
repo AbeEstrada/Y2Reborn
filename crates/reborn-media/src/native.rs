@@ -1221,4 +1221,41 @@ mod artwork_tests {
             assert!(pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}");
         }
     }
+    #[test]
+    fn external_art_header_fallback_rejects_short_and_unknown_files() {
+        let root =
+            std::env::temp_dir().join(format!("reborn-image-headers-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        for (i, bytes) in [
+            &b""[..],
+            &b"unknown image"[..],
+            &b"\xff\xd8"[..],
+            &b"\xff\xd8\xff"[..],
+            &b"\x89PNG\r\n\x1a"[..],
+            &b"\x89PNG\r\n\x1a\n"[..],
+            &b"RIFF\0\0\0\0WEB"[..],
+            &b"RIFF\0\0\0\0WEBP"[..],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = root.join(format!("{i}"));
+            std::fs::write(&path, bytes).unwrap();
+            assert!(external_artwork(&path).is_err(), "case {i}");
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+        let fifo = root.join("fifo");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        let socket = root.join("socket");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(external_artwork(&fifo).is_err());
+        assert!(external_artwork(&socket).is_err());
+        assert!(external_artwork(&root).is_err());
+        drop(listener);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

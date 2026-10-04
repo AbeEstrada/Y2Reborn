@@ -429,6 +429,8 @@ impl Runtime {
         if !track.path.is_file() {
             return Err("track source unavailable".into());
         }
+        let _source = storage::pin_track(&track, &self.model.settings.music_directory)?;
+        let music_root = self.model.settings.music_directory.clone();
         let output = self.model.output.clone();
         let bluetooth_pcm = match &output {
             AudioOutput::Bluetooth(address) => Some(self.bt_state.playback_pcm(address)?),
@@ -536,6 +538,7 @@ impl Runtime {
                 ) = request_parts;
                 playback.begin_start_with_gapless(playback::LoadRequest {
                     track,
+                    music_root,
                     entry_id,
                     queue,
                     queue_entry_ids,
@@ -3411,6 +3414,7 @@ mod runtime_reconfiguration_tests {
         assert_eq!(active.load(Ordering::Acquire), 1);
         let track = Track {
             id: 3,
+            source_id: "internal".into(),
             path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac"),
             ..Default::default()
         };
@@ -3421,6 +3425,7 @@ mod runtime_reconfiguration_tests {
             || Ok(test_spec()),
             move |playback, spec| {
                 playback.start_with_gapless(crate::playback::LoadRequest {
+                    music_root: track.path.parent().unwrap().into(),
                     track,
                     entry_id: QueueEntryId(3),
                     queue: vec![],

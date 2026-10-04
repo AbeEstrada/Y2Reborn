@@ -596,11 +596,18 @@ fn mount_id_for_path(path: &Path, mountinfo: &str) -> Option<u64> {
         .max_by_key(|(length, _)| *length)
         .map(|(_, id)| id)
 }
+fn sd_id_matches_uuid(id: &str, uuid: &str) -> bool {
+    let base = format!("uuid:{uuid}");
+    id == base
+        || id
+            .strip_prefix(&format!("{base}:cid:"))
+            .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()))
+}
 fn source_identity_matches_at(source: &Source, mountinfo: &str) -> bool {
     match &source.kind {
         MediaSource::Internal => true,
         MediaSource::SdCard(uuid) => {
-            source.id == format!("uuid:{uuid}")
+            sd_id_matches_uuid(&source.id, uuid)
                 && !uuid.starts_with("device:")
                 && source.mount_id.is_some_and(|expected| {
                     mount_id_for_path(&source.root, mountinfo) == Some(expected)
@@ -1867,5 +1874,38 @@ mod scan_safety_tests {
         assert!(error.contains("injected finish failure"));
         assert_eq!(tracks(&db).len(), 1);
         db.stop();
+    }
+}
+
+#[cfg(test)]
+mod sd_qualified_source_id_tests {
+    use super::*;
+    #[test]
+    fn qualified_and_uuidless_ids_preserve_mount_guard() {
+        let hash = "a".repeat(64);
+        for (id, uuid) in [
+            (format!("uuid:volume:cid:{hash}"), "volume".to_owned()),
+            (format!("uuid:cid:{hash}"), format!("cid:{hash}")),
+            ("uuid:volume".to_owned(), "volume".to_owned()),
+        ] {
+            let source = Source {
+                id,
+                kind: MediaSource::SdCard(uuid),
+                root: "/media/sd".into(),
+                online: true,
+                mount: "/dev/mmcblk0p1".into(),
+                mount_id: Some(40),
+            };
+            assert!(source_identity_matches_at(
+                &source,
+                "40 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n"
+            ));
+            assert!(!source_identity_matches_at(
+                &source,
+                "58 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n"
+            ));
+        }
+        assert!(!sd_id_matches_uuid("uuid:other:cid:bad", "volume"));
+        assert!(!sd_id_matches_uuid("uuid:volume:cid:bad", "volume"));
     }
 }

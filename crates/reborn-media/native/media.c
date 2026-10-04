@@ -30,6 +30,7 @@
 #include <libswscale/version.h>
 #include <errno.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -38,7 +39,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
   atomic_int cancelled;
@@ -1124,6 +1127,18 @@ static enum AVCodecID image_codec_for_path(const char *path) {
   return AV_CODEC_ID_NONE;
 }
 
+/* Descriptor-pinned sidecars have no filename extension. Keep this fallback
+ * bounded to the same three image codecs supported by named local files. */
+static enum AVCodecID image_codec_for_header(const uint8_t *b, size_t n) {
+  if (n >= 3 && b[0] == 0xff && b[1] == 0xd8 && b[2] == 0xff)
+    return AV_CODEC_ID_MJPEG;
+  if (n >= 8 && !memcmp(b, "\211PNG\r\n\032\n", 8))
+    return AV_CODEC_ID_PNG;
+  if (n >= 12 && !memcmp(b, "RIFF", 4) && !memcmp(b + 8, "WEBP", 4))
+    return AV_CODEC_ID_WEBP;
+  return AV_CODEC_ID_NONE;
+}
+
 /* External cover images use the same FFmpeg image decoders and libswscale as
  * attached artwork. They are read as bounded local files without enabling an
  * image demuxer or any network protocol in the production build. */
@@ -1131,20 +1146,43 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
   if (!path || !out || side < 1 || side > 256)
     return AVERROR(EINVAL);
   enum AVCodecID id = image_codec_for_path(path);
-  const AVCodec *codec = id == AV_CODEC_ID_NONE ? NULL : avcodec_find_decoder(id);
-  if (!codec)
-    return AVERROR_DECODER_NOT_FOUND;
-  FILE *file = fopen(path, "rb");
-  if (!file)
+  int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+  if (fd < 0)
     return AVERROR(errno);
-  if (fseek(file, 0, SEEK_END) != 0) {
-    fclose(file);
-    return AVERROR(EIO);
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    int error = AVERROR(errno);
+    close(fd);
+    return error;
   }
-  long length = ftell(file);
-  if (length <= 0 || length > 16 * 1024 * 1024 || fseek(file, 0, SEEK_SET) != 0) {
-    fclose(file);
+  if (!S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > 16 * 1024 * 1024) {
+    close(fd);
     return AVERROR(EINVAL);
+  }
+  long length = (long)st.st_size;
+  FILE *file = fdopen(fd, "rb");
+  if (!file) {
+    int error = AVERROR(errno);
+    close(fd);
+    return error;
+  }
+  if (id == AV_CODEC_ID_NONE) {
+    uint8_t header[12];
+    size_t n = fread(header, 1, sizeof(header), file);
+    if (n != (size_t)(length < 12 ? length : 12)) {
+      fclose(file);
+      return AVERROR(EIO);
+    }
+    id = image_codec_for_header(header, n);
+    if (fseek(file, 0, SEEK_SET) != 0) {
+      fclose(file);
+      return AVERROR(EIO);
+    }
+  }
+  const AVCodec *codec = id == AV_CODEC_ID_NONE ? NULL : avcodec_find_decoder(id);
+  if (!codec) {
+    fclose(file);
+    return AVERROR_DECODER_NOT_FOUND;
   }
   AVPacket *packet = av_packet_alloc();
   AVCodecContext *ctx = avcodec_alloc_context3(codec);

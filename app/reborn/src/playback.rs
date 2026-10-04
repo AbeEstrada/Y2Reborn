@@ -17,6 +17,37 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+struct BoundDecoder {
+    decoder: Decoder,
+    _source: reborn_platform::storage::PinnedTrack,
+}
+impl BoundDecoder {
+    fn open(
+        track: &Track,
+        music: &std::path::Path,
+        spec: OutputSpec,
+        dsp: DspConfig,
+        cancel: Cancel,
+    ) -> Result<Self, String> {
+        let source = reborn_platform::storage::pin_track(track, music)?;
+        let decoder = Decoder::open_with(source.path(), spec, dsp, cancel)?;
+        Ok(Self {
+            decoder,
+            _source: source,
+        })
+    }
+}
+impl std::ops::Deref for BoundDecoder {
+    type Target = Decoder;
+    fn deref(&self) -> &Decoder {
+        &self.decoder
+    }
+}
+impl std::ops::DerefMut for BoundDecoder {
+    fn deref_mut(&mut self) -> &mut Decoder {
+        &mut self.decoder
+    }
+}
 pub enum PlaybackEvent {
     Core(Event),
     Artwork {
@@ -28,6 +59,7 @@ pub enum PlaybackEvent {
 }
 pub struct LoadRequest {
     pub track: Track,
+    pub music_root: PathBuf,
     pub entry_id: QueueEntryId,
     pub queue: Vec<Track>,
     pub queue_entry_ids: Vec<QueueEntryId>,
@@ -40,6 +72,7 @@ pub struct LoadRequest {
 }
 struct Job {
     track: Track,
+    music_root: PathBuf,
     entry_id: QueueEntryId,
     queue: Vec<Track>,
     queue_entry_ids: Vec<QueueEntryId>,
@@ -501,7 +534,7 @@ fn update_media_state(
 fn publish_artwork(
     cache: &std::path::Path,
     track: &Track,
-    decoder: &mut Decoder,
+    decoder: &mut BoundDecoder,
 ) -> Option<Vec<u8>> {
     let _ = std::fs::create_dir_all(cache);
     if let Ok(entries) = std::fs::read_dir(cache) {
@@ -529,7 +562,6 @@ fn publish_artwork(
                 .and_then(Result::ok)
         })
         .or_else(|| {
-            let parent = track.path.parent()?;
             [
                 "cover.jpg",
                 "cover.jpeg",
@@ -545,8 +577,10 @@ fn publish_artwork(
                 "album.webp",
             ]
             .iter()
-            .map(|name| parent.join(name))
-            .find_map(|candidate| external_artwork(&candidate).ok())
+            .find_map(|name| {
+                let file = decoder._source.open_sidecar(name).ok()?;
+                external_artwork(file.path()).ok()
+            })
         });
     if let Some(bytes) = bytes {
         if cached.is_none() {
@@ -638,8 +672,9 @@ impl Playback {
                         rate: job.spec.rate,
                         format: processing_format,
                     };
-                    let mut decoder = Decoder::open_with(
-                        &tracks[0].path,
+                    let mut decoder = BoundDecoder::open(
+                        &tracks[0],
+                        &job.music_root,
                         output,
                         job.dsp.clone(),
                         job.cancel.clone(),
@@ -684,10 +719,11 @@ impl Playback {
                     let mut next_decoder = None;
                     let mut next_pending = VecDeque::new();
                     let mut packet_count = 0u64;
-                    let open_next = |start: usize| -> Option<(usize, Decoder)> {
+                    let open_next = |start: usize| -> Option<(usize, BoundDecoder)> {
                         for (candidate, track) in tracks.iter().enumerate().skip(start) {
-                            match Decoder::open_with(
-                                &track.path,
+                            match BoundDecoder::open(
+                                track,
+                                &job.music_root,
                                 output,
                                 job.dsp.clone(),
                                 job.cancel.clone(),
@@ -1378,6 +1414,11 @@ impl Playback {
     ) -> Result<(), String> {
         let queue_entry_ids = (2..=queue.len() as u64 + 1).map(QueueEntryId).collect();
         self.load_with_gapless(LoadRequest {
+            music_root: track
+                .path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .into(),
             track,
             entry_id: QueueEntryId(1),
             queue,
@@ -1411,6 +1452,7 @@ impl Playback {
         }
         let LoadRequest {
             track,
+            music_root,
             entry_id,
             queue,
             queue_entry_ids,
@@ -1436,6 +1478,7 @@ impl Playback {
         let deadline = Instant::now() + Duration::from_secs(2);
         let job = Box::new(Job {
             track,
+            music_root,
             entry_id,
             queue,
             queue_entry_ids,
@@ -1640,17 +1683,84 @@ mod tests {
     }
     fn track() -> Track {
         Track {
+            source_id: "internal".into(),
             path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac"),
             ..Default::default()
         }
     }
     fn gapless_track(name: &str, id: i64) -> Track {
         Track {
+            source_id: "internal".into(),
             id,
             path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../assets/fixtures")
                 .join(name),
             ..Default::default()
+        }
+    }
+    #[test]
+    fn pinned_file_probe_preserves_fixture_metadata_and_pcm_without_extension() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        let spec = OutputSpec {
+            rate: 44_100,
+            format: PcmFormat::S32LE,
+        };
+        let mut tested = 0;
+        for name in manifest["files"].as_object().unwrap().keys() {
+            if name.starts_with("malformed")
+                || name.starts_with("truncated")
+                || matches!(
+                    std::path::Path::new(name)
+                        .extension()
+                        .and_then(|s| s.to_str()),
+                    Some("jpg" | "png" | "webp")
+                )
+            {
+                continue;
+            }
+            let track = gapless_track(name, 1);
+            let mut direct = Decoder::open_with(
+                &track.path,
+                spec,
+                DspConfig::default(),
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let mut pinned = BoundDecoder::open(
+                &track,
+                &root,
+                spec,
+                DspConfig::default(),
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(&direct.metadata).unwrap(),
+                serde_json::to_value(&pinned.metadata).unwrap(),
+                "{name}"
+            );
+            let expected = direct.read().unwrap().unwrap();
+            let actual = pinned.read().unwrap().unwrap();
+            assert_eq!(actual.data, expected.data, "{name}");
+            assert_eq!(actual.position_ms, expected.position_ms, "{name}");
+            tested += 1;
+        }
+        assert_eq!(tested, 33);
+        let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
+        assert!(external_artwork(pinned.path()).is_err());
+        for name in [
+            "artwork-external.jpg",
+            "artwork-external.png",
+            "artwork-external.webp",
+        ] {
+            let file = pinned.open_sidecar(name).unwrap();
+            assert_eq!(
+                external_artwork(file.path()).unwrap(),
+                external_artwork(&root.join(name)).unwrap(),
+                "{name}"
+            );
         }
     }
     fn spec(output: AudioOutput, rate: u32) -> SinkSpec {
@@ -1759,6 +1869,7 @@ mod tests {
         playback
             .load(
                 Track {
+                    source_id: "internal".into(),
                     path: source,
                     ..Default::default()
                 },
@@ -2013,6 +2124,7 @@ mod tests {
         playback
             .begin_start_with_gapless(LoadRequest {
                 track: track(),
+                music_root: track().path.parent().unwrap().into(),
                 entry_id: QueueEntryId(1),
                 queue: vec![],
                 queue_entry_ids: vec![],
@@ -2228,6 +2340,7 @@ mod tests {
         let second_open_without_release = p
             .start_with_gapless(LoadRequest {
                 track: track(),
+                music_root: track().path.parent().unwrap().into(),
                 entry_id: QueueEntryId(2),
                 queue: vec![],
                 queue_entry_ids: vec![],
