@@ -179,11 +179,15 @@ impl InputManager {
     /// Saved press ages and wheel cadence do not cross whole-system sleep.
     /// Unmatched releases remain Cancel events; evdev overflow recovery is kept.
     pub fn resumed(&mut self) {
-        // Drop queued wake edges. A still-held wake key's later release is
-        // unmatched and becomes Cancel, so it cannot request another sleep.
-        let _ = self.poll();
+        // One bounded poll cannot drain an entire pre-resume queue. Closing
+        // evdev discards every old edge, including a wake key behind wheel
+        // traffic. Keep known devices for retry if resume briefly hides them.
+        self.missing
+            .extend(self.files.drain(..).map(|(device, _, _)| device));
         self.pressed.clear();
         self.wheel.clear();
+        self.dropping.clear();
+        self.reconnect_missing();
     }
 
     pub fn open() -> Self {
@@ -1165,6 +1169,19 @@ mod tests {
         assert_eq!(
             input.feed(PMIC_KEYS, EV_KEY, 116, 0, now)[0].input,
             NormalizedInput::Cancel(PhysicalControl::Power)
+        );
+    }
+
+    #[test]
+    fn resume_does_not_carry_an_overflow_drop_into_new_input() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
+        input.feed(PMIC_KEYS, EV_SYN, SYN_DROPPED, 0, now);
+        input.resumed();
+        assert_eq!(
+            input.feed(PMIC_KEYS, EV_KEY, 116, 1, now)[0].input,
+            NormalizedInput::Press(PhysicalControl::Power)
         );
     }
 }
