@@ -369,3 +369,35 @@ fn storage_cid_qualified_ids_keep_uuid_and_mount_identity_guards() {
         "40 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n"
     ));
 }
+
+#[test]
+fn schema_enforces_source_foreign_keys_and_preserves_connection_policy() {
+    let root = scratch("schema-policy");
+    let mut c = seeded(&root);
+    assert_eq!(
+        c.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "wal"
+    );
+    for (pragma, expected) in [
+        ("foreign_keys", 1),
+        ("synchronous", 1),
+        ("cache_size", -2048),
+        ("temp_store", 2),
+        ("wal_autocheckpoint", 1000),
+    ] {
+        assert_eq!(
+            c.pragma_query_value(None, pragma, |r| r.get::<_, i64>(0))
+                .unwrap(),
+            expected
+        );
+    }
+    let error = batch(&mut c, vec![fixture(0, "missing-source")], 1).unwrap_err();
+    assert!(error.to_lowercase().contains("foreign key"));
+    assert_eq!(count(&c), 0);
+    batch(&mut c, vec![fixture(0, "one")], 1).unwrap();
+    assert!(c.execute("UPDATE tracks SET title=NULL", []).is_err());
+    assert_eq!(catalog(&mut c).unwrap()[0].title, "Same title");
+    drop(c);
+    fs::remove_dir_all(root).unwrap();
+}
