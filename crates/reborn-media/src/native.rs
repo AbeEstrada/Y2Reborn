@@ -52,6 +52,12 @@ struct RawMetadata {
     album_peak: c_double,
     applied_gain_db: c_double,
     headroom_db: c_double,
+    date: [c_char; 128],
+    genre: [c_char; 512],
+    open_us: u64,
+    probe_us: u64,
+    io_bytes: u64,
+    info_runs: u32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -86,6 +92,9 @@ type MediaOpen = unsafe extern "C" fn(
     *mut *mut c_void,
     *mut RawMetadata,
 ) -> c_int;
+type MediaInspect =
+    unsafe extern "C" fn(*const c_char, *mut c_void, *mut *mut c_void, *mut RawMetadata) -> c_int;
+type MediaLimits = unsafe extern "C" fn();
 type MediaClose = unsafe extern "C" fn(*mut c_void);
 type MediaRead =
     unsafe extern "C" fn(*mut c_void, *mut u8, c_int, *mut u64, *mut u64, *mut i64) -> c_int;
@@ -116,6 +125,8 @@ struct MediaApi {
     components: MediaComponents,
     error: MediaError,
     open: MediaOpen,
+    inspect: MediaInspect,
+    limits: MediaLimits,
     close: MediaClose,
     read: MediaRead,
     seek: MediaSeek,
@@ -185,6 +196,8 @@ impl MediaApi {
                     components: Self::symbol(handle, b"rb_media_components\0")?,
                     error: Self::symbol(handle, b"rb_media_error\0")?,
                     open: Self::symbol(handle, b"rb_media_open\0")?,
+                    inspect: Self::symbol(handle, b"rb_media_inspect\0")?,
+                    limits: Self::symbol(handle, b"rb_media_limits\0")?,
                     close: Self::symbol(handle, b"rb_media_close\0")?,
                     read: Self::symbol(handle, b"rb_media_read\0")?,
                     seek: Self::symbol(handle, b"rb_media_seek\0")?,
@@ -213,6 +226,8 @@ static API: OnceLock<Result<MediaApi, String>> = OnceLock::new();
 fn api() -> Result<&'static MediaApi, String> {
     match API.get_or_init(|| {
         let api = MediaApi::load()?;
+        // SAFETY: OnceLock serializes this process-wide allocation limit before worker access.
+        unsafe { (api.limits)() };
         if LOG.get().is_some() {
             // SAFETY: the callbacks are static and the loaded membrane stays
             // resident for the lifetime of the process.
@@ -509,6 +524,121 @@ pub struct Metadata {
     pub skip_start: u64,
     pub skip_end: u64,
     pub corrupt_packets: u64,
+    pub date: String,
+    pub genre: String,
+    /// Native open/analysis times and AVIO bytes, for product-path benchmarks.
+    pub open_us: u64,
+    pub probe_us: u64,
+    pub io_bytes: u64,
+    pub info_runs: u32,
+}
+
+impl Metadata {
+    fn from_raw(meta: &RawMetadata) -> Self {
+        fn text(b: &[c_char]) -> String {
+            let length = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+            // SAFETY: c_char and u8 are one-byte types with identical alignment;
+            // the initialized ABI buffer stays borrowed for this conversion.
+            let bytes = unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<u8>(), length) };
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+        Metadata {
+            title: text(&meta.title),
+            artist: text(&meta.artist),
+            album: text(&meta.album),
+            album_artist: text(&meta.album_artist),
+            codec: text(&meta.codec),
+            source_sample_fmt: text(&meta.source_sample_fmt),
+            decoder_sample_fmt: text(&meta.decoder_sample_fmt),
+            internal_sample_fmt: text(&meta.internal_sample_fmt),
+            final_sample_fmt: text(&meta.final_sample_fmt),
+            filters: text(&meta.filters),
+            resample_reason: text(&meta.resample_reason),
+            duration_ms: meta.duration_ms,
+            bitrate: meta.bitrate,
+            sample_rate: meta.rate,
+            channels: meta.channels,
+            source_bits: meta.source_bits,
+            output_rate: meta.output_rate,
+            output_channels: meta.output_channels,
+            track: meta.track,
+            disc: meta.disc,
+            artwork: meta.artwork != 0,
+            output_format: match meta.output_format {
+                1 => PcmFormat::S16LE,
+                3 => PcmFormat::S24LE,
+                _ => PcmFormat::S32LE,
+            },
+            resampling: meta.resampling != 0,
+            format_conversion: meta.format_conversion != 0,
+            eq_active: meta.eq_active != 0,
+            replaygain_mode: match meta.replaygain_mode {
+                1 => ReplayGainMode::Track,
+                2 => ReplayGainMode::Album,
+                _ => ReplayGainMode::Off,
+            },
+            track_gain_db: meta.track_gain_db,
+            album_gain_db: meta.album_gain_db,
+            track_peak: meta.track_peak,
+            album_peak: meta.album_peak,
+            applied_gain_db: meta.applied_gain_db,
+            headroom_db: meta.headroom_db,
+            skip_start: meta.skip_start,
+            skip_end: meta.skip_end,
+            corrupt_packets: meta.corrupt_packets,
+            date: text(&meta.date),
+            genre: text(&meta.genre),
+            open_us: meta.open_us,
+            probe_us: meta.probe_us,
+            io_bytes: meta.io_bytes,
+            info_runs: meta.info_runs,
+        }
+    }
+}
+
+/// Demux-only local metadata/artwork context, closed exactly once on every path.
+/// Retains encoded pictures only for its lifetime; library rows contain no blobs.
+pub struct MediaFile {
+    raw: NonNull<c_void>,
+    api: &'static MediaApi,
+    _cancel: Cancel,
+    pub metadata: Metadata,
+}
+impl MediaFile {
+    pub fn open(path: &Path, cancel: Cancel) -> Result<Self, String> {
+        use std::os::unix::ffi::OsStrExt;
+        let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+        let api = cancel.0.api;
+        let mut ptr = std::ptr::null_mut();
+        // SAFETY: zeroed repr(C) POD output; all pointers live through this synchronous call.
+        let mut meta: RawMetadata = unsafe { std::mem::zeroed() };
+        let r = unsafe { (api.inspect)(name.as_ptr(), cancel.0.raw.as_ptr(), &mut ptr, &mut meta) };
+        if r < 0 {
+            return Err(error(api, r));
+        }
+        Ok(Self {
+            raw: NonNull::new(ptr).ok_or("missing media context")?,
+            api,
+            _cancel: cancel,
+            metadata: Metadata::from_raw(&meta),
+        })
+    }
+    pub fn artwork(&mut self) -> Result<Vec<u8>, String> {
+        let mut pixels = vec![0; 160 * 160 * 4];
+        // SAFETY: uniquely borrowed context, side*side*4 writable buffer.
+        let r = unsafe { (self.api.artwork)(self.raw.as_ptr(), pixels.as_mut_ptr(), 160) };
+        if r < 0 {
+            Err(error(self.api, r))
+        } else {
+            Ok(pixels)
+        }
+    }
+}
+impl Drop for MediaFile {
+    fn drop(&mut self) {
+        // SAFETY: this owner closes the native context exactly once.
+        unsafe { (self.api.close)(self.raw.as_ptr()) }
+    }
 }
 
 pub struct Decoder {
@@ -575,65 +705,13 @@ impl Decoder {
         if r < 0 {
             return Err(error(api, r));
         }
-        fn text(b: &[c_char]) -> String {
-            let v = b
-                .iter()
-                .take_while(|&&c| c != 0)
-                .map(|&c| c as u8)
-                .collect::<Vec<_>>();
-            String::from_utf8_lossy(&v).into_owned()
-        }
         let raw = NonNull::new(ptr).ok_or_else(|| "missing decoder".to_string())?;
         Ok(Self {
             raw,
             api,
             _cancel: cancel,
             spec,
-            metadata: Metadata {
-                title: text(&meta.title),
-                artist: text(&meta.artist),
-                album: text(&meta.album),
-                album_artist: text(&meta.album_artist),
-                codec: text(&meta.codec),
-                source_sample_fmt: text(&meta.source_sample_fmt),
-                decoder_sample_fmt: text(&meta.decoder_sample_fmt),
-                internal_sample_fmt: text(&meta.internal_sample_fmt),
-                final_sample_fmt: text(&meta.final_sample_fmt),
-                filters: text(&meta.filters),
-                resample_reason: text(&meta.resample_reason),
-                duration_ms: meta.duration_ms,
-                bitrate: meta.bitrate,
-                sample_rate: meta.rate,
-                channels: meta.channels,
-                source_bits: meta.source_bits,
-                output_rate: meta.output_rate,
-                output_channels: meta.output_channels,
-                track: meta.track,
-                disc: meta.disc,
-                artwork: meta.artwork != 0,
-                output_format: match meta.output_format {
-                    1 => PcmFormat::S16LE,
-                    3 => PcmFormat::S24LE,
-                    _ => PcmFormat::S32LE,
-                },
-                resampling: meta.resampling != 0,
-                format_conversion: meta.format_conversion != 0,
-                eq_active: meta.eq_active != 0,
-                replaygain_mode: match meta.replaygain_mode {
-                    1 => ReplayGainMode::Track,
-                    2 => ReplayGainMode::Album,
-                    _ => ReplayGainMode::Off,
-                },
-                track_gain_db: meta.track_gain_db,
-                album_gain_db: meta.album_gain_db,
-                track_peak: meta.track_peak,
-                album_peak: meta.album_peak,
-                applied_gain_db: meta.applied_gain_db,
-                headroom_db: meta.headroom_db,
-                skip_start: meta.skip_start,
-                skip_end: meta.skip_end,
-                corrupt_packets: meta.corrupt_packets,
-            },
+            metadata: Metadata::from_raw(&meta),
         })
     }
     pub fn read(&mut self) -> Result<Option<Pcm>, String> {
@@ -701,6 +779,49 @@ pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
     } else {
         Ok(b)
     }
+}
+/// Deterministic sidecar preference, shared by playback and collection artwork.
+/// Only candidate paths are retained; failed images fall through to the next cover.
+pub fn folder_artwork(media: &Path) -> Result<Vec<u8>, String> {
+    const NAMES: [&str; 12] = [
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "cover.webp",
+        "folder.jpg",
+        "folder.jpeg",
+        "folder.png",
+        "folder.webp",
+        "album.jpg",
+        "album.jpeg",
+        "album.png",
+        "album.webp",
+    ];
+    let parent = media.parent().ok_or("media has no parent")?;
+    let mut candidates: [Option<PathBuf>; 12] = std::array::from_fn(|_| None);
+    for entry in std::fs::read_dir(parent).map_err(|e| e.to_string())? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let Some(index) = NAMES
+            .iter()
+            .position(|candidate| name.to_string_lossy().eq_ignore_ascii_case(candidate))
+        else {
+            continue;
+        };
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let path = entry.path();
+        if candidates[index].as_ref().is_none_or(|old| path < *old) {
+            candidates[index] = Some(path);
+        }
+    }
+    for path in candidates.into_iter().flatten() {
+        if let Ok(pixels) = external_artwork(&path) {
+            return Ok(pixels);
+        }
+    }
+    Err("no usable folder artwork".into())
 }
 impl Drop for Decoder {
     fn drop(&mut self) {
@@ -1220,5 +1341,265 @@ mod artwork_tests {
             assert_eq!(pixels.len(), 160 * 160 * 4);
             assert!(pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    fn path(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fixtures")
+            .join(name)
+    }
+    fn inspect(name: &str) -> Metadata {
+        MediaFile::open(&path(name), Cancel::new().unwrap())
+            .unwrap()
+            .metadata
+            .clone()
+    }
+    #[test]
+    fn tags_and_source_precision_are_consistent_across_demux_and_playback() {
+        for name in [
+            "metadata/tags.flac",
+            "metadata/id3.mp3",
+            "metadata/tags.ape",
+        ] {
+            let m = inspect(name);
+            assert_eq!(m.title, "日本語 – café", "{name}");
+            assert_eq!(m.artist, "Björk", "{name}");
+            assert_eq!(m.album_artist, "Various", "{name}");
+            assert_eq!((m.track, m.disc), (3, 1), "{name}");
+            assert!(m.date.starts_with("2024"), "{name}");
+            assert_eq!(m.genre, "Ambient", "{name}");
+            assert_eq!(m.track_gain_db, -4.25, "{name}");
+            let d = Decoder::open(&path(name), 48000, Cancel::new().unwrap()).unwrap();
+            assert_eq!(m.title, d.metadata.title);
+            assert_eq!(m.source_bits, d.metadata.source_bits);
+        }
+    }
+    #[test]
+    fn wav_aiff_and_existing_mp4_vorbis_tags_use_the_same_mapping() {
+        for name in ["metadata/tags.wav", "metadata/tags.aiff"] {
+            let m = inspect(name);
+            assert_eq!(m.title, "日本語 – café", "{name}");
+            assert_eq!(m.artist, "Björk", "{name}");
+            assert_eq!(m.source_bits, 24);
+        }
+        let m = inspect("metadata/tags.wav");
+        assert_eq!(m.track, 3);
+        assert_eq!(m.date, "2024-02-29");
+        assert_eq!(m.genre, "Ambient");
+        for name in ["m4a-aac.m4a", "m4a-alac.m4a", "vorbis.ogg", "opus.opus"] {
+            let m = inspect(name);
+            assert_eq!(m.title, "Reborn 440 Hz", "{name}");
+            assert_eq!(m.artist, "Y2 fixture", "{name}");
+            assert_eq!(m.album_artist, "Y2 fixture", "{name}");
+            assert_eq!((m.track, m.disc), (1, 1), "{name}");
+        }
+    }
+    #[test]
+    fn container_headers_preserve_properties_without_audio_or_picture_decode() {
+        for (name, bits) in [
+            ("flac-24-96000.flac", 24),
+            ("wav-pcm24.wav", 24),
+            ("wav-float32.wav", 32),
+            ("aiff-pcm24.aiff", 24),
+            ("m4a-alac.m4a", 24),
+            ("m4a-aac.m4a", 0),
+            ("vorbis.ogg", 0),
+            ("opus.opus", 0),
+            ("ape-silence.ape", 16),
+            ("wavpack-silence.wv", 16),
+            ("artwork-webp.flac", 16),
+        ] {
+            let m = inspect(name);
+            assert_eq!(m.info_runs, 0, "{name}");
+            assert_eq!(m.source_bits, bits, "{name}");
+            assert!(m.decoder_sample_fmt.is_empty());
+            assert!(m.filters.is_empty());
+            let d = Decoder::open(&path(name), 48000, Cancel::new().unwrap()).unwrap();
+            assert_eq!(m.sample_rate, d.metadata.sample_rate, "{name}");
+            assert_eq!(m.channels, d.metadata.channels, "{name}");
+            assert_eq!(m.duration_ms, d.metadata.duration_ms, "{name}");
+        }
+        for name in ["mp3.mp3", "aac.aac"] {
+            let m = inspect(name);
+            assert_eq!(m.info_runs, 1);
+            assert_eq!(m.source_bits, 0);
+            assert_eq!(m.source_sample_fmt, "unspecified");
+        }
+    }
+    #[test]
+    fn bounded_strings_ordinals_and_replaygain_reject_malformed_values() {
+        let m = inspect("metadata/long.flac");
+        assert_eq!(m.title.len(), 510);
+        assert!(!m.title.contains('\u{fffd}'));
+        assert_eq!((m.track, m.disc), (0, 0));
+        assert_eq!(
+            (m.track_gain_db, m.album_gain_db, m.track_peak),
+            (0., 0., 0.)
+        );
+        let m = inspect("metadata/duplicate.flac");
+        // FFmpeg normalizes repeated Vorbis comments to one semicolon-delimited value.
+        assert_eq!(m.title, "first;second");
+        assert_eq!(m.artist, "one;two");
+        assert_eq!((m.track, m.disc), (0, 0));
+        let m = inspect("metadata/invalid-utf8.flac");
+        assert_eq!(m.track, 3);
+        assert!(m.title.contains('\u{fffd}'));
+        let m = inspect("source-no-metadata.flac");
+        assert!(m.title.is_empty() && m.artist.is_empty());
+    }
+    #[test]
+    fn corrupt_and_oversized_art_do_not_require_image_decode_during_ingest() {
+        for name in [
+            "metadata/corrupt-art.flac",
+            "metadata/huge-art-dimensions.flac",
+        ] {
+            let mut m = MediaFile::open(&path(name), Cancel::new().unwrap()).unwrap();
+            assert_eq!(m.metadata.info_runs, 0);
+            assert_eq!(m.metadata.title, "日本語 – café");
+            assert!(m.artwork().is_err());
+        }
+        // Invalid declared packet sizes are FFmpeg-owned: clean error or usable audio.
+        if let Ok(mut m) = MediaFile::open(
+            &path("metadata/huge-art-metadata.flac"),
+            Cancel::new().unwrap(),
+        ) {
+            assert!(m.artwork().is_err());
+        }
+        assert!(external_artwork(&path("metadata/huge.png")).is_err());
+        for name in [
+            "metadata/art-jpg.flac",
+            "metadata/art-png.flac",
+            "metadata/art-webp.flac",
+        ] {
+            let mut m = MediaFile::open(&path(name), Cancel::new().unwrap()).unwrap();
+            assert!(m.metadata.artwork);
+            assert_eq!(m.artwork().unwrap().len(), 160 * 160 * 4);
+        }
+    }
+    #[test]
+    fn sidecar_case_and_corrupt_cover_fallback_are_consistent() {
+        let root = std::env::temp_dir().join(format!("reborn-sidecar-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Cover.JPG"), b"corrupt").unwrap();
+        std::fs::copy(path("artwork-external.webp"), root.join("Album.WEBP")).unwrap();
+        assert_eq!(
+            folder_artwork(&root.join("track.flac")).unwrap().len(),
+            160 * 160 * 4
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn lossy_gapless_skip_side_data_preserves_the_expected_sample_count() {
+        for (name, expected) in [
+            ("mp3.mp3", 11025usize),
+            ("opus.opus", 12000),
+            ("m4a-aac.m4a", 11025),
+        ] {
+            let mut decoder = Decoder::open(
+                &path(name),
+                if name == "opus.opus" { 48000 } else { 44100 },
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let mut frames = 0;
+            while let Some(block) = decoder.read().unwrap() {
+                frames += block.data.len() / block.format.bytes_per_frame();
+            }
+            assert_eq!(frames, expected, "{name}");
+            assert_eq!(decoder.metadata.duration_ms, 250, "{name}");
+        }
+    }
+    #[test]
+    fn large_jpeg_is_downscaled_and_small_jpeg_remains_usable() {
+        for name in ["metadata/large.jpg", "artwork-external.jpg"] {
+            let pixels = external_artwork(&path(name)).unwrap();
+            assert_eq!(pixels.len(), 160 * 160 * 4);
+            assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
+            assert!(pixels.iter().any(|&v| v > 0));
+        }
+    }
+    #[test]
+    fn deterministic_truncation_and_header_mutations_are_isolated() {
+        let file =
+            std::env::temp_dir().join(format!("reborn-mutations-{}.media", std::process::id()));
+        for name in [
+            "tone.flac",
+            "mp3.mp3",
+            "m4a-aac.m4a",
+            "vorbis.ogg",
+            "opus.opus",
+            "wav-pcm24.wav",
+            "aiff-pcm24.aiff",
+            "ape-silence.ape",
+            "wavpack-silence.wv",
+        ] {
+            let bytes = std::fs::read(path(name)).unwrap();
+            for cut in [0, 1, 8, 42, bytes.len() / 2, bytes.len() - 1] {
+                std::fs::write(&file, &bytes[..cut.min(bytes.len())]).unwrap();
+                if let Ok(mut media) = MediaFile::open(&file, Cancel::new().unwrap()) {
+                    assert!((8000..=384000).contains(&media.metadata.sample_rate));
+                    if media.metadata.artwork {
+                        let _ = media.artwork();
+                    }
+                }
+            }
+            for offset in [0, 4, 8, 16, 32] {
+                let mut mutation = bytes.clone();
+                mutation[offset] ^= 0xff;
+                std::fs::write(&file, mutation).unwrap();
+                let _ = MediaFile::open(&file, Cancel::new().unwrap());
+            }
+        }
+        std::fs::remove_file(file).unwrap();
+    }
+    #[test]
+    fn aggregate_metadata_io_has_a_budget_even_for_many_individually_valid_blocks() {
+        use std::io::Write;
+        let file =
+            std::env::temp_dir().join(format!("reborn-tag-budget-{}.flac", std::process::id()));
+        let base = std::fs::read(path("flac-24-96000.flac")).unwrap();
+        let mut out = std::fs::File::create(&file).unwrap();
+        out.write_all(b"fLaC\0\0\0\x22").unwrap();
+        out.write_all(&base[8..42]).unwrap();
+        let filler = vec![b'x'; 64 * 1024];
+        for i in 0..3 {
+            let value_length = 11 * 1024 * 1024u32;
+            let size = value_length + 12;
+            out.write_all(&[
+                if i == 2 { 132 } else { 4 },
+                (size >> 16) as u8,
+                (size >> 8) as u8,
+                size as u8,
+            ])
+            .unwrap();
+            out.write_all(&0u32.to_le_bytes()).unwrap(); // vendor length
+            out.write_all(&1u32.to_le_bytes()).unwrap(); // comment count
+            out.write_all(&value_length.to_le_bytes()).unwrap();
+            let key = format!("TAG{i}=");
+            out.write_all(key.as_bytes()).unwrap();
+            let mut remaining = value_length as usize - key.len();
+            while remaining > 0 {
+                let n = remaining.min(filler.len());
+                out.write_all(&filler[..n]).unwrap();
+                remaining -= n;
+            }
+        }
+        drop(out);
+        assert!(MediaFile::open(&file, Cancel::new().unwrap()).is_err());
+        assert!(Decoder::open(&file, 48000, Cancel::new().unwrap()).is_err());
+        std::fs::remove_file(file).unwrap();
+    }
+    #[test]
+    fn malformed_files_and_cancelled_inspection_fail_cleanly() {
+        for name in ["metadata/empty.flac", "malformed.mp3"] {
+            assert!(MediaFile::open(&path(name), Cancel::new().unwrap()).is_err());
+        }
+        let cancel = Cancel::new().unwrap();
+        cancel.cancel();
+        assert!(MediaFile::open(&path("tone.flac"), cancel).is_err());
     }
 }

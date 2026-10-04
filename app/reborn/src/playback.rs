@@ -2,7 +2,7 @@ use crate::volume::VolumeRamp;
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
 use reborn_media::{
-    convert_pcm, crossfade_pcm, external_artwork, Cancel, Decoder, DspConfig, OutputSpec, Pcm,
+    convert_pcm, crossfade_pcm, folder_artwork, Cancel, Decoder, DspConfig, OutputSpec, Pcm,
 };
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
@@ -516,40 +516,26 @@ fn publish_artwork(
         }
     }
     let path = cache.join(format!("{}-{}-{}.rgba", track.id, track.size, track.mtime));
-    let cached = std::fs::read(&path)
-        .ok()
+    let cached = decoder
+        .metadata
+        .artwork
+        .then(|| std::fs::metadata(&path).ok())
+        .flatten()
+        .filter(|meta| meta.len() == 160 * 160 * 4)
+        .and_then(|_| std::fs::read(&path).ok())
         .filter(|b| b.len() == 160 * 160 * 4);
-    let bytes = cached
-        .clone()
-        .or_else(|| {
-            decoder
-                .metadata
-                .artwork
-                .then(|| decoder.artwork())
-                .and_then(Result::ok)
-        })
-        .or_else(|| {
-            let parent = track.path.parent()?;
-            [
-                "cover.jpg",
-                "cover.jpeg",
-                "cover.png",
-                "cover.webp",
-                "folder.jpg",
-                "folder.jpeg",
-                "folder.png",
-                "folder.webp",
-                "album.jpg",
-                "album.jpeg",
-                "album.png",
-                "album.webp",
-            ]
-            .iter()
-            .map(|name| parent.join(name))
-            .find_map(|candidate| external_artwork(&candidate).ok())
-        });
+    let have_cached = cached.is_some();
+    let embedded = cached.or_else(|| {
+        decoder
+            .metadata
+            .artwork
+            .then(|| decoder.artwork())
+            .and_then(Result::ok)
+    });
+    let can_cache = embedded.is_some();
+    let bytes = embedded.or_else(|| folder_artwork(&track.path).ok());
     if let Some(bytes) = bytes {
-        if cached.is_none() {
+        if !have_cached && can_cache {
             let _ = reborn_core::atomic_write(&path, &bytes);
         }
         Some(bytes)

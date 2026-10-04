@@ -1,6 +1,6 @@
 //! Bounded collection art loader. Native decoding never runs on the UI thread.
 use reborn_core::Track;
-use reborn_media::{external_artwork, Cancel, Decoder};
+use reborn_media::{folder_artwork, Cancel, MediaFile};
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -15,6 +15,7 @@ pub struct Key {
     size: u64,
     mtime: i64,
     mount: Option<u64>,
+    embedded: bool,
 }
 impl Key {
     pub fn new(track: &Track, mount: Option<u64>) -> Self {
@@ -25,6 +26,7 @@ impl Key {
             size: track.size,
             mtime: track.mtime,
             mount,
+            embedded: track.artwork,
         }
     }
 }
@@ -53,11 +55,12 @@ impl Worker {
                         cache.push_back(entry);
                         pixels
                     } else {
-                        let pixels = load(&key, cancel).filter(|v| v.len() == 160 * 160 * 4);
+                        let (pixels, cacheable) = load(&key, cancel);
+                        let pixels = pixels.filter(|v| v.len() == 160 * 160 * 4);
                         if cache.len() == 4 {
                             cache.pop_front();
                         }
-                        if pixels.is_some() {
+                        if pixels.is_some() && cacheable {
                             cache.push_back((key.clone(), pixels.clone()));
                         }
                         pixels
@@ -108,32 +111,18 @@ impl Drop for Worker {
         }
     }
 }
-fn load(key: &Key, cancel: Cancel) -> Option<Vec<u8>> {
+fn load(key: &Key, cancel: Cancel) -> (Option<Vec<u8>>, bool) {
     let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::ArtworkDecode,
     );
-    if let Ok(mut decoder) = Decoder::open(&key.path, 44100, cancel) {
+    if let Ok(mut decoder) = MediaFile::open(&key.path, cancel) {
         if decoder.metadata.artwork {
             if let Ok(pixels) = decoder.artwork() {
-                return Some(pixels);
+                return (Some(pixels), true);
             }
         }
     }
-    let parent = key.path.parent()?;
-    [
-        "cover.jpg",
-        "cover.jpeg",
-        "cover.png",
-        "cover.webp",
-        "folder.jpg",
-        "folder.jpeg",
-        "folder.png",
-        "folder.webp",
-        "album.jpg",
-        "album.png",
-    ]
-    .iter()
-    .find_map(|name| external_artwork(&parent.join(name)).ok())
+    (folder_artwork(&key.path).ok(), false)
 }
 
 #[cfg(test)]

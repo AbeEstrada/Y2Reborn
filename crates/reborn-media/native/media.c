@@ -6,6 +6,7 @@
  * byte-oriented stereo PCM stream.
  */
 #define _POSIX_C_SOURCE 200809L
+#define _FILE_OFFSET_BITS 64
 #include <libavcodec/avcodec.h>
 #include <libavcodec/packet.h>
 #include <libavcodec/version.h>
@@ -24,11 +25,15 @@
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/replaygain.h>
 #include <libswresample/swresample.h>
 #include <libswresample/version.h>
 #include <libswscale/swscale.h>
 #include <libswscale/version.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -85,8 +90,10 @@ void rb_media_logging(void (*callback)(int, const char *),
   av_log_set_level(AV_LOG_TRACE);
   logger = callback;
   av_log_set_callback(bridge);
-  av_max_alloc(32 * 1024 * 1024);
+
 }
+/* Called exactly once by Rust before exposing the loaded API to workers. */
+void rb_media_limits(void) { av_max_alloc(32 * 1024 * 1024); }
 const char *rb_media_version(void) { return av_version_info(); }
 void rb_media_error(int code, char *out, int size) {
   av_strerror(code, out, size);
@@ -102,6 +109,9 @@ typedef struct {
   uint32_t replaygain_mode, eq_active;
   double track_gain_db, album_gain_db, track_peak, album_peak;
   double applied_gain_db, headroom_db;
+  char date[128], genre[512];
+  uint64_t open_us, probe_us, io_bytes;
+  uint32_t info_runs;
 } RbMetadata;
 
 typedef struct {
@@ -118,6 +128,11 @@ typedef struct {
 
 typedef struct {
   AVFormatContext *f;
+  AVIOContext *io;
+  FILE *file;
+  int64_t file_size;
+  uint64_t io_read;
+  int io_limited;
   AVCodecContext *c;
   AVPacket *p;
   AVFrame *frame;
@@ -139,16 +154,18 @@ typedef struct {
   size_t pending_frames, pending_offset, pending_capacity;
   double applied_gain_db, headroom_db;
   char filter_description[1024];
+  uint64_t open_us, probe_us;
+  uint32_t info_runs;
 } RbMedia;
 
 static const char *tag(RbMedia *m, const char *key) {
   AVDictionaryEntry *e = av_dict_get(m->f->metadata, key, NULL, 0);
-  if (!e)
+  if (!e || !*e->value)
     e = av_dict_get(m->f->streams[m->stream]->metadata, key, NULL, 0);
   return e ? e->value : "";
 }
 static int parse_tag_number(const char *s, double minimum, double maximum,
-                            double *value) {
+                            double *value, int allow_db) {
   if (!s || !*s || !value)
     return 0;
   errno = 0;
@@ -162,7 +179,7 @@ static int parse_tag_number(const char *s, double minimum, double maximum,
   /* ReplayGain gain tags conventionally carry a human-readable "dB"
    * suffix. Accept that suffix, while still rejecting any other trailing
    * text. */
-  if (strncasecmp(end, "db", 2) == 0) {
+  if (allow_db && strncasecmp(end, "db", 2) == 0) {
     end += 2;
     while (*end && isspace((unsigned char)*end))
       end++;
@@ -172,17 +189,36 @@ static int parse_tag_number(const char *s, double minimum, double maximum,
   *value = parsed;
   return 1;
 }
+static const AVReplayGain *replaygain(RbMedia *m) {
+  AVCodecParameters *p = m->f->streams[m->stream]->codecpar;
+  const AVPacketSideData *sd = av_packet_side_data_get(
+      p->coded_side_data, p->nb_coded_side_data, AV_PKT_DATA_REPLAYGAIN);
+  return sd && sd->size >= sizeof(AVReplayGain) ? (const AVReplayGain *)sd->data : NULL;
+}
 static int gain_tag_value(RbMedia *m, const char *upper, const char *lower,
                           double *value) {
-  if (parse_tag_number(tag(m, upper), -60.0, 60.0, value))
+  if (parse_tag_number(tag(m, upper), -60.0, 60.0, value, 1))
     return 1;
-  return parse_tag_number(tag(m, lower), -60.0, 60.0, value);
+  if (*tag(m, lower))
+    return parse_tag_number(tag(m, lower), -60.0, 60.0, value, 1);
+  const AVReplayGain *rg = replaygain(m);
+  if (!rg) return 0;
+  int32_t gain = strstr(lower, "album") ? rg->album_gain : rg->track_gain;
+  if (gain == INT32_MIN) return 0;
+  *value = gain / 100000.0;
+  return *value >= -60.0 && *value <= 60.0;
 }
 static int peak_tag_value(RbMedia *m, const char *upper, const char *lower,
                           double *value) {
-  if (parse_tag_number(tag(m, upper), 0.0, 16.0, value))
+  if (parse_tag_number(tag(m, upper), 0.0, 16.0, value, 0))
     return 1;
-  return parse_tag_number(tag(m, lower), 0.0, 16.0, value);
+  if (*tag(m, lower))
+    return parse_tag_number(tag(m, lower), 0.0, 16.0, value, 0);
+  const AVReplayGain *rg = replaygain(m);
+  if (!rg) return 0;
+  uint32_t peak = strstr(lower, "album") ? rg->album_peak : rg->track_peak;
+  *value = peak / 100000.0;
+  return peak > 0 && *value <= 16.0;
 }
 static double gain_tag(RbMedia *m, const char *upper, const char *lower) {
   double value = 0.0;
@@ -195,7 +231,14 @@ static double peak_tag(RbMedia *m, const char *upper, const char *lower) {
   return value;
 }
 static void text(char *dst, size_t n, const char *src) {
-  snprintf(dst, n, "%s", src ? src : "");
+  if (!n) return;
+  size_t length = strnlen(src ? src : "", n - 1);
+  /* Do not split a UTF-8 code point at the bounded ABI edge. Invalid input
+   * elsewhere is repaired by Rust's lossy conversion, as before. */
+  if (src && src[length])
+    while (length && ((unsigned char)src[length] & 0xc0) == 0x80) length--;
+  if (length) memcpy(dst, src, length);
+  dst[length] = 0;
 }
 static enum AVSampleFormat format_from_int(int format) {
   switch (format) {
@@ -377,6 +420,8 @@ int rb_media_crossfade(const uint8_t *a, const uint8_t *b, int frames, int rate,
   graph = avfilter_graph_alloc();
   if (!graph)
     goto done;
+  /* Acrossfade and its buffer endpoints have no slice-parallel work. */
+  graph->nb_threads = 1;
   char args[256];
   snprintf(args, sizeof(args),
            "time_base=1/%d:sample_rate=%d:sample_fmt=fltp:channel_layout=stereo",
@@ -511,6 +556,7 @@ static int append_pending(RbMedia *m, const uint8_t *data, size_t frames) {
   if (frames > (SIZE_MAX / (size_t)m->output_bytes) - m->pending_frames)
     return AVERROR(EINVAL);
   size_t need = (m->pending_frames + frames) * (size_t)m->output_bytes;
+  if (need > 32 * 1024 * 1024) return AVERROR(EFBIG);
   if (need > m->pending_capacity) {
     size_t cap = m->pending_capacity ? m->pending_capacity : 65536;
     while (cap < need) {
@@ -569,6 +615,12 @@ static int make_filter_graph(RbMedia *m) {
   m->graph = avfilter_graph_alloc();
   if (!m->graph)
     return AVERROR(ENOMEM);
+  /* Only equalizer supports slice threads in this audio graph, and there
+   * are at most two canonical channels. Avoid an unused automatic pool. */
+  int active_eq = 0;
+  for (uint32_t i = 0; i < m->dsp.eq_count && i < 8; i++)
+    active_eq |= m->dsp.eq[i].gain_db != 0.0;
+  m->graph->nb_threads = active_eq ? 2 : 1;
   char args[256];
   snprintf(args, sizeof(args),
            "time_base=1/%d:sample_rate=%d:sample_fmt=fltp:channel_layout=stereo",
@@ -869,8 +921,242 @@ void rb_media_close(RbMedia *m) {
   av_packet_free(&m->p);
   avcodec_free_context(&m->c);
   avformat_close_input(&m->f);
+  if (m->io) {
+    av_freep(&m->io->buffer);
+    avio_context_free(&m->io);
+  }
+  if (m->file) fclose(m->file);
   free(m->pending);
   free(m);
+}
+
+static uint64_t micros(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (uint64_t)t.tv_sec * 1000000 + (uint64_t)t.tv_nsec / 1000;
+}
+static int local_read(void *opaque, uint8_t *buffer, int size) {
+  RbMedia *m = opaque;
+  if (interrupted(m->cancel)) return AVERROR_EXIT;
+  /* A per-open byte budget bounds aggregate header/tag work as well as
+   * individual av_max_alloc allocations. Normal playback releases this
+   * analysis budget after initialization, retaining cancellation/deadlines. */
+  if (m->io_limited) {
+    uint64_t remaining = 32 * 1024 * 1024ULL - m->io_read;
+    if (!remaining) return AVERROR(EFBIG);
+    if ((uint64_t)size > remaining) size = (int)remaining;
+  }
+  size_t n = fread(buffer, 1, (size_t)size, m->file);
+  m->io_read += n;
+  if (n) return (int)n;
+  return ferror(m->file) ? AVERROR(EIO) : AVERROR_EOF;
+}
+static int64_t local_seek(void *opaque, int64_t offset, int whence) {
+  RbMedia *m = opaque;
+  if (interrupted(m->cancel)) return AVERROR_EXIT;
+  if (whence & AVSEEK_SIZE) return m->file_size;
+  whence &= ~AVSEEK_FORCE;
+  if (fseeko(m->file, offset, whence) != 0) return AVERROR(errno);
+  return ftello(m->file);
+}
+static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
+  deadline(cancel);
+  m->cancel = cancel;
+  m->f = avformat_alloc_context();
+  if (!m->f) return AVERROR(ENOMEM);
+  m->f->interrupt_callback = (AVIOInterruptCB){interrupted, cancel};
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (fd < 0) return AVERROR(errno);
+  struct stat info;
+  if (fstat(fd, &info) < 0 || !S_ISREG(info.st_mode) || info.st_size <= 0) {
+    close(fd); return AVERROR_INVALIDDATA;
+  }
+  m->file_size = info.st_size;
+  m->file = fdopen(fd, "rb");
+  if (!m->file) { int error = errno; close(fd); return AVERROR(error); }
+  uint8_t *buffer = av_malloc(32768);
+  if (!buffer) return AVERROR(ENOMEM);
+  m->io = avio_alloc_context(buffer, 32768, 0, m, local_read, NULL, local_seek);
+  if (!m->io) { av_free(buffer); return AVERROR(ENOMEM); }
+  m->io_limited = 1;
+  m->f->pb = m->io;
+  m->f->flags |= AVFMT_FLAG_CUSTOM_IO;
+  /* Retain detection/probe budgets: a header shortcut must not weaken probing. */
+  m->f->probesize = 2 * 1024 * 1024;
+  m->f->max_analyze_duration = 3 * AV_TIME_BASE;
+  m->f->max_streams = 16;
+  AVDictionary *options = NULL;
+  av_dict_set(&options, "protocol_whitelist", "file", 0);
+  av_dict_set(&options, "format_whitelist", "flac,mp3,mov,ogg,wav,aac,aiff,ape,wv", 0);
+  uint64_t start = micros();
+  int ret = avformat_open_input(&m->f, path, NULL, &options);
+  m->open_us = micros() - start;
+  av_dict_free(&options);
+  if (ret < 0) return ret;
+  if (m->io->error == AVERROR(EFBIG) || m->io->error == AVERROR_EXIT) return m->io->error;
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    if (m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+        !(m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC))
+      return AVERROR_INVALIDDATA;
+  return 0;
+}
+static int stream_info(RbMedia *m) {
+  /* Attached images do not supply audio properties. Discard them during
+   * stream analysis so FFmpeg cannot decode a giant cover just to read tags. */
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    if (m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC)
+      m->f->streams[i]->discard = AVDISCARD_ALL;
+  uint64_t start = micros();
+  int ret = avformat_find_stream_info(m->f, NULL);
+  m->probe_us += micros() - start;
+  m->info_runs++;
+  if (m->io->error == AVERROR(EFBIG) || m->io->error == AVERROR_EXIT) return m->io->error;
+  return ret;
+}
+static uint32_t source_bits(AVCodecParameters *p) {
+  int bits = av_get_bits_per_sample(p->codec_id);
+  /* Lossy decoded PCM width is not an encoded precision. */
+  if (bits <= 0 && (p->codec_id == AV_CODEC_ID_FLAC ||
+      p->codec_id == AV_CODEC_ID_ALAC || p->codec_id == AV_CODEC_ID_APE ||
+      p->codec_id == AV_CODEC_ID_WAVPACK))
+    bits = p->bits_per_raw_sample > 0 ? p->bits_per_raw_sample : p->bits_per_coded_sample;
+  return bits > 0 && bits <= 64 ? (uint32_t)bits : 0;
+}
+static uint32_t ordinal(const char *s) {
+  while (isspace((unsigned char)*s)) s++;
+  if (!isdigit((unsigned char)*s)) return 0;
+  errno = 0;
+  char *end;
+  unsigned long value = strtoul(s, &end, 10);
+  if (errno || value > UINT32_MAX) return 0;
+  while (isspace((unsigned char)*end)) end++;
+  if (*end == '/') {
+    end++;
+    while (isspace((unsigned char)*end)) end++;
+    if (!isdigit((unsigned char)*end)) return 0;
+    errno = 0;
+    (void)strtoul(end, &end, 10);
+    if (errno) return 0;
+    while (isspace((unsigned char)*end)) end++;
+  }
+  return *end ? 0 : (uint32_t)value;
+}
+static const char *alias(RbMedia *m, const char *key, const char *other) {
+  const char *value = tag(m, key);
+  return *value ? value : tag(m, other);
+}
+static int image_codec(enum AVCodecID id) {
+  return id == AV_CODEC_ID_MJPEG || id == AV_CODEC_ID_PNG || id == AV_CODEC_ID_WEBP;
+}
+static void extract_metadata(RbMedia *m, RbMetadata *meta) {
+  AVStream *st = m->f->streams[m->stream];
+  AVCodecParameters *p = st->codecpar;
+  memset(meta, 0, sizeof(*meta));
+  text(meta->title, sizeof(meta->title), tag(m, "title"));
+  text(meta->artist, sizeof(meta->artist), !strcmp(m->f->iformat->name, "aiff")
+      ? alias(m, "artist", "author") : tag(m, "artist"));
+  text(meta->album, sizeof(meta->album), tag(m, "album"));
+  text(meta->album_artist, sizeof(meta->album_artist), alias(m, "album_artist", "albumartist"));
+  text(meta->date, sizeof(meta->date), alias(m, "date", "year"));
+  text(meta->genre, sizeof(meta->genre), tag(m, "genre"));
+  text(meta->codec, sizeof(meta->codec), avcodec_get_name(p->codec_id));
+  meta->track = ordinal(alias(m, "track", "tracknumber"));
+  meta->disc = ordinal(alias(m, "disc", "discnumber"));
+  meta->rate = p->sample_rate;
+  meta->channels = p->ch_layout.nb_channels;
+  meta->source_bits = source_bits(p);
+  if (av_get_bits_per_sample(p->codec_id) > 0)
+    text(meta->source_sample_fmt, sizeof(meta->source_sample_fmt), avcodec_get_name(p->codec_id));
+  else if (meta->source_bits)
+    snprintf(meta->source_sample_fmt, sizeof(meta->source_sample_fmt),
+        p->codec_id == AV_CODEC_ID_WAVPACK ? "lossless-%u-bit" : "s%u", meta->source_bits);
+  else
+    text(meta->source_sample_fmt, sizeof(meta->source_sample_fmt), "unspecified");
+  int64_t stream_duration = st->duration;
+  /* Ogg Opus's final granule includes pre-skip, unlike MP3's already-trimmed
+   * Xing duration. Subtract only the explicit Opus/Ogg codec delay. */
+  if (p->codec_id == AV_CODEC_ID_OPUS && !strcmp(m->f->iformat->name, "ogg") &&
+      p->initial_padding > 0 && p->sample_rate > 0 && st->time_base.num > 0 && st->time_base.den > 0) {
+    int64_t delay = av_rescale_q(p->initial_padding, (AVRational){1, p->sample_rate}, st->time_base);
+    if (stream_duration > delay) stream_duration -= delay;
+  }
+  int64_t duration = stream_duration > 0 && st->time_base.den > 0
+      ? av_rescale_q(stream_duration, st->time_base, (AVRational){1, 1000}) : 0;
+  meta->duration_ms = duration > 0 ? (uint64_t)duration :
+      (m->f->duration > 0 ? (uint64_t)m->f->duration / 1000 : 0);
+  meta->bitrate = p->bit_rate > 0 ? (uint64_t)p->bit_rate :
+      (m->f->bit_rate > 0 ? (uint64_t)m->f->bit_rate : 0);
+  meta->skip_start = p->initial_padding > 0 ? (uint64_t)p->initial_padding : 0;
+  meta->skip_end = p->trailing_padding > 0 ? (uint64_t)p->trailing_padding : 0;
+  meta->track_gain_db = gain_tag(m, "REPLAYGAIN_TRACK_GAIN", "replaygain_track_gain");
+  meta->album_gain_db = gain_tag(m, "REPLAYGAIN_ALBUM_GAIN", "replaygain_album_gain");
+  meta->track_peak = peak_tag(m, "REPLAYGAIN_TRACK_PEAK", "replaygain_track_peak");
+  meta->album_peak = peak_tag(m, "REPLAYGAIN_ALBUM_PEAK", "replaygain_album_peak");
+  for (unsigned i = 0; i < m->f->nb_streams; i++) {
+    AVStream *s = m->f->streams[i];
+    if ((s->disposition & AV_DISPOSITION_ATTACHED_PIC) && image_codec(s->codecpar->codec_id) &&
+        s->attached_pic.size > 0 && s->attached_pic.size <= 16 * 1024 * 1024)
+      meta->artwork = 1;
+  }
+  meta->open_us = m->open_us;
+  meta->probe_us = m->probe_us;
+  meta->info_runs = m->info_runs;
+  meta->io_bytes = m->f->pb && m->f->pb->bytes_read > 0 ? (uint64_t)m->f->pb->bytes_read : 0;
+}
+/* A demux-only owner for scans and collection covers. It never creates a DSP
+ * graph, resampler or PCM buffers. Decoder initialization may parse codec
+ * extradata (FLAC/ALAC), but no audio frames are decoded on the header path. */
+int rb_media_inspect(const char *path, RbCancel *cancel, RbMedia **out, RbMetadata *meta) {
+  *out = NULL;
+  RbMedia *m = calloc(1, sizeof(*m));
+  if (!m) return AVERROR(ENOMEM);
+  int ret = open_input(m, path, cancel);
+  if (ret < 0) goto fail;
+  m->stream = -1;
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    if (m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) { m->stream = (int)i; break; }
+  if (m->stream < 0) { ret = AVERROR_STREAM_NOT_FOUND; goto fail; }
+  AVStream *st = m->f->streams[m->stream];
+  AVCodecParameters *p = st->codecpar;
+  /* FFmpeg's FLAC demuxer leaves channel/precision extraction to its codec.
+   * Use that codec's extradata initialization, never a custom tag/header parser. */
+  if (p->codec_id == AV_CODEC_ID_FLAC && p->extradata_size > 0) {
+    const AVCodec *codec = avcodec_find_decoder(p->codec_id);
+    AVCodecContext *ctx = avcodec_alloc_context3(codec);
+    if (!ctx) { ret = AVERROR(ENOMEM); goto fail; }
+    ctx->thread_count = 1;
+    ret = avcodec_parameters_to_context(ctx, p);
+    if (ret >= 0) ret = avcodec_open2(ctx, codec, NULL);
+    if (ret >= 0) {
+      p->sample_rate = ctx->sample_rate;
+      p->bits_per_raw_sample = ctx->bits_per_raw_sample;
+      ret = av_channel_layout_copy(&p->ch_layout, &ctx->ch_layout);
+    }
+    avcodec_free_context(&ctx);
+    if (ret < 0) goto fail;
+  }
+  unsigned audio = 0;
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    audio += m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
+  const char *name = m->f->iformat->name;
+  int header_format = !strcmp(name, "flac") || !strcmp(name, "wav") || !strcmp(name, "aiff") ||
+      !strcmp(name, "ape") || !strcmp(name, "wv") || !strcmp(name, "ogg") || !strncmp(name, "mov,", 4);
+  if (!header_format || audio != 1 || p->sample_rate <= 0 || p->ch_layout.nb_channels <= 0 || st->duration <= 0) {
+    if ((ret = stream_info(m)) < 0) goto fail;
+    ret = av_find_best_stream(m->f, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    if (ret < 0) goto fail;
+    m->stream = ret;
+    p = m->f->streams[m->stream]->codecpar;
+  }
+  if (p->sample_rate < 8000 || p->sample_rate > 384000 ||
+      p->ch_layout.nb_channels < 1 || p->ch_layout.nb_channels > 8 ||
+      !avcodec_find_decoder(p->codec_id)) { ret = AVERROR_INVALIDDATA; goto fail; }
+  extract_metadata(m, meta);
+  *out = m;
+  return 0;
+fail:
+  rb_media_close(m);
+  return ret;
 }
 
 int rb_media_open(const char *path, int rate, int output_format,
@@ -895,21 +1181,8 @@ int rb_media_open(const char *path, int rate, int output_format,
   m->output_format = output_format;
   m->output_fmt = format_from_int(output_format);
   m->output_bytes = av_get_bytes_per_sample(m->output_fmt) * 2;
-  deadline(cancel);
-  m->f = avformat_alloc_context();
-  if (!m->f)
-    goto fail;
-  m->f->interrupt_callback = (AVIOInterruptCB){interrupted, cancel};
-  m->f->probesize = 2 * 1024 * 1024;
-  m->f->max_analyze_duration = 3 * AV_TIME_BASE;
-  AVDictionary *options = NULL;
-  av_dict_set(&options, "protocol_whitelist", "file", 0);
-  av_dict_set(&options, "format_whitelist", "flac,mp3,mov,ogg,wav,aac,aiff,ape,wv", 0);
-  ret = avformat_open_input(&m->f, path, NULL, &options);
-  av_dict_free(&options);
-  if (ret < 0)
-    goto fail;
-  if ((ret = avformat_find_stream_info(m->f, NULL)) < 0)
+  ret = open_input(m, path, cancel);
+  if (ret < 0 || (ret = stream_info(m)) < 0)
     goto fail;
   const AVCodec *codec = NULL;
   ret = av_find_best_stream(m->f, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
@@ -926,7 +1199,7 @@ int rb_media_open(const char *path, int rate, int output_format,
     goto fail;
   m->c->thread_count = 1;
   /* Preserve codec/container delay and padding as skip-sample side data. */
-  av_opt_set_int(m->c, "skip_manual", 1, AV_OPT_SEARCH_CHILDREN);
+  m->c->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
   if ((ret = avcodec_open2(m->c, codec, NULL)) < 0)
     goto fail;
   if (m->c->sample_rate < 8000 || m->c->sample_rate > 384000 ||
@@ -956,34 +1229,13 @@ int rb_media_open(const char *path, int rate, int output_format,
   m->first_frame = 1;
   m->seek_pending = 0;
   m->seek_trim_remaining = 0;
-  memset(meta, 0, sizeof(*meta));
-  text(meta->title, sizeof(meta->title), tag(m, "title"));
-  text(meta->artist, sizeof(meta->artist), tag(m, "artist"));
-  text(meta->album, sizeof(meta->album), tag(m, "album"));
-  text(meta->album_artist, sizeof(meta->album_artist), tag(m, "album_artist"));
-  text(meta->codec, sizeof(meta->codec), codec->name);
-  text(meta->source_sample_fmt, sizeof(meta->source_sample_fmt),
-       av_get_sample_fmt_name(m->c->sample_fmt));
+  extract_metadata(m, meta);
   text(meta->decoder_sample_fmt, sizeof(meta->decoder_sample_fmt),
        av_get_sample_fmt_name(m->c->sample_fmt));
   text(meta->internal_sample_fmt, sizeof(meta->internal_sample_fmt), "fltp");
   text(meta->final_sample_fmt, sizeof(meta->final_sample_fmt),
-       output_format == 3 ? "s24le-in-32"
-                          : av_get_sample_fmt_name(m->output_fmt));
+       output_format == 3 ? "s24le-in-32" : av_get_sample_fmt_name(m->output_fmt));
   text(meta->filters, sizeof(meta->filters), m->filter_description);
-  meta->track = strtoul(tag(m, "track"), NULL, 10);
-  meta->disc = strtoul(tag(m, "disc"), NULL, 10);
-  meta->rate = m->c->sample_rate;
-  meta->channels = m->c->ch_layout.nb_channels;
-  meta->source_bits =
-      m->f->streams[m->stream]->codecpar->bits_per_raw_sample > 0
-          ? (uint32_t)m->f->streams[m->stream]->codecpar->bits_per_raw_sample
-          : (uint32_t)av_get_bits_per_sample(codec->id);
-  /* Compressed formats have no source PCM bit depth. Keep that distinction in
-   * diagnostics instead of reporting the decoder's working width as source
-   * precision. */
-  meta->bitrate = m->f->bit_rate > 0 ? (uint64_t)m->f->bit_rate : 0;
-  meta->duration_ms = m->f->duration > 0 ? (uint64_t)m->f->duration / 1000 : 0;
   meta->output_rate = rate;
   meta->output_channels = 2;
   meta->output_format = (uint32_t)output_format;
@@ -997,15 +1249,9 @@ int rb_media_open(const char *path, int rate, int output_format,
            : "no rate/channel resampling; final FLTP to packed sink conversion");
   meta->replaygain_mode = (uint32_t)m->dsp.replay_gain_mode;
   meta->eq_active = m->dsp.eq_count != 0;
-  meta->track_gain_db = gain_tag(m, "REPLAYGAIN_TRACK_GAIN", "replaygain_track_gain");
-  meta->album_gain_db = gain_tag(m, "REPLAYGAIN_ALBUM_GAIN", "replaygain_album_gain");
-  meta->track_peak = peak_tag(m, "REPLAYGAIN_TRACK_PEAK", "replaygain_track_peak");
-  meta->album_peak = peak_tag(m, "REPLAYGAIN_ALBUM_PEAK", "replaygain_album_peak");
   meta->applied_gain_db = m->applied_gain_db;
   meta->headroom_db = m->headroom_db;
-  for (unsigned i = 0; i < m->f->nb_streams; i++)
-    if (m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC)
-      meta->artwork = 1;
+  m->io_limited = 0;
   *out = m;
   return 0;
 fail:
@@ -1064,51 +1310,73 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
   return 0;
 }
 
+static int jpeg_lowres(const AVCodec *codec, AVCodecParameters *params, AVPacket *packet, int side) {
+  int width = params ? params->width : 0, height = params ? params->height : 0;
+  if (width <= 0 || height <= 0) {
+    /* MJPEG's skip_frame=ALL parses SOF and stops before allocating pixels.
+     * Use the decoder itself for external image dimensions; no new parser. */
+    AVCodecContext *header = avcodec_alloc_context3(codec);
+    AVFrame *frame = av_frame_alloc();
+    if (!header || !frame) { avcodec_free_context(&header); av_frame_free(&frame); return 0; }
+    header->max_pixels = 16 * 1024 * 1024;
+    header->thread_count = 1;
+    header->skip_frame = AVDISCARD_ALL;
+    if (avcodec_open2(header, codec, NULL) >= 0 && avcodec_send_packet(header, packet) >= 0) {
+      (void)avcodec_receive_frame(header, frame);
+      width = header->width; height = header->height;
+    }
+    avcodec_free_context(&header); av_frame_free(&frame);
+  }
+  int lowres = 0;
+  while (lowres < codec->max_lowres && lowres < 3 &&
+      (width >> (lowres + 1)) >= side && (height >> (lowres + 1)) >= side) lowres++;
+  return lowres;
+}
+static int decode_art(enum AVCodecID id, AVCodecParameters *params,
+                       AVPacket *packet, uint8_t *out, int side) {
+  if (!image_codec(id) || !packet || packet->size <= 0 || packet->size > 16 * 1024 * 1024)
+    return AVERROR_INVALIDDATA;
+  const AVCodec *codec = avcodec_find_decoder(id);
+  if (!codec) return AVERROR_DECODER_NOT_FOUND;
+  AVCodecContext *ctx = avcodec_alloc_context3(codec);
+  AVFrame *frame = av_frame_alloc();
+  if (!ctx || !frame) {
+    avcodec_free_context(&ctx); av_frame_free(&frame); return AVERROR(ENOMEM);
+  }
+  int r = params ? avcodec_parameters_to_context(ctx, params) : 0;
+  /* PNG/WebP have no reduced-resolution decoder. Bound their full decode to
+   * 4 MP (~16 MiB RGBA); JPEG additionally decodes at 1/8 native resolution. */
+  ctx->max_pixels = id == AV_CODEC_ID_MJPEG ? 16 * 1024 * 1024 : 4 * 1024 * 1024;
+  ctx->thread_count = 1;
+  if (id == AV_CODEC_ID_MJPEG) ctx->lowres = jpeg_lowres(codec, params, packet, side);
+  if (r >= 0) r = avcodec_open2(ctx, codec, NULL);
+  if (r >= 0) r = avcodec_send_packet(ctx, packet);
+  if (r >= 0) r = avcodec_receive_frame(ctx, frame);
+  if (r >= 0) {
+    struct SwsContext *scale = sws_getContext(frame->width, frame->height, frame->format,
+        side, side, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+    if (!scale) r = AVERROR(ENOMEM);
+    else {
+      uint8_t *dest[] = {out}; int stride[] = {side * 4};
+      r = sws_scale(scale, (const uint8_t *const *)frame->data, frame->linesize,
+          0, frame->height, dest, stride);
+      sws_freeContext(scale);
+    }
+  }
+  avcodec_free_context(&ctx); av_frame_free(&frame);
+  return r < 0 ? r : 0;
+}
 int rb_media_art(RbMedia *m, uint8_t *out, int side) {
-  if (!m || !out || side < 1 || side > 256)
-    return AVERROR(EINVAL);
+  if (!m || !out || side < 1 || side > 256) return AVERROR(EINVAL);
+  int error = AVERROR(ENOENT);
   for (unsigned i = 0; i < m->f->nb_streams; i++) {
     AVStream *s = m->f->streams[i];
-    if (!(s->disposition & AV_DISPOSITION_ATTACHED_PIC))
-      continue;
-    const AVCodec *c = avcodec_find_decoder(s->codecpar->codec_id);
-    if (!c)
-      return AVERROR_DECODER_NOT_FOUND;
-    AVCodecContext *ctx = avcodec_alloc_context3(c);
-    AVFrame *f = av_frame_alloc();
-    if (!ctx || !f) {
-      avcodec_free_context(&ctx);
-      av_frame_free(&f);
-      return AVERROR(ENOMEM);
-    }
-    ctx->max_pixels = 16 * 1024 * 1024;
-    ctx->thread_count = 1;
-    int r = avcodec_parameters_to_context(ctx, s->codecpar);
-    if (r >= 0)
-      r = avcodec_open2(ctx, c, NULL);
-    if (r >= 0)
-      r = avcodec_send_packet(ctx, &s->attached_pic);
-    if (r >= 0)
-      r = avcodec_receive_frame(ctx, f);
-    if (r >= 0) {
-      struct SwsContext *scale =
-          sws_getContext(f->width, f->height, f->format, side, side,
-                         AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
-      if (!scale)
-        r = AVERROR(ENOMEM);
-      else {
-        uint8_t *dest[] = {out};
-        int stride[] = {side * 4};
-        r = sws_scale(scale, (const uint8_t *const *)f->data, f->linesize, 0,
-                      f->height, dest, stride);
-        sws_freeContext(scale);
-      }
-    }
-    avcodec_free_context(&ctx);
-    av_frame_free(&f);
-    return r < 0 ? r : 0;
+    if (!(s->disposition & AV_DISPOSITION_ATTACHED_PIC)) continue;
+    int r = decode_art(s->codecpar->codec_id, s->codecpar, &s->attached_pic, out, side);
+    if (r >= 0) return r;
+    error = r; /* A corrupt first cover must not hide a later valid cover. */
   }
-  return AVERROR(ENOENT);
+  return error;
 }
 
 static enum AVCodecID image_codec_for_path(const char *path) {
@@ -1134,49 +1402,25 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
   const AVCodec *codec = id == AV_CODEC_ID_NONE ? NULL : avcodec_find_decoder(id);
   if (!codec)
     return AVERROR_DECODER_NOT_FOUND;
-  FILE *file = fopen(path, "rb");
-  if (!file)
-    return AVERROR(errno);
-  if (fseek(file, 0, SEEK_END) != 0) {
-    fclose(file);
-    return AVERROR(EIO);
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (fd < 0) return AVERROR(errno);
+  struct stat info;
+  if (fstat(fd, &info) < 0 || !S_ISREG(info.st_mode) ||
+      info.st_size <= 0 || info.st_size > 16 * 1024 * 1024) {
+    close(fd); return AVERROR(EINVAL);
   }
-  long length = ftell(file);
-  if (length <= 0 || length > 16 * 1024 * 1024 || fseek(file, 0, SEEK_SET) != 0) {
-    fclose(file);
-    return AVERROR(EINVAL);
-  }
+  long length = (long)info.st_size;
+  FILE *file = fdopen(fd, "rb");
+  if (!file) { int error = errno; close(fd); return AVERROR(error); }
   AVPacket *packet = av_packet_alloc();
-  AVCodecContext *ctx = avcodec_alloc_context3(codec);
-  AVFrame *frame = av_frame_alloc();
-  int r = packet && ctx && frame ? av_new_packet(packet, length) : AVERROR(ENOMEM);
+  int r = packet ? av_new_packet(packet, (int)length) : AVERROR(ENOMEM);
   if (r >= 0 && fread(packet->data, 1, (size_t)length, file) != (size_t)length)
     r = AVERROR(EIO);
   fclose(file);
-  if (r >= 0)
-    r = avcodec_open2(ctx, codec, NULL);
-  if (r >= 0)
-    r = avcodec_send_packet(ctx, packet);
-  if (r >= 0)
-    r = avcodec_receive_frame(ctx, frame);
-  if (r >= 0) {
-    struct SwsContext *scale =
-        sws_getContext(frame->width, frame->height, frame->format, side, side,
-                       AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
-    if (!scale)
-      r = AVERROR(ENOMEM);
-    else {
-      uint8_t *dest[] = {out};
-      int stride[] = {side * 4};
-      r = sws_scale(scale, (const uint8_t *const *)frame->data,
-                    frame->linesize, 0, frame->height, dest, stride);
-      sws_freeContext(scale);
-    }
-  }
+  if (r >= 0) r = decode_art(id, NULL, packet, out, side);
   av_packet_free(&packet);
-  avcodec_free_context(&ctx);
-  av_frame_free(&frame);
-  return r < 0 ? r : 0;
+  return r;
+
 }
 
 static int json_append(char *out, int size, int *used, const char *fmt, ...) {

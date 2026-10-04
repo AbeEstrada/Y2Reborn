@@ -4,6 +4,10 @@ use super::*;
 use serde_json::Value;
 use std::io::Write;
 
+pub fn process_memory() -> Option<String> {
+    fs::read_to_string("/proc/self/status").ok()
+}
+
 pub fn summary(name: &str, times: &[u64]) -> Value {
     let mut sorted = times.to_vec();
     sorted.sort_unstable();
