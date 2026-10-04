@@ -6,10 +6,12 @@ Reborn `9cd12baeeb70b204e08299bd4c91c8c35604c304` with FFmpeg 9.0.2.
 The media/audio/volume implementations used for these observations are shared
 with the selected source. No product DSP or radio implementation changed.
 
-**24-bit and true 32-bit: HARDWARE_PROVEN_UNSUPPORTED on the Y2 DL1 route.**
-The complete exact MT6582 functional specification documents two 16-bit DL1
-channel outputs and no wide fetch selector. I2S 32-bit words and the CS43131's
-wider input support cannot restore information lost at that boundary.
+**Correction: hardware24/32 feasibility is not established; impossibility
+is not proven.** The earlier HARDWARE_PROVEN_UNSUPPORTED verdict is withdrawn.
+The MT6582 specification documents two16-bit DL1 monitor fields and no wider
+fetch selector was found. A monitor's width does not conclusively define all
+internal data-path modes. Installed playback is verified S16; I2S and the
+CS43131 accept wider words, but a complete wider source transport is unproven.
 The canonical evidence, register contract, live results, CPU measurements and
 hardware source identities are in the paired Y2Linux repository:
 `docs/validation/Y2-HIGHRES-AUDIO-COMPLETION.md`.
