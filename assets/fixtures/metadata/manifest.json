@@ -1,0 +1,74 @@
+{
+  "license": "CC0-1.0 fixture metadata and generated images; original media provenance in ../manifest.json",
+  "large_jpeg_origin": "4000x4000 YUV encoded by direct host FFmpeg libraries; regenerate with tools/build/jpeg_fixture.c",
+  "files": {
+    "art-jpg.flac": {
+      "bytes": 16363,
+      "sha256": "22968f7fc1849d6c1321ff055f8f6c9354613c9e736cfc9de18c8b0dfe9ceed7"
+    },
+    "art-png.flac": {
+      "bytes": 16230,
+      "sha256": "9550500709e8403e02c7e701025c7b0c29eeae68ddf769bd8e871b67f6d24efa"
+    },
+    "art-webp.flac": {
+      "bytes": 16217,
+      "sha256": "1d428e89ce6022597ccf318cc228edfc7047c18450738d4438fe6a3d4f937a8b"
+    },
+    "corrupt-art.flac": {
+      "bytes": 16165,
+      "sha256": "c936df4acba5ce0150f0cc66580e2d8a2e9aaeb7054633c42f998ba9c54bdb9e"
+    },
+    "duplicate.flac": {
+      "bytes": 15923,
+      "sha256": "e16b85b0bb90e4f5150b647666fc088b7a2ee5a306c279942c3da49a19f78022"
+    },
+    "empty.flac": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "huge-art-dimensions.flac": {
+      "bytes": 16224,
+      "sha256": "082fc1729cbb2d582ae34c9d2ff5903ef921fba177f3de171f1b11bdcb6f07a5"
+    },
+    "huge-art-metadata.flac": {
+      "bytes": 16157,
+      "sha256": "6b2efc390c4c51152e68060ac4b5b924a7e77b8273c2b9ac937d73a609215c2a"
+    },
+    "huge.png": {
+      "bytes": 68,
+      "sha256": "78eccdbca13feb573ca9259af497757ef645127ece2e928d18bdf0c41411546f"
+    },
+    "id3.mp3": {
+      "bytes": 5011,
+      "sha256": "b94da4d77b0759ff6ec8937c3d7511db447f17d276bb421e7e018bca572a2733"
+    },
+    "invalid-utf8.flac": {
+      "bytes": 15867,
+      "sha256": "a57fc3e3377cf6d5a898075393a6e8e273df628b79d6fbc1feb9645614960c8d"
+    },
+    "large.jpg": {
+      "bytes": 93955,
+      "sha256": "5ba000ea2ac93eaaafc7f5cc3706cd1c56d0fd95491dce9d79a53dc0c061f8f6"
+    },
+    "long.flac": {
+      "bytes": 35983,
+      "sha256": "5042b9f3ccdfe66fd747c3641fa1efbe62c6e29e7cac44092283b4458e142591"
+    },
+    "tags.aiff": {
+      "bytes": 72096,
+      "sha256": "5a590ab8b16c9587ef20144ef201fa267581c635ae784176ebec230fb37893ba"
+    },
+    "tags.ape": {
+      "bytes": 1152,
+      "sha256": "98f5486cb46d27765c24f23be219c17d706e340b440e6e1e38bfb33451c040c1"
+    },
+    "tags.flac": {
+      "bytes": 16111,
+      "sha256": "8d84a7a32e6ed8178c45042b4a0ad9b392f4881e70e81eeb688f5d05415edb0f"
+    },
+    "tags.wav": {
+      "bytes": 72222,
+      "sha256": "adfe78e0308e85715c6dee713a29d5e7ace98ad04d70b45225d9299b8567a198"
+    }
+  }
+}

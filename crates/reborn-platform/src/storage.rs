@@ -25,6 +25,11 @@ impl PinnedSidecar {
     }
 }
 impl PinnedTrack {
+    /// The directory descriptor is retained with the media file; callers may
+    /// enumerate candidate names here, then open each with open_sidecar.
+    pub fn sidecar_directory(&self) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}", self._parent.as_raw_fd()))
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }

@@ -2,7 +2,8 @@ use crate::volume::VolumeRamp;
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
 use reborn_media::{
-    convert_pcm, crossfade_pcm, external_artwork, Cancel, Decoder, DspConfig, OutputSpec, Pcm,
+    convert_pcm, crossfade_pcm, external_artwork, folder_artwork_candidates, Cancel, Decoder,
+    DspConfig, OutputSpec, Pcm,
 };
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
@@ -549,47 +550,44 @@ fn publish_artwork(
         }
     }
     let path = cache.join(format!("{}-{}-{}.rgba", track.id, track.size, track.mtime));
-    let cached = std::fs::read(&path)
-        .ok()
+    let cached = decoder
+        .metadata
+        .artwork
+        .then(|| std::fs::metadata(&path).ok())
+        .flatten()
+        .filter(|meta| meta.len() == 160 * 160 * 4)
+        .and_then(|_| std::fs::read(&path).ok())
         .filter(|b| b.len() == 160 * 160 * 4);
-    let bytes = cached
-        .clone()
-        .or_else(|| {
-            decoder
-                .metadata
-                .artwork
-                .then(|| decoder.artwork())
-                .and_then(Result::ok)
-        })
-        .or_else(|| {
-            [
-                "cover.jpg",
-                "cover.jpeg",
-                "cover.png",
-                "cover.webp",
-                "folder.jpg",
-                "folder.jpeg",
-                "folder.png",
-                "folder.webp",
-                "album.jpg",
-                "album.jpeg",
-                "album.png",
-                "album.webp",
-            ]
-            .iter()
-            .find_map(|name| {
-                let file = decoder._source.open_sidecar(name).ok()?;
-                external_artwork(file.path()).ok()
-            })
-        });
+    let have_cached = cached.is_some();
+    let embedded = cached.or_else(|| {
+        decoder
+            .metadata
+            .artwork
+            .then(|| decoder.artwork())
+            .and_then(Result::ok)
+    });
+    let can_cache = embedded.is_some();
+    let bytes = embedded.or_else(|| pinned_folder_artwork(&decoder._source).ok());
     if let Some(bytes) = bytes {
-        if cached.is_none() {
+        if !have_cached && can_cache {
             let _ = reborn_core::atomic_write(&path, &bytes);
         }
         Some(bytes)
     } else {
         None
     }
+}
+fn pinned_folder_artwork(
+    source: &reborn_platform::storage::PinnedTrack,
+) -> Result<Vec<u8>, String> {
+    for name in folder_artwork_candidates(&source.sidecar_directory())? {
+        if let Ok(file) = source.open_sidecar(&name) {
+            if let Ok(pixels) = external_artwork(file.path()) {
+                return Ok(pixels);
+            }
+        }
+    }
+    Err("no usable pinned folder artwork".into())
 }
 pub(crate) type SinkFactory =
     Box<dyn Fn(&SinkSpec, Observer, u64) -> Result<Box<dyn AudioSink>, String> + Send>;
@@ -1736,11 +1734,19 @@ mod tests {
                 Cancel::new().unwrap(),
             )
             .unwrap();
+            let semantic = |metadata: &reborn_media::Metadata| {
+                let mut value = serde_json::to_value(metadata).unwrap();
+                for key in ["open_us", "probe_us", "io_bytes", "info_runs"] {
+                    value.as_object_mut().unwrap().remove(key);
+                }
+                value
+            };
             assert_eq!(
-                serde_json::to_value(&direct.metadata).unwrap(),
-                serde_json::to_value(&pinned.metadata).unwrap(),
+                semantic(&direct.metadata),
+                semantic(&pinned.metadata),
                 "{name}"
             );
+            assert!(direct.metadata.io_bytes > 0 && pinned.metadata.io_bytes > 0);
             let expected = direct.read().unwrap().unwrap();
             let actual = pinned.read().unwrap().unwrap();
             assert_eq!(actual.data, expected.data, "{name}");
@@ -1762,6 +1768,49 @@ mod tests {
                 "{name}"
             );
         }
+    }
+    #[test]
+    fn pinned_sidecars_keep_case_fallback_and_parent_identity_without_following_links() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("reborn-pinned-art-{}", std::process::id()));
+        let moved = root.with_extension("moved");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&moved);
+        std::fs::create_dir(&root).unwrap();
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
+        std::fs::copy(fixtures.join("tone.flac"), root.join("song.flac")).unwrap();
+        std::fs::write(root.join("CoVeR.jpg"), b"corrupt cover").unwrap();
+        std::fs::copy(
+            fixtures.join("artwork-external.png"),
+            root.join("FoLdEr.PNG"),
+        )
+        .unwrap();
+        symlink(
+            fixtures.join("artwork-external.jpg"),
+            root.join("album.jpg"),
+        )
+        .unwrap();
+        let track = Track {
+            source_id: "internal".into(),
+            path: root.join("song.flac"),
+            ..Default::default()
+        };
+        let pinned = reborn_platform::storage::pin_track(&track, &root).unwrap();
+        let expected = external_artwork(&root.join("FoLdEr.PNG")).unwrap();
+        assert_eq!(pinned_folder_artwork(&pinned).unwrap(), expected);
+        assert!(pinned.open_sidecar("album.jpg").is_err());
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::copy(
+            fixtures.join("artwork-external.jpg"),
+            root.join("cover.jpg"),
+        )
+        .unwrap();
+        assert_eq!(pinned_folder_artwork(&pinned).unwrap(), expected);
+        std::fs::remove_file(moved.join("FoLdEr.PNG")).unwrap();
+        assert!(pinned_folder_artwork(&pinned).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(moved).unwrap();
     }
     fn spec(output: AudioOutput, rate: u32) -> SinkSpec {
         SinkSpec {
