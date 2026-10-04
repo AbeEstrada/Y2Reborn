@@ -1,0 +1,1198 @@
+{
+  "date": "2026-10-04",
+  "baseline_reborn": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+  "implementation_commit": "a22107c53fc841f7f7e6e7767822ebec720bea99",
+  "later_changes": "collection sidecar-only path skips media open; QEMU harness asserts diagnostic passed",
+  "rust": "1.90.0",
+  "host_machine": {
+    "system": "Linux",
+    "node": "cachyos-x8664",
+    "release": "7.2.8-1-cachyos",
+    "version": "#1 SMP PREEMPT_DYNAMIC Sat, 26 Sep 2026 15:14:17 +0000",
+    "machine": "x86_64",
+    "processor": ""
+  },
+  "method": {
+    "host": "3 alternating initial/incremental scans per size, same read-only 15-variant corpus, fresh isolated DB each run; cache uncontrolled",
+    "qemu": "3 alternating scans, qemu-arm Cortex-A7 with four host CPU affinity; includes emulator RSS, not physical timing/RAM",
+    "parse": "20 native -Os direct-library owner initializations per file; timer stops before close; old C copied from b71b468 with timing only",
+    "artwork": "10 native decode calls per file including cold first load",
+    "physical_candidate": "NOT_RUN; shared lock was busy; separate storage lane may report stock scanner only"
+  },
+  "host_scans": [
+    {
+      "tracks": 100,
+      "version": "before",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            96,
+            94,
+            93
+          ],
+          "median_ms": 94,
+          "files_per_sec_median": 1052.8242901219046,
+          "peak_rss_kib": [
+            54324,
+            54432,
+            54264
+          ],
+          "metrics_median": {
+            "discovered": 100,
+            "elapsed_ms": 94,
+            "failures": 0,
+            "rescanned": 100,
+            "reused": 0,
+            "tracks_per_sec": 1052.8242901219046
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            1,
+            1,
+            1
+          ],
+          "median_ms": 1,
+          "files_per_sec_median": 78968.04558035592,
+          "peak_rss_kib": [
+            54432,
+            54536,
+            54372
+          ],
+          "metrics_median": {
+            "discovered": 100,
+            "elapsed_ms": 1,
+            "failures": 0,
+            "rescanned": 0,
+            "reused": 100,
+            "tracks_per_sec": 78968.04558035592
+          }
+        }
+      }
+    },
+    {
+      "tracks": 100,
+      "version": "after",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            31,
+            32,
+            31
+          ],
+          "median_ms": 31,
+          "files_per_sec_median": 3139.2179103180692,
+          "peak_rss_kib": [
+            50976,
+            51112,
+            50912
+          ],
+          "metrics_median": {
+            "db_us": 984,
+            "discovered": 100,
+            "elapsed_ms": 31,
+            "failures": 0,
+            "ffmpeg_info_runs": 14,
+            "ffmpeg_io_bytes": 1676391,
+            "ffmpeg_open_us": 6250,
+            "ffmpeg_probe_us": 2387,
+            "metadata_us": 29840,
+            "rescanned": 100,
+            "reused": 0,
+            "tracks_per_sec": 3139.2179103180692
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            1,
+            1,
+            1
+          ],
+          "median_ms": 1,
+          "files_per_sec_median": 92341.13400453025,
+          "peak_rss_kib": [
+            51000,
+            51136,
+            50936
+          ],
+          "metrics_median": {
+            "db_us": 677,
+            "discovered": 100,
+            "elapsed_ms": 1,
+            "failures": 0,
+            "ffmpeg_info_runs": 0,
+            "ffmpeg_io_bytes": 0,
+            "ffmpeg_open_us": 0,
+            "ffmpeg_probe_us": 0,
+            "metadata_us": 0,
+            "rescanned": 0,
+            "reused": 100,
+            "tracks_per_sec": 92341.13400453025
+          }
+        }
+      }
+    },
+    {
+      "tracks": 1000,
+      "version": "before",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            763,
+            752,
+            754
+          ],
+          "median_ms": 754,
+          "files_per_sec_median": 1325.4418294066236,
+          "peak_rss_kib": [
+            55380,
+            55348,
+            55388
+          ],
+          "metrics_median": {
+            "discovered": 1000,
+            "elapsed_ms": 754,
+            "failures": 0,
+            "rescanned": 1000,
+            "reused": 0,
+            "tracks_per_sec": 1325.4418294066236
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            17,
+            18,
+            17
+          ],
+          "median_ms": 17,
+          "files_per_sec_median": 56140.117649476146,
+          "peak_rss_kib": [
+            56360,
+            56328,
+            56368
+          ],
+          "metrics_median": {
+            "discovered": 1000,
+            "elapsed_ms": 17,
+            "failures": 0,
+            "rescanned": 0,
+            "reused": 1000,
+            "tracks_per_sec": 56140.117649476146
+          }
+        }
+      }
+    },
+    {
+      "tracks": 1000,
+      "version": "after",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            125,
+            127,
+            124
+          ],
+          "median_ms": 125,
+          "files_per_sec_median": 7989.78521939271,
+          "peak_rss_kib": [
+            52312,
+            52488,
+            52376
+          ],
+          "metrics_median": {
+            "db_us": 11894,
+            "discovered": 1000,
+            "elapsed_ms": 125,
+            "failures": 0,
+            "ffmpeg_info_runs": 134,
+            "ffmpeg_io_bytes": 16395651,
+            "ffmpeg_open_us": 61365,
+            "ffmpeg_probe_us": 13876,
+            "metadata_us": 103329,
+            "rescanned": 1000,
+            "reused": 0,
+            "tracks_per_sec": 7989.78521939271
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            9,
+            8,
+            8
+          ],
+          "median_ms": 8,
+          "files_per_sec_median": 113465.67515821087,
+          "peak_rss_kib": [
+            52320,
+            52496,
+            52384
+          ],
+          "metrics_median": {
+            "db_us": 5925,
+            "discovered": 1000,
+            "elapsed_ms": 8,
+            "failures": 0,
+            "ffmpeg_info_runs": 0,
+            "ffmpeg_io_bytes": 0,
+            "ffmpeg_open_us": 0,
+            "ffmpeg_probe_us": 0,
+            "metadata_us": 0,
+            "rescanned": 0,
+            "reused": 1000,
+            "tracks_per_sec": 113465.67515821087
+          }
+        }
+      }
+    },
+    {
+      "tracks": 10000,
+      "version": "before",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            7408,
+            7384,
+            7514
+          ],
+          "median_ms": 7408,
+          "files_per_sec_median": 1349.7987624709115,
+          "peak_rss_kib": [
+            56808,
+            56376,
+            56472
+          ],
+          "metrics_median": {
+            "discovered": 10000,
+            "elapsed_ms": 7408,
+            "failures": 0,
+            "rescanned": 10000,
+            "reused": 0,
+            "tracks_per_sec": 1349.7987624709115
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            191,
+            189,
+            195
+          ],
+          "median_ms": 191,
+          "files_per_sec_median": 52339.86272248466,
+          "peak_rss_kib": [
+            66488,
+            65716,
+            65520
+          ],
+          "metrics_median": {
+            "discovered": 10000,
+            "elapsed_ms": 191,
+            "failures": 0,
+            "rescanned": 0,
+            "reused": 10000,
+            "tracks_per_sec": 52339.86272248466
+          }
+        }
+      }
+    },
+    {
+      "tracks": 10000,
+      "version": "after",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            1084,
+            1084,
+            1102
+          ],
+          "median_ms": 1084,
+          "files_per_sec_median": 9217.896653649377,
+          "peak_rss_kib": [
+            53716,
+            53496,
+            53632
+          ],
+          "metrics_median": {
+            "db_us": 165167,
+            "discovered": 10000,
+            "elapsed_ms": 1084,
+            "failures": 0,
+            "ffmpeg_info_runs": 1334,
+            "ffmpeg_io_bytes": 163588251,
+            "ffmpeg_open_us": 607241,
+            "ffmpeg_probe_us": 126991,
+            "metadata_us": 827105,
+            "rescanned": 10000,
+            "reused": 0,
+            "tracks_per_sec": 9217.896653649377
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            130,
+            135,
+            122
+          ],
+          "median_ms": 130,
+          "files_per_sec_median": 76893.3836557469,
+          "peak_rss_kib": [
+            53720,
+            53500,
+            53636
+          ],
+          "metrics_median": {
+            "db_us": 98177,
+            "discovered": 10000,
+            "elapsed_ms": 130,
+            "failures": 0,
+            "ffmpeg_info_runs": 0,
+            "ffmpeg_io_bytes": 0,
+            "ffmpeg_open_us": 0,
+            "ffmpeg_probe_us": 0,
+            "metadata_us": 0,
+            "rescanned": 0,
+            "reused": 10000,
+            "tracks_per_sec": 76893.3836557469
+          }
+        }
+      }
+    }
+  ],
+  "arm_qemu_scans": [
+    {
+      "tracks": 1000,
+      "version": "before",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            19382,
+            17058,
+            16259
+          ],
+          "median_ms": 17058,
+          "files_per_sec_median": 58.62153771375491,
+          "peak_rss_kib": [
+            133324,
+            133252,
+            133592
+          ],
+          "metrics_median": {
+            "discovered": 1000,
+            "elapsed_ms": 17058,
+            "failures": 0,
+            "rescanned": 1000,
+            "reused": 0,
+            "tracks_per_sec": 58.62153771375491
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            109,
+            124,
+            109
+          ],
+          "median_ms": 109,
+          "files_per_sec_median": 9093.72789854688,
+          "peak_rss_kib": [
+            133324,
+            133252,
+            133592
+          ],
+          "metrics_median": {
+            "discovered": 1000,
+            "elapsed_ms": 109,
+            "failures": 0,
+            "rescanned": 0,
+            "reused": 1000,
+            "tracks_per_sec": 9093.72789854688
+          }
+        }
+      }
+    },
+    {
+      "tracks": 1000,
+      "version": "after",
+      "operations": {
+        "initial": {
+          "elapsed_ms": [
+            692,
+            687,
+            705
+          ],
+          "median_ms": 692,
+          "files_per_sec_median": 1444.0783753898777,
+          "peak_rss_kib": [
+            35536,
+            35516,
+            35456
+          ],
+          "metrics_median": {
+            "db_us": 69869,
+            "discovered": 1000,
+            "elapsed_ms": 692,
+            "failures": 0,
+            "ffmpeg_info_runs": 134,
+            "ffmpeg_io_bytes": 14193361,
+            "ffmpeg_open_us": 217314,
+            "ffmpeg_probe_us": 237522,
+            "metadata_us": 545863,
+            "rescanned": 1000,
+            "reused": 0,
+            "tracks_per_sec": 1444.0783753898777
+          }
+        },
+        "incremental": {
+          "elapsed_ms": [
+            63,
+            66,
+            67
+          ],
+          "median_ms": 66,
+          "files_per_sec_median": 15142.57185680336,
+          "peak_rss_kib": [
+            35536,
+            35516,
+            35456
+          ],
+          "metrics_median": {
+            "db_us": 46620,
+            "discovered": 1000,
+            "elapsed_ms": 66,
+            "failures": 0,
+            "ffmpeg_info_runs": 0,
+            "ffmpeg_io_bytes": 0,
+            "ffmpeg_open_us": 0,
+            "ffmpeg_probe_us": 0,
+            "metadata_us": 0,
+            "rescanned": 0,
+            "reused": 1000,
+            "tracks_per_sec": 15142.57185680336
+          }
+        }
+      }
+    }
+  ],
+  "native_parse": [
+    {
+      "file": "aac.aac",
+      "before": {
+        "p50_ms": 0.820124,
+        "p95_ms": 0.996645,
+        "open_ms": 0.07309099999999999,
+        "probe_ms": 0.1641625,
+        "bytes_read": 2614,
+        "setup_ms": 0.5833470000000001
+      },
+      "after": {
+        "p50_ms": 0.1785,
+        "p95_ms": 0.402,
+        "open_ms": 0.046,
+        "probe_ms": 0.1275,
+        "bytes_read": 2614
+      },
+      "playback_after": {
+        "p50_ms": 0.582,
+        "p95_ms": 0.634,
+        "open_ms": 0.0535,
+        "probe_ms": 0.244,
+        "bytes_read": 2614
+      }
+    },
+    {
+      "file": "aiff-pcm24.aiff",
+      "before": {
+        "p50_ms": 0.4979015,
+        "p95_ms": 0.987668,
+        "open_ms": 0.0711575,
+        "probe_ms": 0.031475500000000003,
+        "bytes_read": 104768,
+        "setup_ms": 0.3892115
+      },
+      "after": {
+        "p50_ms": 0.049,
+        "p95_ms": 0.075,
+        "open_ms": 0.045,
+        "probe_ms": 0.0,
+        "bytes_read": 32768
+      },
+      "playback_after": {
+        "p50_ms": 0.122,
+        "p95_ms": 0.157,
+        "open_ms": 0.0525,
+        "probe_ms": 0.025,
+        "bytes_read": 104768
+      }
+    },
+    {
+      "file": "ape-silence.ape",
+      "before": {
+        "p50_ms": 0.518151,
+        "p95_ms": 0.641148,
+        "open_ms": 0.057471,
+        "probe_ms": 0.020784999999999998,
+        "bytes_read": 910,
+        "setup_ms": 0.434043
+      },
+      "after": {
+        "p50_ms": 0.035,
+        "p95_ms": 0.059,
+        "open_ms": 0.0305,
+        "probe_ms": 0.0,
+        "bytes_read": 910
+      },
+      "playback_after": {
+        "p50_ms": 0.127,
+        "p95_ms": 0.173,
+        "open_ms": 0.035,
+        "probe_ms": 0.0135,
+        "bytes_read": 910
+      }
+    },
+    {
+      "file": "artwork-jpeg.flac",
+      "before": {
+        "p50_ms": 0.716179,
+        "p95_ms": 1.246898,
+        "open_ms": 0.0852545,
+        "probe_ms": 0.061128,
+        "bytes_read": 12043,
+        "setup_ms": 0.5657875
+      },
+      "after": {
+        "p50_ms": 0.0625,
+        "p95_ms": 0.096,
+        "open_ms": 0.055,
+        "probe_ms": 0.0,
+        "bytes_read": 12043
+      },
+      "playback_after": {
+        "p50_ms": 0.283,
+        "p95_ms": 0.318,
+        "open_ms": 0.0675,
+        "probe_ms": 0.0485,
+        "bytes_read": 12043
+      }
+    },
+    {
+      "file": "artwork-png.flac",
+      "before": {
+        "p50_ms": 0.7175705,
+        "p95_ms": 0.830685,
+        "open_ms": 0.088336,
+        "probe_ms": 0.055933,
+        "bytes_read": 11910,
+        "setup_ms": 0.5719145
+      },
+      "after": {
+        "p50_ms": 0.062,
+        "p95_ms": 0.101,
+        "open_ms": 0.054,
+        "probe_ms": 0.0,
+        "bytes_read": 11910
+      },
+      "playback_after": {
+        "p50_ms": 0.189,
+        "p95_ms": 0.232,
+        "open_ms": 0.064,
+        "probe_ms": 0.0405,
+        "bytes_read": 11910
+      }
+    },
+    {
+      "file": "artwork-webp.flac",
+      "before": {
+        "p50_ms": 0.6877435000000001,
+        "p95_ms": 0.765418,
+        "open_ms": 0.08223849999999999,
+        "probe_ms": 0.06253049999999999,
+        "bytes_read": 11897,
+        "setup_ms": 0.5366515000000001
+      },
+      "after": {
+        "p50_ms": 0.0605,
+        "p95_ms": 0.149,
+        "open_ms": 0.0525,
+        "probe_ms": 0.0,
+        "bytes_read": 11897
+      },
+      "playback_after": {
+        "p50_ms": 0.2755,
+        "p95_ms": 0.35,
+        "open_ms": 0.065,
+        "probe_ms": 0.049,
+        "bytes_read": 11897
+      }
+    },
+    {
+      "file": "flac-24-96000.flac",
+      "before": {
+        "p50_ms": 0.5853705,
+        "p95_ms": 0.809022,
+        "open_ms": 0.0713325,
+        "probe_ms": 0.03349,
+        "bytes_read": 24026,
+        "setup_ms": 0.4757135
+      },
+      "after": {
+        "p50_ms": 0.053,
+        "p95_ms": 0.087,
+        "open_ms": 0.046,
+        "probe_ms": 0.0,
+        "bytes_read": 24026
+      },
+      "playback_after": {
+        "p50_ms": 0.2,
+        "p95_ms": 0.794,
+        "open_ms": 0.0605,
+        "probe_ms": 0.027,
+        "bytes_read": 24026
+      }
+    },
+    {
+      "file": "long-pcm16.wav",
+      "before": {
+        "p50_ms": 18.3058675,
+        "p95_ms": 19.236255,
+        "open_ms": 0.0981895,
+        "probe_ms": 17.73749,
+        "bytes_read": 720940,
+        "setup_ms": 0.42743600000000004
+      },
+      "after": {
+        "p50_ms": 0.08449999999999999,
+        "p95_ms": 0.11,
+        "open_ms": 0.08,
+        "probe_ms": 0.0,
+        "bytes_read": 65580
+      },
+      "playback_after": {
+        "p50_ms": 18.200000000000003,
+        "p95_ms": 19.231,
+        "open_ms": 0.0845,
+        "probe_ms": 18.009500000000003,
+        "bytes_read": 720940
+      }
+    },
+    {
+      "file": "m4a-aac.m4a",
+      "before": {
+        "p50_ms": 0.7751825,
+        "p95_ms": 1.139101,
+        "open_ms": 0.08822050000000001,
+        "probe_ms": 0.1481815,
+        "bytes_read": 3595,
+        "setup_ms": 0.531657
+      },
+      "after": {
+        "p50_ms": 0.056,
+        "p95_ms": 0.122,
+        "open_ms": 0.052,
+        "probe_ms": 0.0,
+        "bytes_read": 3595
+      },
+      "playback_after": {
+        "p50_ms": 0.591,
+        "p95_ms": 0.775,
+        "open_ms": 0.069,
+        "probe_ms": 0.233,
+        "bytes_read": 3595
+      }
+    },
+    {
+      "file": "m4a-alac.m4a",
+      "before": {
+        "p50_ms": 0.624135,
+        "p95_ms": 0.728868,
+        "open_ms": 0.08328150000000001,
+        "probe_ms": 0.16002450000000001,
+        "bytes_read": 28541,
+        "setup_ms": 0.376452
+      },
+      "after": {
+        "p50_ms": 0.054,
+        "p95_ms": 0.079,
+        "open_ms": 0.049,
+        "probe_ms": 0.0,
+        "bytes_read": 28541
+      },
+      "playback_after": {
+        "p50_ms": 0.3375,
+        "p95_ms": 0.392,
+        "open_ms": 0.0645,
+        "probe_ms": 0.149,
+        "bytes_read": 28541
+      }
+    },
+    {
+      "file": "mp3.mp3",
+      "before": {
+        "p50_ms": 0.664088,
+        "p95_ms": 0.780147,
+        "open_ms": 0.151302,
+        "probe_ms": 0.042562,
+        "bytes_read": 5146,
+        "setup_ms": 0.4585055
+      },
+      "after": {
+        "p50_ms": 0.1385,
+        "p95_ms": 0.183,
+        "open_ms": 0.1025,
+        "probe_ms": 0.031,
+        "bytes_read": 5146
+      },
+      "playback_after": {
+        "p50_ms": 0.307,
+        "p95_ms": 0.338,
+        "open_ms": 0.1125,
+        "probe_ms": 0.033,
+        "bytes_read": 5146
+      }
+    },
+    {
+      "file": "opus.opus",
+      "before": {
+        "p50_ms": 0.7018905,
+        "p95_ms": 0.889238,
+        "open_ms": 0.0824895,
+        "probe_ms": 0.1044715,
+        "bytes_read": 4275,
+        "setup_ms": 0.507455
+      },
+      "after": {
+        "p50_ms": 0.071,
+        "p95_ms": 0.097,
+        "open_ms": 0.066,
+        "probe_ms": 0.0,
+        "bytes_read": 4275
+      },
+      "playback_after": {
+        "p50_ms": 0.223,
+        "p95_ms": 0.324,
+        "open_ms": 0.058499999999999996,
+        "probe_ms": 0.082,
+        "bytes_read": 4275
+      }
+    },
+    {
+      "file": "vorbis.ogg",
+      "before": {
+        "p50_ms": 0.842788,
+        "p95_ms": 0.981396,
+        "open_ms": 0.084633,
+        "probe_ms": 0.1917855,
+        "bytes_read": 5094,
+        "setup_ms": 0.56444
+      },
+      "after": {
+        "p50_ms": 0.0795,
+        "p95_ms": 0.15,
+        "open_ms": 0.0745,
+        "probe_ms": 0.0,
+        "bytes_read": 5094
+      },
+      "playback_after": {
+        "p50_ms": 0.446,
+        "p95_ms": 0.576,
+        "open_ms": 0.07100000000000001,
+        "probe_ms": 0.161,
+        "bytes_read": 5094
+      }
+    },
+    {
+      "file": "wav-float32.wav",
+      "before": {
+        "p50_ms": 0.5693895,
+        "p95_ms": 0.645486,
+        "open_ms": 0.075245,
+        "probe_ms": 0.026296,
+        "bytes_read": 96092,
+        "setup_ms": 0.463505
+      },
+      "after": {
+        "p50_ms": 0.048,
+        "p95_ms": 0.087,
+        "open_ms": 0.045,
+        "probe_ms": 0.0,
+        "bytes_read": 32768
+      },
+      "playback_after": {
+        "p50_ms": 0.2105,
+        "p95_ms": 0.268,
+        "open_ms": 0.057,
+        "probe_ms": 0.024,
+        "bytes_read": 96092
+      }
+    },
+    {
+      "file": "wav-pcm24.wav",
+      "before": {
+        "p50_ms": 0.5303295,
+        "p95_ms": 1.104093,
+        "open_ms": 0.0956445,
+        "probe_ms": 0.028269500000000003,
+        "bytes_read": 137638,
+        "setup_ms": 0.3958745
+      },
+      "after": {
+        "p50_ms": 0.063,
+        "p95_ms": 0.088,
+        "open_ms": 0.059,
+        "probe_ms": 0.0,
+        "bytes_read": 65638
+      },
+      "playback_after": {
+        "p50_ms": 0.1335,
+        "p95_ms": 0.286,
+        "open_ms": 0.0685,
+        "probe_ms": 0.0215,
+        "bytes_read": 137638
+      }
+    },
+    {
+      "file": "wavpack-silence.wv",
+      "before": {
+        "p50_ms": 0.8142125,
+        "p95_ms": 1.53246,
+        "open_ms": 0.070636,
+        "probe_ms": 0.29889200000000005,
+        "bytes_read": 4096,
+        "setup_ms": 0.431363
+      },
+      "after": {
+        "p50_ms": 0.046,
+        "p95_ms": 0.064,
+        "open_ms": 0.043,
+        "probe_ms": 0.0,
+        "bytes_read": 4096
+      },
+      "playback_after": {
+        "p50_ms": 0.432,
+        "p95_ms": 0.593,
+        "open_ms": 0.055,
+        "probe_ms": 0.298,
+        "bytes_read": 4096
+      }
+    }
+  ],
+  "fixture_hashes": {
+    "flac-24-96000.flac": "9dee3d56d98a41b0d5237c8f57926c1e6b5e0c0287e0a700eb9da8be5ba2d17e",
+    "mp3.mp3": "49db88de577e82cd2763a1ca7fcb12dcffe425778a23a84bc14a2dd21c1acacb",
+    "aac.aac": "dfc609e7de12f540302ff0307a5e79057c531b9069b8718700a370ab202049a8",
+    "m4a-aac.m4a": "cde80d55e49a5dc712601f74fb14168adfccbda53a35abc95f188fb62faaf1b5",
+    "m4a-alac.m4a": "c517251726fdc70120562782b51492c84f834bcf22100a10176d26dc20a2247f",
+    "vorbis.ogg": "820c078c21ba5903849107df686c7e8f44a2fd49efecf3bdf099dae94cfffb2b",
+    "opus.opus": "c8d0e43b13231a0b23498ab71cd66ec127b36562f8b434745a623f648d3b46e6",
+    "wav-pcm24.wav": "9d2b70e8d2d20daa334d8d834db929b0c78457efe5966d805dd3004f200083d7",
+    "wav-float32.wav": "2537736edd0a1f8e6ee52de59b1d63d67c0a9cf7e864c759f57902bd1c5eb26c",
+    "aiff-pcm24.aiff": "2c0fc006f8f4f311c678e8aafe8d4b443f02a5ff57936684c3a5b47698ad9c87",
+    "ape-silence.ape": "5a510978f003c19bbe862817dbc8c29e1fd12bba9696b5c25e51e398c787ad2f",
+    "wavpack-silence.wv": "4bd868cf5801211e911c21ad715880d21a26efd97a6ed56cea79cafcf55a0282",
+    "artwork-jpeg.flac": "ddb4e838bd1a8572f9c171b8793e154cdb37c989830c4fe735c716aef0bcc52d",
+    "artwork-png.flac": "19d2b69e03bf58492b5c1417d10ceece0c8ec8aa39f30ba14bad881cdd51949e",
+    "artwork-webp.flac": "d3f98fd0c1b910e5e1d53fa7a0d274588e8813fa1aa06d6e0f2565b022b784e6"
+  },
+  "metadata_fixture_manifest": "../../../assets/fixtures/metadata/manifest.json",
+  "validation": {
+    "fmt": true,
+    "clippy_workspace_all_targets": true,
+    "workspace_tests_passed": 252,
+    "media_arm_qemu_tests": 32,
+    "library_arm_qemu_tests": 30,
+    "arm_workspace_release": true,
+    "qemu_control_checks": 6,
+    "sanitizers": "ASan/UBSan/LSan membrane driver: 26 fixtures x20 iterations; dependencies not sanitizer rebuilt",
+    "mutations": 99,
+    "native_dependency_check": true,
+    "qemu_diagnostics": [
+      {
+        "command": [
+          "test",
+          "decoder"
+        ],
+        "passed": true
+      },
+      {
+        "command": [
+          "test",
+          "database"
+        ],
+        "passed": true
+      },
+      {
+        "command": [
+          "test",
+          "library"
+        ],
+        "passed": true
+      }
+    ],
+    "docs_links": {
+      "reborn_pages": 59,
+      "reborn_local_links": 572,
+      "reborn_errors": 0,
+      "linux": "289 pages, 4347 links; one unchanged legacy Y2Player link unavailable in isolated sibling layout; new links resolve"
+    }
+  },
+  "ffmpeg_runtime": {
+    "artwork_decoders": [
+      "mjpeg",
+      "png",
+      "webp"
+    ],
+    "audio_decoders": [
+      "aac",
+      "alac",
+      "ape",
+      "flac",
+      "mp3float",
+      "mp3",
+      "opus",
+      "vorbis",
+      "wavpack",
+      "pcm_f32be",
+      "pcm_f32le",
+      "pcm_s16be",
+      "pcm_s16le",
+      "pcm_s24be",
+      "pcm_s24le",
+      "pcm_s32be",
+      "pcm_s32le"
+    ],
+    "demuxers": [
+      "aac",
+      "aiff",
+      "ape",
+      "flac",
+      "mov",
+      "mp3",
+      "ogg",
+      "wav",
+      "wv"
+    ],
+    "encoders": [],
+    "filters": [
+      "acrossfade",
+      "afade",
+      "aformat",
+      "alimiter",
+      "amix",
+      "aresample",
+      "asetnsamples",
+      "atrim",
+      "equalizer",
+      "volume",
+      "abuffer",
+      "buffer",
+      "abuffersink",
+      "buffersink"
+    ],
+    "libraries": {
+      "libavcodec": "63.1.102",
+      "libavfilter": "12.1.102",
+      "libavformat": "63.1.102",
+      "libavutil": "61.1.102",
+      "libswresample": "7.1.102",
+      "libswscale": "10.1.102"
+    },
+    "muxers": [],
+    "parsers": [
+      "aac",
+      "flac",
+      "mpegaudio",
+      "opus",
+      "vorbis"
+    ],
+    "protocols": [
+      "file"
+    ],
+    "version": "9.0.2"
+  },
+  "raw_evidence": "ignored out/media-pass/; benchmark tools and compact measurements are checked in",
+  "artwork": {
+    "peak_rss_kib": 47464,
+    "rows": [
+      {
+        "file": "art-jpg.flac",
+        "successes": 10,
+        "timing": {
+          "elapsed_ms": 36.485457,
+          "max_ms": 35.081794,
+          "operation": "artwork",
+          "operations_per_second": 274.0818074445388,
+          "p50_ms": 0.149569,
+          "p95_ms": 35.081794,
+          "p99_ms": 35.081794,
+          "samples": 10
+        }
+      },
+      {
+        "file": "art-png.flac",
+        "successes": 10,
+        "timing": {
+          "elapsed_ms": 1.29332,
+          "max_ms": 0.179026,
+          "operation": "artwork",
+          "operations_per_second": 7732.0384746234495,
+          "p50_ms": 0.112387,
+          "p95_ms": 0.179026,
+          "p99_ms": 0.179026,
+          "samples": 10
+        }
+      },
+      {
+        "file": "art-webp.flac",
+        "successes": 10,
+        "timing": {
+          "elapsed_ms": 1.602567,
+          "max_ms": 0.214484,
+          "operation": "artwork",
+          "operations_per_second": 6239.988718100398,
+          "p50_ms": 0.151032,
+          "p95_ms": 0.214484,
+          "p99_ms": 0.214484,
+          "samples": 10
+        }
+      },
+      {
+        "file": "corrupt-art.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.747616,
+          "max_ms": 0.100785,
+          "operation": "artwork",
+          "operations_per_second": 13375.850704104781,
+          "p50_ms": 0.069384,
+          "p95_ms": 0.100785,
+          "p99_ms": 0.100785,
+          "samples": 10
+        }
+      },
+      {
+        "file": "duplicate.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.555974,
+          "max_ms": 0.062441,
+          "operation": "artwork",
+          "operations_per_second": 17986.452603898742,
+          "p50_ms": 0.053914,
+          "p95_ms": 0.062441,
+          "p99_ms": 0.062441,
+          "samples": 10
+        }
+      },
+      {
+        "file": "empty.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.031682,
+          "max_ms": 0.004228,
+          "operation": "artwork",
+          "operations_per_second": 315636.63910106686,
+          "p50_ms": 0.003026,
+          "p95_ms": 0.004228,
+          "p99_ms": 0.004228,
+          "samples": 10
+        }
+      },
+      {
+        "file": "huge-art-dimensions.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.706736,
+          "max_ms": 0.080155,
+          "operation": "artwork",
+          "operations_per_second": 14149.555137986461,
+          "p50_ms": 0.068783,
+          "p95_ms": 0.080155,
+          "p99_ms": 0.080155,
+          "samples": 10
+        }
+      },
+      {
+        "file": "huge-art-metadata.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.644377,
+          "max_ms": 0.083652,
+          "operation": "artwork",
+          "operations_per_second": 15518.86550885584,
+          "p50_ms": 0.061419,
+          "p95_ms": 0.083652,
+          "p99_ms": 0.083652,
+          "samples": 10
+        }
+      },
+      {
+        "file": "huge.png",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.194848,
+          "max_ms": 0.03101,
+          "operation": "artwork",
+          "operations_per_second": 51322.05616685827,
+          "p50_ms": 0.016853,
+          "p95_ms": 0.03101,
+          "p99_ms": 0.03101,
+          "samples": 10
+        }
+      },
+      {
+        "file": "invalid-utf8.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.571826,
+          "max_ms": 0.071208,
+          "operation": "artwork",
+          "operations_per_second": 17487.837209220987,
+          "p50_ms": 0.053954,
+          "p95_ms": 0.071208,
+          "p99_ms": 0.071208,
+          "samples": 10
+        }
+      },
+      {
+        "file": "large.jpg",
+        "successes": 10,
+        "timing": {
+          "elapsed_ms": 38.017267,
+          "max_ms": 4.022442,
+          "operation": "artwork",
+          "operations_per_second": 263.0383714852517,
+          "p50_ms": 3.763993,
+          "p95_ms": 4.022442,
+          "p99_ms": 4.022442,
+          "samples": 10
+        }
+      },
+      {
+        "file": "long.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.6573,
+          "max_ms": 0.100504,
+          "operation": "artwork",
+          "operations_per_second": 15213.753232922561,
+          "p50_ms": 0.060968,
+          "p95_ms": 0.100504,
+          "p99_ms": 0.100504,
+          "samples": 10
+        }
+      },
+      {
+        "file": "tags.flac",
+        "successes": 0,
+        "timing": {
+          "elapsed_ms": 0.603616,
+          "max_ms": 0.068703,
+          "operation": "artwork",
+          "operations_per_second": 16566.823941048613,
+          "p50_ms": 0.057812,
+          "p95_ms": 0.068703,
+          "p99_ms": 0.068703,
+          "samples": 10
+        }
+      }
+    ]
+  },
+  "final_source_commit": "43a695cbb550e20a6a7e8afd2c078a50d5d45d90"
+}
