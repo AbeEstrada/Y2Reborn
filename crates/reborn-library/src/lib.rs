@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod benchmark;
+#[cfg(test)]
+mod platform_tests;
 use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, Decoder};
 use reborn_observability::{HealthState, Level, Observer};
@@ -7,7 +9,6 @@ use rusqlite::{params, Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::BTreeMap,
     fs,
     os::fd::AsRawFd,
     path::{Path, PathBuf},
@@ -21,6 +22,8 @@ use std::{
 };
 const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 << 8);
 pub const SCHEMA_VERSION: i64 = 1;
+pub const MAX_LIBRARY_TRACKS: usize = 250_000;
+pub const CATALOG_PAGE_SIZE: usize = 512;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScanMetrics {
     pub discovered: u64,
@@ -42,7 +45,15 @@ pub struct Filter {
 enum DbCommand {
     Sources(Vec<Source>),
     List(Filter, SyncSender<Result<Vec<Track>, String>>),
-    Existing(String, SyncSender<Result<BTreeMap<PathBuf, Track>, String>>),
+    Catalog(SyncSender<Result<Vec<Track>, String>>),
+    Begin(String, SyncSender<Result<i64, String>>),
+    Probe(
+        String,
+        i64,
+        Vec<FileStamp>,
+        bool,
+        SyncSender<Result<Vec<bool>, String>>,
+    ),
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
     Finish(Source, i64, bool, SyncSender<Result<bool, String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
@@ -140,7 +151,7 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
     if version > SCHEMA_VERSION {
         return Err(OpenFailure::FutureSchema(version));
     }
-    c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
+    c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY;")
         .map_err(|error| classify_open_error(error, OpenStage::WalShm))?;
     if version == 0 {
         c.execute_batch("BEGIN IMMEDIATE;
@@ -165,6 +176,9 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
  COMMIT;")
             .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     }
+    c.execute_batch("CREATE TEMP TABLE scan_seen(id INTEGER PRIMARY KEY);
+        CREATE TEMP TABLE scan_candidates(position INTEGER PRIMARY KEY,path TEXT NOT NULL,size INTEGER NOT NULL,mtime INTEGER NOT NULL);")
+        .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
     Ok(c)
 }
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
@@ -205,14 +219,14 @@ fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
         sql.push_str(" AND substr(t.path,1,length(?3))=?3");
     }
     sql.push_str(" ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT ?4 OFFSET ?5");
-    let mut q = c.prepare(&sql).map_err(err)?;
+    let mut q = c.prepare_cached(&sql).map_err(err)?;
     let rows = q
         .query_map(
             params![
                 f.artist,
                 f.album,
                 f.folder,
-                f.limit.clamp(1, 20000),
+                f.limit.clamp(1, CATALOG_PAGE_SIZE),
                 f.offset
             ],
             from_row,
@@ -220,10 +234,157 @@ fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
         .map_err(err)?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
 }
+#[derive(Clone)]
+struct FileStamp {
+    path: PathBuf,
+    size: u64,
+    mtime: i64,
+}
+// The scanner sends at most 64 fingerprints, never a scan-wide Track map.
+fn probe(
+    c: &mut Connection,
+    source: &str,
+    files: &[FileStamp],
+    reuse: bool,
+) -> Result<Vec<bool>, String> {
+    if files.len() > 64 {
+        return Err("scan probe exceeds batch limit".into());
+    }
+    if !reuse {
+        return Ok(vec![false; files.len()]);
+    }
+    let tx = c.transaction().map_err(err)?;
+    tx.execute("DELETE FROM scan_candidates", []).map_err(err)?;
+    {
+        let mut q = tx
+            .prepare_cached("INSERT INTO scan_candidates VALUES(?1,?2,?3,?4)")
+            .map_err(err)?;
+        for (position, f) in files.iter().enumerate() {
+            q.execute(params![position, f.path.to_string_lossy(), f.size, f.mtime])
+                .map_err(err)?;
+        }
+    }
+    let join = "FROM scan_candidates c LEFT JOIN tracks t ON t.source_id=?1 AND t.path=c.path AND t.size=c.size AND t.mtime=c.mtime AND t.deleted=0";
+    let matches = {
+        let mut q = tx
+            .prepare_cached(&format!(
+                "SELECT t.id IS NOT NULL {join} ORDER BY c.position"
+            ))
+            .map_err(err)?;
+        let rows = q
+            .query_map([source], |r| r.get::<_, bool>(0))
+            .map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+    };
+    tx.execute(
+        &format!("INSERT OR IGNORE INTO scan_seen SELECT t.id {join} WHERE t.id IS NOT NULL"),
+        [source],
+    )
+    .map_err(err)?;
+    tx.commit().map_err(err)?;
+    Ok(matches)
+}
+fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<bool, String> {
+    let prune = complete && source_identity_is_current(source);
+    let tx = c.transaction().map_err(err)?;
+    if prune {
+        tx.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND deleted=0 AND NOT EXISTS (SELECT 1 FROM scan_seen WHERE id=tracks.id)", [&source.id]).map_err(err)?;
+    }
+    tx.execute("DELETE FROM scan_seen", []).map_err(err)?;
+    tx.execute("DELETE FROM scan_candidates", []).map_err(err)?;
+    tx.commit().map_err(err)?;
+    Ok(prune)
+}
+fn update_sources(c: &mut Connection, sources: &[Source]) -> Result<(), String> {
+    let tx = c.transaction().map_err(err)?;
+    // A tiny source list is the only materialized identity set here.
+    let offline = {
+        let mut q = tx
+            .prepare_cached("SELECT id FROM sources WHERE online<>0")
+            .map_err(err)?;
+        let rows = q.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+    };
+    for id in offline
+        .iter()
+        .filter(|id| !sources.iter().any(|s| &s.id == *id && s.online))
+    {
+        tx.execute("UPDATE sources SET online=0 WHERE id=?1", [id])
+            .map_err(err)?;
+    }
+    {
+        let mut q = tx.prepare_cached("INSERT INTO sources(id,root,online) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET root=excluded.root,online=excluded.online WHERE sources.root IS NOT excluded.root OR sources.online IS NOT excluded.online").map_err(err)?;
+        for s in sources {
+            q.execute(params![s.id, s.root.to_string_lossy(), s.online])
+                .map_err(err)?;
+        }
+    }
+    tx.commit().map_err(err)
+}
+fn catalog(c: &mut Connection) -> Result<Vec<Track>, String> {
+    let tx = c.transaction().map_err(err)?;
+    let mut tracks: Vec<Track> = Vec::new();
+    // The rowid tie-breaker handles identical paths/tags on different media.
+    // Keyset pages avoid walking all preceding rows for every next page.
+    loop {
+        let cursor = tracks.last();
+        let predicate = if cursor.is_some() {
+            " AND (t.artist,t.album,t.disc,t.track,t.title,t.path,t.id)>(?1,?2,?3,?4,?5,?6,?7)"
+        } else {
+            ""
+        };
+        let sql = format!("{SELECT} WHERE t.deleted=0{predicate} ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path,t.id LIMIT {CATALOG_PAGE_SIZE}");
+        let page = {
+            let mut q = tx.prepare_cached(&sql).map_err(err)?;
+            let rows = if let Some(t) = cursor {
+                q.query_map(
+                    params![
+                        t.artist,
+                        t.album,
+                        t.disc,
+                        t.track,
+                        t.title,
+                        t.path.to_string_lossy(),
+                        t.id
+                    ],
+                    from_row,
+                )
+            } else {
+                q.query_map([], from_row)
+            }
+            .map_err(err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+        };
+        let done = page.len() < CATALOG_PAGE_SIZE;
+        if tracks.len() + page.len() > MAX_LIBRARY_TRACKS {
+            return Err("library exceeds 250000-track limit".into());
+        }
+        tracks.extend(page);
+        if done {
+            break;
+        }
+    }
+    tx.commit().map_err(err)?;
+    Ok(tracks)
+}
 fn batch(c: &mut Connection, tracks: Vec<Track>, seen: i64) -> Result<(), String> {
+    batch_tracked(c, tracks, seen, false)
+}
+fn batch_tracked(
+    c: &mut Connection,
+    tracks: Vec<Track>,
+    seen: i64,
+    mark_seen: bool,
+) -> Result<(), String> {
     let tx = c.transaction().map_err(err)?;
     {
-        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,deleted=0").map_err(err)?;
+        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,deleted=0 WHERE tracks.deleted<>0 OR
+ tracks.filename IS NOT excluded.filename OR tracks.size IS NOT excluded.size OR tracks.mtime IS NOT excluded.mtime OR
+ tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album OR
+ tracks.album_artist IS NOT excluded.album_artist OR tracks.track IS NOT excluded.track OR tracks.disc IS NOT excluded.disc OR
+ tracks.duration_ms IS NOT excluded.duration_ms OR tracks.codec IS NOT excluded.codec OR tracks.sample_rate IS NOT excluded.sample_rate OR
+ tracks.channels IS NOT excluded.channels OR tracks.bitrate IS NOT excluded.bitrate OR tracks.artwork IS NOT excluded.artwork").map_err(err)?;
+        let mut presence = tx.prepare_cached("INSERT OR IGNORE INTO scan_seen SELECT id FROM tracks WHERE source_id=?1 AND path=?2").map_err(err)?;
         for t in tracks {
             q.execute(params![
                 t.source_id,
@@ -246,6 +407,11 @@ fn batch(c: &mut Connection, tracks: Vec<Track>, seen: i64) -> Result<(), String
                 seen
             ])
             .map_err(err)?;
+            if mark_seen {
+                presence
+                    .execute(params![t.source_id, t.path.to_string_lossy()])
+                    .map_err(err)?;
+            }
         }
     }
     tx.commit().map_err(err)
@@ -496,25 +662,128 @@ impl Database {
             );
         }
         let (tx, rx) = sync_channel(32);
-        thread::Builder::new().name("database".into()).spawn(move||{
- log.health_set("database",HealthState::Ok,true,"schema ready");loop{log.heartbeat("database",15);let msg=match rx.recv_timeout(Duration::from_secs(1)){Ok(m)=>m,Err(RecvTimeoutError::Timeout)=>continue,Err(_)=>break};let now=Instant::now();let result:Result<(),String>=match msg{
- DbCommand::Stop=>break,
- DbCommand::Shutdown(reply)=>{
-     let checkpoint = c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r|r.get::<_, i64>(0)).map_err(err).and_then(|busy| if busy == 0 {Ok(())} else {Err("checkpoint busy".into())});
-     let closed = c.close().map_err(|(_, e)|err(e));
-     let _=reply.try_send(checkpoint.and(closed));
-     break;
- },
- DbCommand::Sources(sources)=>(||{let tx=c.transaction().map_err(err)?;tx.execute("UPDATE sources SET online=0",[]).map_err(err)?;for s in sources{tx.execute("INSERT INTO sources(id,root,online) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET root=excluded.root,online=excluded.online",params![s.id,s.root.to_string_lossy(),s.online]).map_err(err)?;}tx.commit().map_err(err)})(),
- DbCommand::List(f,reply)=>{let _=reply.try_send(list(&c,&f));Ok(())},
- DbCommand::Existing(id,reply)=>{let value=(||{let mut q=c.prepare(&format!("{SELECT} WHERE t.source_id=?1 LIMIT 250000")).map_err(err)?;let rows=q.query_map([id],from_row).map_err(err)?;let tracks=rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?;Ok(tracks.into_iter().map(|t|(t.path.clone(),t)).collect())})();let _=reply.try_send(value);Ok(())},
- DbCommand::Batch(v,s,reply)=>{let r=batch(&mut c,v,s);let _=reply.try_send(r.clone());r},
- DbCommand::Finish(source,seen,complete,reply)=>{let r=if complete&&source_identity_is_current(&source){c.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>?2",params![source.id,seen]).map(|_|true).map_err(err)}else{Ok(false)};let _=reply.try_send(r.clone());r.map(|_|())},
- DbCommand::Test(reply)=>{let r=validate(&c);let _=reply.try_send(r);Ok(())},
- #[cfg(test)] DbCommand::TestSql(sql,reply)=>{let r=c.execute_batch(&sql).map_err(err);let _=reply.try_send(r.clone());r}};
- log.gauge("database_query_latency_ms",now.elapsed().as_secs_f64()*1000.);if let Err(e)=result{log.health_set("database",HealthState::Failed,true,&e);log.emit(Level::Error,"database","operation_failed",&e,None,json!({"recovery_attempted":false}));}
- if let Ok(n)=c.query_row("SELECT count(*) FROM tracks WHERE deleted=0",[],|r|r.get::<_,i64>(0)){log.gauge("library_tracks",n as f64);}
- }}).map_err(|e|e.to_string())?;
+        thread::Builder::new()
+            .name("database".into())
+            .spawn(move || {
+                let mut generation = 0_i64;
+                let mut active_scan: Option<(String, i64)> = None;
+                log.health_set("database", HealthState::Ok, true, "schema ready");
+                loop {
+                    log.heartbeat("database", 15);
+                    let msg = match rx.recv_timeout(Duration::from_secs(1)) {
+                        Ok(m) => m,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(_) => break,
+                    };
+                    let now = Instant::now();
+                    let result: Result<(), String> = match msg {
+                        DbCommand::Stop => break,
+                        DbCommand::Shutdown(reply) => {
+                            let checkpoint = c
+                                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                                    r.get::<_, i64>(0)
+                                })
+                                .map_err(err)
+                                .and_then(|busy| {
+                                    if busy == 0 {
+                                        Ok(())
+                                    } else {
+                                        Err("checkpoint busy".into())
+                                    }
+                                });
+                            let closed = c.close().map_err(|(_, e)| err(e));
+                            let _ = reply.try_send(checkpoint.and(closed));
+                            break;
+                        }
+                        DbCommand::Sources(sources) => update_sources(&mut c, &sources),
+                        DbCommand::List(f, reply) => {
+                            let _ = reply.try_send(list(&c, &f));
+                            Ok(())
+                        }
+                        DbCommand::Catalog(reply) => {
+                            let _ = reply.try_send(catalog(&mut c));
+                            Ok(())
+                        }
+                        DbCommand::Begin(source, reply) => {
+                            generation += 1;
+                            active_scan = None;
+                            let r = c
+                                .execute_batch(
+                                    "DELETE FROM scan_seen; DELETE FROM scan_candidates;",
+                                )
+                                .map_err(err);
+                            if r.is_ok() {
+                                active_scan = Some((source, generation));
+                            }
+                            let _ = reply.try_send(r.clone().map(|()| generation));
+                            r
+                        }
+                        DbCommand::Probe(source, token, files, reuse, reply) => {
+                            let r = if active_scan.as_ref() == Some(&(source.clone(), token)) {
+                                probe(&mut c, &source, &files, reuse)
+                            } else {
+                                Err("scan superseded".into())
+                            };
+                            let _ = reply.try_send(r.clone());
+                            r.map(|_| ())
+                        }
+                        DbCommand::Batch(v, token, reply) => {
+                            let r = if active_scan.as_ref().is_some_and(|(source, active)| {
+                                *active == token && v.iter().all(|t| &t.source_id == source)
+                            }) {
+                                batch_tracked(&mut c, v, token, true)
+                            } else {
+                                Err("scan superseded".into())
+                            };
+                            let _ = reply.try_send(r.clone());
+                            r
+                        }
+                        DbCommand::Finish(source, token, complete, reply) => {
+                            let r = if active_scan.as_ref() == Some(&(source.id.clone(), token)) {
+                                finish(&mut c, &source, complete)
+                            } else {
+                                Err("scan superseded".into())
+                            };
+                            active_scan = None;
+                            let _ = reply.try_send(r.clone());
+                            if let Ok(n) = c.query_row(
+                                "SELECT count(*) FROM tracks WHERE deleted=0",
+                                [],
+                                |r| r.get::<_, i64>(0),
+                            ) {
+                                log.gauge("library_tracks", n as f64);
+                            }
+                            r.map(|_| ())
+                        }
+                        DbCommand::Test(reply) => {
+                            let _ = reply.try_send(validate(&c));
+                            Ok(())
+                        }
+                        #[cfg(test)]
+                        DbCommand::TestSql(sql, reply) => {
+                            let r = c.execute_batch(&sql).map_err(err);
+                            let _ = reply.try_send(r.clone());
+                            r
+                        }
+                    };
+                    log.gauge(
+                        "database_query_latency_ms",
+                        now.elapsed().as_secs_f64() * 1000.,
+                    );
+                    if let Err(e) = result {
+                        log.health_set("database", HealthState::Failed, true, &e);
+                        log.emit(
+                            Level::Error,
+                            "database",
+                            "operation_failed",
+                            &e,
+                            None,
+                            json!({"recovery_attempted":false}),
+                        );
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
         Ok(Self { tx })
     }
     pub fn sources(&self, s: Vec<Source>) -> Result<(), String> {
@@ -545,12 +814,35 @@ impl Database {
         rx.recv_timeout(Duration::from_secs(10))
             .map_err(|e| e.to_string())?
     }
-    fn existing(&self, id: String) -> Result<BTreeMap<PathBuf, Track>, String> {
+    /// Product v2 owns one resident catalog; SQL and its row batches remain on
+    /// the existing worker. Return a coherent snapshot, never a silent 20k slice.
+    pub fn catalog(&self) -> Result<Receiver<Result<Vec<Track>, String>>, String> {
         let (tx, rx) = sync_channel(1);
         self.tx
-            .send(DbCommand::Existing(id, tx))
+            .try_send(DbCommand::Catalog(tx))
             .map_err(|e| e.to_string())?;
-        rx.recv_timeout(Duration::from_secs(10))
+        Ok(rx)
+    }
+    fn begin_scan(&self, source: String) -> Result<i64, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::Begin(source, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
+            .map_err(|e| e.to_string())?
+    }
+    fn probe(
+        &self,
+        source: String,
+        token: i64,
+        files: Vec<FileStamp>,
+        reuse: bool,
+    ) -> Result<Vec<bool>, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::Probe(source, token, files, reuse, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
             .map_err(|e| e.to_string())?
     }
     pub fn stop(&self) {
@@ -596,11 +888,18 @@ fn mount_id_for_path(path: &Path, mountinfo: &str) -> Option<u64> {
         .max_by_key(|(length, _)| *length)
         .map(|(_, id)| id)
 }
+fn sd_id_matches_uuid(id: &str, uuid: &str) -> bool {
+    let base = format!("uuid:{uuid}");
+    id == base
+        || id
+            .strip_prefix(&format!("{base}:cid:"))
+            .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()))
+}
 fn source_identity_matches_at(source: &Source, mountinfo: &str) -> bool {
     match &source.kind {
         MediaSource::Internal => true,
         MediaSource::SdCard(uuid) => {
-            source.id == format!("uuid:{uuid}")
+            sd_id_matches_uuid(&source.id, uuid)
                 && !uuid.starts_with("device:")
                 && source.mount_id.is_some_and(|expected| {
                     mount_id_for_path(&source.root, mountinfo) == Some(expected)
@@ -671,6 +970,119 @@ impl Scanner {
         self.cancel.store(true, Ordering::Relaxed)
     }
 }
+struct ScanBatch<'a> {
+    db: &'a Database,
+    source: &'a Source,
+    token: i64,
+    pinned_root: &'a Path,
+    reuse: bool,
+    stats: &'a mut ScanMetrics,
+    complete: &'a mut bool,
+    log: &'a Observer,
+    id: u64,
+}
+impl ScanBatch<'_> {
+    fn process(&mut self, files: Vec<FileStamp>) -> Result<(), String> {
+        let reused = self.db.probe(
+            self.source.id.clone(),
+            self.token,
+            files.clone(),
+            self.reuse,
+        )?;
+        let mut changes = Vec::new();
+        for (file, reuse) in files.into_iter().zip(reused) {
+            if reuse {
+                self.stats.reused += 1;
+                continue;
+            }
+            let path = self.pinned_root.join(
+                file.path
+                    .strip_prefix(&self.source.root)
+                    .map_err(|e| e.to_string())?,
+            );
+            if let Some(track) = self.decode(&path, &file.path, file.size, file.mtime)? {
+                changes.push(track);
+            }
+        }
+        if !changes.is_empty() {
+            // Decoder reads may outlive media removal. Recheck immediately
+            // before publishing; Finish independently rechecks before pruning.
+            if !source_identity_is_current(self.source) {
+                *self.complete = false;
+                self.stats.failures += 1;
+                return Ok(());
+            }
+            let (reply, result) = sync_channel(1);
+            self.db
+                .tx
+                .send(DbCommand::Batch(changes, self.token, reply))
+                .map_err(|e| e.to_string())?;
+            result
+                .recv_timeout(Duration::from_secs(15))
+                .map_err(|e| e.to_string())??;
+        }
+        Ok(())
+    }
+    fn decode(
+        &mut self,
+        path: &Path,
+        logical_path: &Path,
+        size: u64,
+        mtime: i64,
+    ) -> Result<Option<Track>, String> {
+        let track = match Decoder::open(path, 48000, Cancel::new()?) {
+            Ok(d) => {
+                let m = d.metadata.clone();
+                self.stats.rescanned += 1;
+                let filename = logical_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                Track {
+                    id: 0,
+                    source_id: self.source.id.clone(),
+                    path: logical_path.to_path_buf(),
+                    filename: filename.clone(),
+                    size,
+                    mtime,
+                    title: if m.title.is_empty() {
+                        filename
+                    } else {
+                        m.title
+                    },
+                    artist: m.artist,
+                    album: m.album,
+                    album_artist: m.album_artist,
+                    track: m.track,
+                    disc: m.disc,
+                    duration_ms: m.duration_ms,
+                    codec: m.codec,
+                    sample_rate: m.sample_rate,
+                    channels: m.channels,
+                    bitrate: m.bitrate,
+                    artwork: m.artwork,
+                    online: true,
+                }
+            }
+            Err(e) => {
+                *self.complete = false;
+                self.stats.failures += 1;
+                self.log.add("library_scan_errors", 1.);
+                self.log.emit(
+                    Level::Warn,
+                    "scanner",
+                    "file_failed",
+                    &e,
+                    Some(self.id),
+                    json!({"path":logical_path,"recovery":"retain_source_rows"}),
+                );
+                return Ok(None);
+            }
+        };
+        Ok(Some(track))
+    }
+}
 #[cfg(test)]
 fn scan_sources_with_identity(
     db: &Database,
@@ -694,7 +1106,6 @@ fn scan_sources_with_identity_and_reuse(
     );
     let start = Instant::now();
     let id = log.correlation();
-    let seen = reborn_observability::wall_ms() as i64;
     let mut stats = ScanMetrics {
         complete: true,
         ..Default::default()
@@ -733,7 +1144,7 @@ fn scan_sources_with_identity_and_reuse(
             stats.failures += 1;
             continue;
         }
-        let existing = db.existing(source.id.clone())?;
+        let seen = db.begin_scan(source.id.clone())?;
         let mut directories = vec![(pinned_root.clone(), 0)];
         let mut batch_items = vec![];
         let mut complete = true;
@@ -815,65 +1226,11 @@ fn scan_sources_with_identity_and_reuse(
                     stats.failures += 1;
                     continue;
                 };
-                let track = if let Some(t) = existing
-                    .get(&logical_path)
-                    .filter(|t| reuse && unchanged(t, meta.len(), mtime))
-                {
-                    stats.reused += 1;
-                    t.clone()
-                } else {
-                    match Decoder::open(&path, 48000, Cancel::new()?) {
-                        Ok(d) => {
-                            let m = d.metadata.clone();
-                            stats.rescanned += 1;
-                            let filename = logical_path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned();
-                            Track {
-                                id: 0,
-                                source_id: source.id.clone(),
-                                path: logical_path.clone(),
-                                filename: filename.clone(),
-                                size: meta.len(),
-                                mtime,
-                                title: if m.title.is_empty() {
-                                    filename
-                                } else {
-                                    m.title
-                                },
-                                artist: m.artist,
-                                album: m.album,
-                                album_artist: m.album_artist,
-                                track: m.track,
-                                disc: m.disc,
-                                duration_ms: m.duration_ms,
-                                codec: m.codec,
-                                sample_rate: m.sample_rate,
-                                channels: m.channels,
-                                bitrate: m.bitrate,
-                                artwork: m.artwork,
-                                online: true,
-                            }
-                        }
-                        Err(e) => {
-                            complete = false;
-                            stats.failures += 1;
-                            log.add("library_scan_errors", 1.);
-                            log.emit(
-                                Level::Warn,
-                                "scanner",
-                                "file_failed",
-                                &e,
-                                Some(id),
-                                json!({"path":logical_path,"recovery":"retain_source_rows"}),
-                            );
-                            continue;
-                        }
-                    }
-                };
-                batch_items.push(track);
+                batch_items.push(FileStamp {
+                    path: logical_path,
+                    size: meta.len(),
+                    mtime,
+                });
                 if batch_items.len() == 64 {
                     if !identity_is_current(source) {
                         complete = false;
@@ -881,29 +1238,35 @@ fn scan_sources_with_identity_and_reuse(
                         batch_items.clear();
                         break 'source_traversal;
                     }
-                    let (reply, result) = sync_channel(1);
-                    db.tx
-                        .send(DbCommand::Batch(
-                            std::mem::take(&mut batch_items),
-                            seen,
-                            reply,
-                        ))
-                        .map_err(|e| e.to_string())?;
-                    result
-                        .recv_timeout(Duration::from_secs(15))
-                        .map_err(|e| e.to_string())??;
+                    ScanBatch {
+                        db,
+                        source,
+                        token: seen,
+                        pinned_root: &pinned_root,
+                        reuse,
+                        stats: &mut stats,
+                        complete: &mut complete,
+                        log,
+                        id,
+                    }
+                    .process(std::mem::take(&mut batch_items))?;
                 }
             }
         }
         if !batch_items.is_empty() {
             if identity_is_current(source) {
-                let (reply, result) = sync_channel(1);
-                db.tx
-                    .send(DbCommand::Batch(batch_items, seen, reply))
-                    .map_err(|e| e.to_string())?;
-                result
-                    .recv_timeout(Duration::from_secs(15))
-                    .map_err(|e| e.to_string())??;
+                ScanBatch {
+                    db,
+                    source,
+                    token: seen,
+                    pinned_root: &pinned_root,
+                    reuse,
+                    stats: &mut stats,
+                    complete: &mut complete,
+                    log,
+                    id,
+                }
+                .process(batch_items)?;
             } else {
                 complete = false;
                 stats.failures += 1;
@@ -926,10 +1289,8 @@ fn scan_sources_with_identity_and_reuse(
         }
         stats.complete &= complete;
     }
-    // A FIFO database barrier makes scan completion mean writes have completed.
-    db.test()?
-        .recv_timeout(Duration::from_secs(15))
-        .map_err(|e| e.to_string())??;
+    // Each batch and Finish is acknowledged by the single SQLite worker.
+    // Integrity diagnostics are explicit; unchanged scans do not repeat quick_check.
     stats.elapsed_ms = start.elapsed().as_millis() as u64;
     stats.tracks_per_sec = stats.discovered as f64 / start.elapsed().as_secs_f64().max(0.001);
     log.gauge("library_scan_files_per_sec", stats.tracks_per_sec);
@@ -1596,6 +1957,7 @@ mod scan_safety_tests {
 
     fn seed(db: &Database, source: &Source, path: &Path) {
         db.sources(vec![source.clone()]).unwrap();
+        let token = db.begin_scan(source.id.clone()).unwrap();
         let (reply, result) = sync_channel(1);
         db.tx
             .send(DbCommand::Batch(
@@ -1608,7 +1970,7 @@ mod scan_safety_tests {
                     title: "Prior Valid Row".into(),
                     ..Default::default()
                 }],
-                1,
+                token,
                 reply,
             ))
             .unwrap();
@@ -1644,6 +2006,7 @@ mod scan_safety_tests {
         let source = source("internal", &root);
         let (db, log) = database(&root);
         db.sources(vec![source.clone()]).unwrap();
+        let token = db.begin_scan(source.id.clone()).unwrap();
         let (reply, result) = sync_channel(1);
         db.tx
             .send(DbCommand::Batch(
@@ -1656,7 +2019,7 @@ mod scan_safety_tests {
                     title: "Indexed".into(),
                     ..Default::default()
                 }],
-                1,
+                token,
                 reply,
             ))
             .unwrap();

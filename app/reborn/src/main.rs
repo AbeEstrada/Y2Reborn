@@ -10,7 +10,7 @@ use reborn_core::{
     Track,
 };
 use reborn_graphics::Renderer;
-use reborn_library::{Database, Filter, Scanner};
+use reborn_library::{Database, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
 use reborn_platform::client;
 use reborn_platform::{avrcp, bluetooth, input, power, storage, wifi};
@@ -2031,6 +2031,7 @@ fn run() -> Result<(), String> {
     startup_phase(&log, process_started, "storage_ready");
     let db = Database::spawn(root.join("library.db"), log.clone())?;
     db.sources(model.sources.clone())?;
+    let initial_catalog = db.catalog()?;
     let scanner = Scanner::spawn(db.clone(), log.clone())?;
     scanner.scan(model.sources.clone())?;
     startup_phase(&log, process_started, "library_workers_ready");
@@ -2119,7 +2120,7 @@ fn run() -> Result<(), String> {
         root: root.clone(),
         headless,
         last_activity: Instant::now(),
-        query: None,
+        query: Some(initial_catalog),
         action_depth: 0,
         action_before: None,
         action_dirty_before: None,
@@ -2429,13 +2430,7 @@ fn run() -> Result<(), String> {
             // An incomplete scan still publishes validated rows to SQLite,
             // while intentionally refusing pruning. Show those usable rows;
             // keep the failed/incomplete scan state visible and truthful.
-            rt.query = rt
-                .db
-                .list(Filter {
-                    limit: 20000,
-                    ..Default::default()
-                })
-                .ok();
+            rt.query = rt.db.catalog().ok();
             rt.dirty.mark_render();
         }
         if let Some(rx) = &rt.query {

@@ -187,15 +187,7 @@ pub fn database(root: &Path, count: usize) -> Result<(Value, Vec<Track>), String
     }
     c = open(&path).map_err(open_message)?;
     times.clear();
-    let tracks = timed(&mut times, || {
-        list(
-            &c,
-            &Filter {
-                limit: count,
-                ..Default::default()
-            },
-        )
-    })?;
+    let tracks = timed(&mut times, || catalog(&mut c))?;
     measurements.push(summary("startup_full_library_load", &times));
     let check = validate(&c)?;
     if check["tracks"].as_u64() != Some(count as u64) {
@@ -457,20 +449,7 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
     times.clear();
     let mut library = vec![];
     for _ in 0..7 {
-        library = timed(&mut times, || {
-            let mut result = vec![];
-            for offset in (0..count).step_by(512) {
-                result.extend(list(
-                    &c,
-                    &Filter {
-                        offset,
-                        limit: 512,
-                        ..Default::default()
-                    },
-                )?);
-            }
-            Ok(result)
-        })?;
+        library = timed(&mut times, || catalog(&mut c))?;
     }
     measurements.push(summary("startup_library_pages", &times));
     let settings = json!({"journal_mode":c.pragma_query_value(None,"journal_mode",|r|r.get::<_,String>(0)).map_err(err)?,
@@ -640,12 +619,7 @@ fn proc_write_bytes() -> u64 {
 }
 
 fn benchmark_prune(c: &mut Connection, source: &Source) -> Result<(), String> {
-    c.execute(
-        "UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>2",
-        [&source.id],
-    )
-    .map_err(err)?;
-    Ok(())
+    finish(c, source, true).map(|_| ())
 }
 
 #[cfg(test)]
