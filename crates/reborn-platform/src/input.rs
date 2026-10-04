@@ -549,6 +549,11 @@ impl InputManager {
         if self.dropping.contains(identity) {
             return vec![];
         }
+        if kind == EV_KEY && !matches!(value, 0..=2) {
+            // A malformed key record cannot leave a previous press aging or
+            // repeating indefinitely. Recovery never synthesizes activation.
+            return self.cancel_stale_device(identity);
+        }
         let Some(input) = map(device, kind, code, value) else {
             return vec![];
         };
@@ -1871,5 +1876,31 @@ mod tests {
             detent(&mut input, KEY_DOWN, 1_490),
             Some(NormalizedInput::WheelClockwise(1))
         );
+    }
+    #[test]
+    fn malformed_key_values_cancel_pressed_timers_without_activation() {
+        for (device, code, control) in [
+            (NAVIGATION_BUTTONS, 28, PhysicalControl::Select),
+            (NAVIGATION_BUTTONS, 158, PhysicalControl::Back),
+            (KEYPAD, 115, PhysicalControl::VolumeUp),
+        ] {
+            for value in [-1, 3] {
+                let mut input = InputManager::empty();
+                let now = Instant::now();
+                input.feed(device, EV_KEY, code, 1, now);
+                let events = input.feed(
+                    device,
+                    EV_KEY,
+                    code,
+                    value,
+                    now + Duration::from_millis(100),
+                );
+                assert_eq!(
+                    events.iter().map(|e| e.input).collect::<Vec<_>>(),
+                    vec![NormalizedInput::Cancel(control)]
+                );
+                assert!(input.tick(now + Duration::from_secs(10)).is_empty());
+            }
+        }
     }
 }
