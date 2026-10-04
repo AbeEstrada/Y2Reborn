@@ -47,6 +47,8 @@ pub struct Status {
     #[serde(default)]
     pub readiness_reason: Option<String>,
     pub ssid: String,
+    #[serde(default)]
+    pub association_id: Option<String>,
     pub ip: String,
     pub networks: Vec<Network>,
     pub saved: Vec<Network>,
@@ -167,6 +169,18 @@ impl Control {
         if cmd.len() > 4096 || cmd.contains('\n') || cmd.contains('\r') {
             return Err("invalid control request".into());
         }
+        // STATUS may queue behind a ~2.1 s vendor station-statistics query.
+        // Keep mutations at their existing bound; do not turn that delay into
+        // a false ERROR observation.
+        self.socket
+            .set_read_timeout(Some(Duration::from_secs(
+                if matches!(cmd, "PING" | "STATUS") {
+                    3
+                } else {
+                    2
+                },
+            )))
+            .map_err(|e| e.to_string())?;
         self.socket
             .send(cmd.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -305,6 +319,9 @@ fn status() -> Status {
     status_at(&Paths::default())
 }
 fn status_at(paths: &Paths) -> Status {
+    status_with_inventory(paths, None)
+}
+fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
     let mut s = Status {
         enabled: paths.power().unwrap_or(false),
         ..Default::default()
@@ -348,28 +365,41 @@ fn status_at(paths: &Paths) -> Status {
                         match k {
                             "wpa_state" => s.state = v.into(),
                             "ssid" => s.ssid = v.into(),
+                            "bssid" => s.association_id = Some(v.into()),
                             "ip_address" => s.ip = v.into(),
                             _ => {}
                         }
                     }
                 }
-                if let Ok(found) = c.request("SCAN_RESULTS").and_then(|s| networks(&s)) {
-                    s.networks = found;
-                }
-                if let Ok(text) = c.request("LIST_NETWORKS") {
-                    s.saved = text
-                        .lines()
-                        .skip(1)
-                        .take(128)
-                        .filter_map(|l| {
-                            let p = l.split('\t').collect::<Vec<_>>();
-                            Some(Network {
-                                saved_id: Some(p.first()?.parse().ok()?),
-                                ssid: p.get(1)?.to_string(),
-                                ..Default::default()
+                // Discovery is explicit. Reading the same scan/saved inventory
+                // every status tick adds control traffic without finding new APs.
+                // Refresh on user operations, association changes and every 30 s.
+                if let Some(old) = cached.filter(|old| {
+                    old.state == s.state
+                        && old.ssid == s.ssid
+                        && old.association_id == s.association_id
+                }) {
+                    s.networks = old.networks.clone();
+                    s.saved = old.saved.clone();
+                } else {
+                    if let Ok(found) = c.request("SCAN_RESULTS").and_then(|s| networks(&s)) {
+                        s.networks = found;
+                    }
+                    if let Ok(text) = c.request("LIST_NETWORKS") {
+                        s.saved = text
+                            .lines()
+                            .skip(1)
+                            .take(128)
+                            .filter_map(|l| {
+                                let p = l.split('\t').collect::<Vec<_>>();
+                                Some(Network {
+                                    saved_id: Some(p.first()?.parse().ok()?),
+                                    ssid: p.get(1)?.to_string(),
+                                    ..Default::default()
+                                })
                             })
-                        })
-                        .collect();
+                            .collect();
+                    }
                 }
             }
         },
@@ -382,8 +412,9 @@ fn status_at(paths: &Paths) -> Status {
             .filter(|b| b.len() <= 65536)
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
         let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-        let observed = record
-            .and_then(|r| network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?));
+        let observed = record.and_then(|r| {
+            network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?, &s)
+        });
         if let Some((state, reason)) = observed {
             s.readiness = state;
             s.readiness_reason = reason;
@@ -399,6 +430,7 @@ fn network_readiness(
     record: &serde_json::Value,
     boot: &str,
     now: f64,
+    live: &Status,
 ) -> Option<(String, Option<String>)> {
     let age = now - record["monotonic_s"].as_f64()?;
     if record["schema"] != 1 || record["boot_id"] != boot || !(0.0..15.0).contains(&age) {
@@ -416,6 +448,19 @@ fn network_readiness(
         "Failed",
     ]
     .contains(&state)
+    {
+        return None;
+    }
+    if state == "Online"
+        && (live.state != "COMPLETED"
+            || live.association_id.as_deref() != record["association_id"].as_str()
+            || live.association_id.is_none()
+            || live.ip.is_empty()
+            || !record["ip_addresses"].as_array().is_some_and(|addresses| {
+                addresses
+                    .iter()
+                    .any(|address| address.as_str() == Some(live.ip.as_str()))
+            }))
     {
         return None;
     }
@@ -527,6 +572,7 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
     let mut last_association = None;
     let mut operation_error = None;
     let mut refresh = Instant::now() - Duration::from_secs(4);
+    let mut inventory_refresh = refresh;
     let mut publish = true;
     loop {
         let wait = if scan.is_some() || publish {
@@ -617,7 +663,12 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
             operation_error = Some(e);
         }
         if explicit || refresh.elapsed() >= Duration::from_secs(3) {
-            let mut s = status_at(&paths);
+            let inventory_due = explicit || inventory_refresh.elapsed() >= Duration::from_secs(30);
+            let mut s =
+                status_with_inventory(&paths, if inventory_due { None } else { Some(&current) });
+            if inventory_due {
+                inventory_refresh = Instant::now();
+            }
             s.scan = current.scan.clone();
             current = s;
             refresh = Instant::now();
@@ -825,12 +876,40 @@ mod tests {
 
     #[test]
     fn platform_readiness_rejects_old_boot_and_stale_online_claims() {
-        let value =
-            json!({"schema":1,"boot_id":"one","monotonic_s":100.0,"state":"Online","reason":null});
-        assert_eq!(network_readiness(&value, "one", 101.0).unwrap().0, "Online");
-        assert!(network_readiness(&value, "two", 101.0).is_none());
-        assert!(network_readiness(&value, "one", 116.0).is_none());
-        assert!(network_readiness(&value, "one", 99.0).is_none());
+        let value = json!({"schema":1,"boot_id":"one","monotonic_s":100.0,"state":"Online","reason":null,
+                   "association_id":"peer-one","ip_addresses":["192.0.2.2"]});
+        let live = Status {
+            state: "COMPLETED".into(),
+            association_id: Some("peer-one".into()),
+            ip: "192.0.2.2".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            network_readiness(&value, "one", 101.0, &live).unwrap().0,
+            "Online"
+        );
+        assert!(network_readiness(&value, "two", 101.0, &live).is_none());
+        assert!(network_readiness(&value, "one", 116.0, &live).is_none());
+        assert!(network_readiness(&value, "one", 99.0, &live).is_none());
+    }
+    #[test]
+    fn online_readiness_must_match_current_association_and_address() {
+        let value = json!({"schema":1,"boot_id":"one","monotonic_s":100.0,"state":"Online",
+                           "association_id":"peer-one","ip_addresses":["192.0.2.2"]});
+        let mut live = Status {
+            state: "COMPLETED".into(),
+            association_id: Some("peer-two".into()),
+            ip: "192.0.2.2".into(),
+            ..Default::default()
+        };
+        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
+        live.association_id = Some("peer-one".into());
+        assert!(network_readiness(&value, "one", 101.0, &live).is_some());
+        live.ip = "192.0.2.3".into();
+        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
+        live.ip = "192.0.2.2".into();
+        live.state = "ERROR".into();
+        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
     }
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize},
@@ -843,11 +922,15 @@ mod tests {
         interface: UnixDatagram,
         monitor: Arc<Mutex<Option<PathBuf>>>,
         scans: Arc<AtomicUsize>,
+        requests: Arc<Mutex<Vec<String>>>,
         stop: Arc<AtomicBool>,
         worker: Option<thread::JoinHandle<()>>,
     }
     impl Supplicant {
         fn new(results: String) -> Self {
+            Self::with_status_delay(results, Duration::ZERO)
+        }
+        fn with_status_delay(results: String, status_delay: Duration) -> Self {
             let root = std::env::temp_dir().join(format!(
                 "rb-wifi-{}-{}",
                 std::process::id(),
@@ -875,6 +958,8 @@ mod tests {
             let m = monitor.clone();
             let scans = Arc::new(AtomicUsize::new(0));
             let count = scans.clone();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let observed_requests = requests.clone();
             let stop = Arc::new(AtomicBool::new(false));
             let ending = stop.clone();
             let worker = thread::spawn(move || {
@@ -886,6 +971,7 @@ mod tests {
                         };
                         let from = from.as_pathname().unwrap();
                         let command = std::str::from_utf8(&buf[..n]).unwrap();
+                        observed_requests.lock().unwrap().push(command.to_owned());
                         let response = match command {
                             "PING" => "PONG\n",
                             "ATTACH" => {
@@ -900,7 +986,10 @@ mod tests {
                                 count.fetch_add(1, Ordering::Relaxed);
                                 "OK\n"
                             }
-                            "STATUS" => "wpa_state=DISCONNECTED\n",
+                            "STATUS" => {
+                                thread::sleep(status_delay);
+                                "wpa_state=DISCONNECTED\n"
+                            }
                             "SCAN_RESULTS" => &results,
                             "LIST_NETWORKS" => "network id / ssid / bssid / flags\n",
                             _ => "FAIL\n",
@@ -916,6 +1005,7 @@ mod tests {
                 interface,
                 monitor,
                 scans,
+                requests,
                 stop,
                 worker: Some(worker),
             }
@@ -946,6 +1036,54 @@ mod tests {
                 return s;
             }
         }
+    }
+    #[test]
+    fn status_survives_measured_vendor_statistics_delay() {
+        let fake = Supplicant::with_status_delay(HEADER.into(), Duration::from_millis(2100));
+        fake.paths.radio(true, false).unwrap();
+        let status = status_at(&fake.paths);
+        assert_eq!(status.state, "DISCONNECTED");
+        assert!(status.error.is_none());
+    }
+    #[test]
+    fn status_refresh_reuses_inventory_and_keeps_live_association() {
+        let fake = Supplicant::new(format!("{HEADER}a\t2412\t-50\t[ESS]\tHome\n"));
+        fake.paths.radio(true, false).unwrap();
+        let first = status_at(&fake.paths);
+        assert_eq!(first.networks.len(), 1);
+        fake.requests.lock().unwrap().clear();
+        let next = status_with_inventory(&fake.paths, Some(&first));
+        assert_eq!(next.state, "DISCONNECTED");
+        assert_eq!(next.networks[0].ssid, "Home");
+        assert_eq!(*fake.requests.lock().unwrap(), ["PING", "STATUS"]);
+        // A known association change invalidates the cached discovery snapshot.
+        let stale = Status {
+            state: "COMPLETED".into(),
+            ..first
+        };
+        fake.requests.lock().unwrap().clear();
+        status_with_inventory(&fake.paths, Some(&stale));
+        assert!(fake
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "SCAN_RESULTS"));
+        assert!(fake
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "LIST_NETWORKS"));
+        // Explicit operations and the bounded inventory tick request a fresh list.
+        fake.requests.lock().unwrap().clear();
+        status_at(&fake.paths);
+        assert!(fake
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "LIST_NETWORKS"));
     }
     #[test]
     fn disabled_radio_is_off_and_healthy_without_an_interface() {
