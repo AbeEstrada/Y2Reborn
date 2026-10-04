@@ -105,6 +105,14 @@
       "bytes": 4275,
       "sha256": "c8d0e43b13231a0b23498ab71cd66ec127b36562f8b434745a623f648d3b46e6"
     },
+    "precision-24-44100.flac": {
+      "bytes": 13761,
+      "sha256": "fccf78fb4e8da9402b8392e78c0c5bf57d711e542407af3cdebe5419dc2a1ae1"
+    },
+    "precision-24-48000.flac": {
+      "bytes": 13761,
+      "sha256": "bc46e7c3600a2ec9dbaf72f0f42f91525a92eaa57fc6f3cb3b7d75a2a5f4b931"
+    },
     "source-no-metadata.flac": {
       "bytes": 11520,
       "sha256": "102ae10961147293094371605f1630d9b78c3b6b4110e2d9ad1667312137e211"
@@ -180,6 +188,16 @@
     "truncated audio"
   ],
   "origin": "deterministic 440 Hz and ramp signals generated locally by FFmpeg 9.0.1",
+  "precision": {
+    "frames": 1024,
+    "generator_ffmpeg_version": "9.0.2",
+    "rates_hz": [
+      44100,
+      48000
+    ],
+    "reference": "native.rs packed24 low-bit test; positive/negative pairs share upper16 bits",
+    "source_bits": 24
+  },
   "schema": "org.y2reborn.audio-fixtures/v2",
   "source_combinations": [
     "FLAC 16/44.1",

@@ -232,12 +232,29 @@ static void unpack_s24le_to_s32(const uint8_t *input, uint8_t *output,
   }
 }
 
+/* Final integer narrowing: nearest, ties to even, then saturate. Arithmetic
+ * right shifts bias negative samples. Exact destination-grid values survive.
+ * The only callers use divisors 256 (S24) and 65536 (S16).
+ */
+static int32_t quantize_q31(int32_t q31, int32_t divisor) {
+    int32_t rounded = q31 / divisor;
+    int32_t remainder = q31 % divisor;
+    if (remainder > divisor / 2 ||
+        (remainder == divisor / 2 && (rounded % 2)))
+      rounded++;
+    if (remainder < -divisor / 2 ||
+        (remainder == -divisor / 2 && (rounded % 2)))
+      rounded--;
+    int32_t maximum = INT32_MAX / divisor;
+    return rounded > maximum ? maximum : rounded;
+}
+
 static void pack_s32_to_s24le(const uint8_t *input, uint8_t *output,
                               size_t samples) {
   for (size_t i = 0; i < samples; i++) {
-    uint32_t q31;
+    int32_t q31;
     memcpy(&q31, input + i * 4, sizeof(q31));
-    uint32_t value = q31 >> 8;
+    uint32_t value = (uint32_t)quantize_q31(q31, 256);
     output[i * 4] = (uint8_t)value;
     output[i * 4 + 1] = (uint8_t)(value >> 8);
     output[i * 4 + 2] = (uint8_t)(value >> 16);
@@ -258,6 +275,16 @@ int rb_media_convert(const uint8_t *input, int frames, int rate, int input_forma
   if ((size_t)frames > SIZE_MAX / (2 * sizeof(int32_t)))
     return AVERROR(EINVAL);
   size_t samples = (size_t)frames * 2;
+  if (input_format == 2 && output_format == 1) {
+    for (size_t i = 0; i < samples; i++) {
+      int32_t q31;
+      memcpy(&q31, input + i * 4, sizeof(q31));
+      uint32_t value = (uint32_t)quantize_q31(q31, 65536);
+      output[i * 2] = (uint8_t)value;
+      output[i * 2 + 1] = (uint8_t)(value >> 8);
+    }
+    return frames;
+  }
   enum AVSampleFormat in_fmt = format_from_int(input_format);
   enum AVSampleFormat out_fmt = format_from_int(output_format);
   if (input_format == output_format) {

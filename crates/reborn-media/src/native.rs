@@ -721,10 +721,17 @@ mod tests {
     fn packed24_decode_float_dsp_and_sink_packing_keep_bits_below_s16() {
         let path = std::env::temp_dir().join(format!("reborn-lowbits-{}.wav", std::process::id()));
         let pattern = [
-            0_i32, 1, -1, 127, -127, 255, -255, 256, -256, 257, -257, 1023, -1023, 32767, -32768, 0,
+            0_i32, 1, -1, 127, -127, 255, -255, 256, -256, 257, -257, 1023, -1023, 32767, -32768,
+            0, 0x234500, 0x234501, 0x23457f, 0x234580, 0x2345ff, -0x234600, -0x2345ff, -0x234581,
+            -0x234580, -0x234501,
         ];
         let values: Vec<i32> = (0..1024)
-            .flat_map(|frame| [pattern[frame % 16], pattern[(frame + 5) % 16]])
+            .flat_map(|frame| {
+                [
+                    pattern[frame % pattern.len()],
+                    pattern[(frame + 5) % pattern.len()],
+                ]
+            })
             .collect();
         for rate in [44_100_u32, 48_000, 88_200, 96_000] {
             let length = (values.len() * 3) as u32;
@@ -745,32 +752,159 @@ mod tests {
                 wav.extend_from_slice(&value.to_le_bytes()[..3]);
             }
             std::fs::write(&path, wav).unwrap();
-            for format in [PcmFormat::S24LE, PcmFormat::S32LE] {
-                let mut decoder = Decoder::open_with(
-                    &path,
-                    OutputSpec { rate, format },
-                    DspConfig::with_volume(100),
-                    Cancel::new().unwrap(),
-                )
-                .unwrap();
-                let mut output = Vec::new();
-                while let Some(block) = decoder.read().unwrap() {
-                    output.extend_from_slice(&block.data);
-                }
-                assert_eq!(output.len(), values.len() * 4);
-                for (sample, expected) in output.chunks_exact(4).zip(&values) {
-                    let word = i32::from_le_bytes(sample.try_into().unwrap());
-                    let signed24 = if format == PcmFormat::S32LE {
-                        word >> 8
-                    } else {
-                        (word << 8) >> 8
-                    };
-                    assert_eq!(signed24, *expected, "{rate} {format:?}");
+            let mut sources = vec![path.clone()];
+            if rate == 44_100 || rate == 48_000 {
+                sources.push(fixture(&format!("precision-24-{rate}.flac")));
+            }
+            for source in sources {
+                for format in [PcmFormat::S24LE, PcmFormat::S32LE] {
+                    let mut decoder = Decoder::open_with(
+                        &source,
+                        OutputSpec { rate, format },
+                        DspConfig::with_volume(100),
+                        Cancel::new().unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(decoder.metadata.source_bits, 24);
+                    assert_eq!(decoder.metadata.decoder_sample_fmt, "s32");
+                    let mut output = Vec::new();
+                    while let Some(block) = decoder.read().unwrap() {
+                        output.extend_from_slice(&block.data);
+                    }
+                    assert_eq!(output.len(), values.len() * 4);
+                    for (sample, expected) in output.chunks_exact(4).zip(&values) {
+                        let word = i32::from_le_bytes(sample.try_into().unwrap());
+                        let signed24 = if format == PcmFormat::S32LE {
+                            word >> 8
+                        } else {
+                            (word << 8) >> 8
+                        };
+                        assert_eq!(signed24, *expected, "{rate} {format:?}");
+                    }
                 }
             }
         }
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn s24_quantization_rounds_both_signs_ties_even_and_saturates() {
+        let cases = [
+            (0, 0),
+            (127, 0),
+            (128, 0),
+            (129, 1),
+            (384, 2),
+            (640, 2),
+            (-127, 0),
+            (-128, 0),
+            (-129, -1),
+            (-384, -2),
+            (-640, -2),
+            (i32::MAX, 8_388_607),
+            (i32::MIN, -8_388_608),
+        ];
+        let input: Vec<u8> = cases
+            .iter()
+            .flat_map(|(word, _)| [*word, *word].into_iter().flat_map(i32::to_le_bytes))
+            .collect();
+        let output = convert_pcm(&input, 48_000, PcmFormat::S32LE, PcmFormat::S24LE).unwrap();
+        for (frame, (_, expected)) in output.chunks_exact(8).zip(cases) {
+            for sample in frame.chunks_exact(4) {
+                assert_eq!(sample[3], 0);
+                let signed = (i32::from_le_bytes(sample.try_into().unwrap()) << 8) >> 8;
+                assert_eq!(signed, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn crossfade_final_s16_quantization_rounds_both_signs_and_saturates() {
+        let cases = [
+            (0, 0),
+            (32767, 0),
+            (32768, 0),
+            (32769, 1),
+            (98304, 2),
+            (163840, 2),
+            (-32767, 0),
+            (-32768, 0),
+            (-32769, -1),
+            (-98304, -2),
+            (-163840, -2),
+            (i32::MAX, i16::MAX),
+            (i32::MIN, i16::MIN),
+        ];
+        let input: Vec<u8> = cases
+            .iter()
+            .flat_map(|(word, _)| [*word, *word].into_iter().flat_map(i32::to_le_bytes))
+            .collect();
+        let output = convert_pcm(&input, 44_100, PcmFormat::S32LE, PcmFormat::S16LE).unwrap();
+        for (frame, (_, expected)) in output.chunks_exact(4).zip(cases) {
+            for sample in frame.chunks_exact(2) {
+                assert_eq!(i16::from_le_bytes(sample.try_into().unwrap()), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn float_dsp_s32_container_does_not_claim_32_bit_preservation() {
+        let path =
+            std::env::temp_dir().join(format!("reborn-lowbits32-{}.wav", std::process::id()));
+        // Each pair differs only below float32's significand at this amplitude.
+        let pattern = [0x2345_0001_i32, 0x2345_0002, -0x2345_0001, -0x2345_0002];
+        let values: Vec<i32> = (0..1024)
+            .flat_map(|frame| [pattern[frame % 4], pattern[(frame + 2) % 4]])
+            .collect();
+        for rate in [44_100_u32, 48_000] {
+            let length = (values.len() * 4) as u32;
+            let mut wav = Vec::new();
+            wav.extend_from_slice(b"RIFF");
+            wav.extend_from_slice(&(length + 36).to_le_bytes());
+            wav.extend_from_slice(b"WAVEfmt ");
+            wav.extend_from_slice(&16_u32.to_le_bytes());
+            wav.extend_from_slice(&1_u16.to_le_bytes());
+            wav.extend_from_slice(&2_u16.to_le_bytes());
+            wav.extend_from_slice(&rate.to_le_bytes());
+            wav.extend_from_slice(&(rate * 8).to_le_bytes());
+            wav.extend_from_slice(&8_u16.to_le_bytes());
+            wav.extend_from_slice(&32_u16.to_le_bytes());
+            wav.extend_from_slice(b"data");
+            wav.extend_from_slice(&length.to_le_bytes());
+            for value in &values {
+                wav.extend_from_slice(&value.to_le_bytes());
+            }
+            std::fs::write(&path, wav).unwrap();
+            let mut decoder = Decoder::open_with(
+                &path,
+                OutputSpec {
+                    rate,
+                    format: PcmFormat::S32LE,
+                },
+                DspConfig::with_volume(100),
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(decoder.metadata.source_bits, 32);
+            assert_eq!(decoder.metadata.decoder_sample_fmt, "s32");
+            assert_eq!(decoder.metadata.internal_sample_fmt, "fltp");
+            let mut output = Vec::new();
+            while let Some(block) = decoder.read().unwrap() {
+                output.extend_from_slice(&block.data);
+            }
+            let words: Vec<i32> = output
+                .chunks_exact(4)
+                .map(|p| i32::from_le_bytes(p.try_into().unwrap()))
+                .collect();
+            assert_eq!(words.len(), values.len());
+            assert_ne!(words, values);
+            for pair in words.chunks_exact(4) {
+                assert_eq!(pair[0], pair[2]);
+                assert_eq!(pair[1], pair[3]);
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn fixture_formats_are_float_processed_and_s32_output() {
         for n in [
@@ -1024,7 +1158,7 @@ mod tests {
         assert!(output.chunks_exact(4).all(|sample| sample[3] == 0));
     }
     #[test]
-    fn decoded_fltp_to_s24_matches_q31_top_bits_and_exact_frame_count() {
+    fn decoded_fltp_to_s24_rounds_q31_and_keeps_exact_frame_count() {
         fn decode(format: PcmFormat) -> Vec<u8> {
             let mut decoder = Decoder::open_with(
                 &fixture("tone.flac"),
@@ -1054,8 +1188,10 @@ mod tests {
         assert!(s32.chunks_exact(4).any(|sample| sample != [0, 0, 0, 0]));
 
         for (source, destination) in s32.chunks_exact(4).zip(s24.chunks_exact(4)) {
-            let q31 = u32::from_le_bytes(source.try_into().unwrap());
-            let value = q31 >> 8;
+            let q31 = i32::from_le_bytes(source.try_into().unwrap());
+            let value = (f64::from(q31) / 256.0)
+                .round_ties_even()
+                .clamp(-8_388_608.0, 8_388_607.0) as i32;
             assert_eq!(
                 destination,
                 [value as u8, (value >> 8) as u8, (value >> 16) as u8, 0]
