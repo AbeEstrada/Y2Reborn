@@ -23,6 +23,11 @@ shared device lock was busy with the separate storage lane; this pass did not
 operate the physical device. That lane's owner-reported SDR104 results remain
 separate evidence.
 
+**Later receipt update:** the storage owner supplied actual 1,000-file stock
+scanner receipts for Baseline02 on DATA and SD. They were read and summarized
+below, with original hashes in the compact evidence. This adds physical
+**baseline** evidence; the new metadata candidate still has no physical run.
+
 ## 1. Current metadata architecture and file-open trace
 
 The architecture remains file → direct FFmpeg demux/decode/metadata → Reborn
@@ -283,6 +288,32 @@ emulation, **not a physical Y2 speed estimate**. Production scanning remains
 one worker. Every unchanged scan reused all files and recorded zero FFmpeg
 opens/analysis/I/O in the candidate metrics.
 
+The independent storage lane then ran the exact stock ARM scanner harness
+(`16e64c9e…` SHA256) against the installed old media membrane, on both physical
+volumes in its own lock slot. Receipt identity: Linux
+`8584ccd85f052f351fe51650b2348c83ca894ed4`, Reborn `b71b4688`, Baseline02,
+kernel `6.18.0-y2linux-baseline-02`, rootfs `2025.02.18-platform-v1.21`, boot
+`27e6d684-3794-4490-95db-a489027cd4f4`; closing taint 0. These are single
+bounded runs of the same 1,000-file, 23,703,609-byte corpus:
+
+| Physical stock baseline | Initial ms / files/s | Incremental ms | Initial / cumulative peak KiB |
+| --- | ---: | ---: | ---: |
+| DATA, eMMC HS200 | 5,526 / 181.0 | 393 | 10,468 / 10,656 |
+| SD, ext4 SDR104 | 5,495 / 182.0 | 401 | 10,580 / 10,936 |
+
+Both initial scans indexed all 1,000 files with zero failures; both rescans
+reused all 1,000. Controller fault deltas were zero during write/fsync,
+read/SHA256 and scanning. Separate storage workload rates were DATA
+1.731 MB/s write/fsync and 3.078 MB/s read/SHA256, SD 1.532/3.034 MB/s;
+those are small-file workload rates, not FFmpeg parse rates. Aggregate CPU busy
+during each initial+incremental scanner process was about 27%. Private scratch
+was cleaned and services/modes/settings left unchanged by that slot. The next
+device slot is reserved for suspend work; this lane did not acquire the device.
+Receipts originate in storage's ignored `out/platform-v1-storage/{emmc,sd}-corpus.json`
+and `corpus-restored.stdout`, copied immutably to this pass's ignored evidence.
+There is no physical candidate after-number, concurrency comparison or speedup
+extrapolation from these stock results.
+
 ## 10. Peak memory measured
 
 Linux `/proc/self/status` VmHWM, maximum across each three-run group; KiB.
@@ -300,6 +331,9 @@ modest growth includes SQLite page/cache state, not retained artwork blobs.
 QEMU 1k peak was 133,592 → 35,536 KiB; those values include emulator mappings
 and translated code and must not be described as physical ARM process RSS.
 No physical candidate peak RSS was measured.
+The later physical **stock** scanner peaks in section 9 are real ARM process
+measurements, still excluding the running GUI/whole-application memory. They
+must not be compared as an after-result to the host or QEMU figures.
 
 ## 11. Metadata edge cases covered
 
@@ -359,6 +393,7 @@ one-time old-row reparse and subsequent reuse even with an invalid neighbor.
 | Python syntax / diff whitespace | PASS |
 | Reborn documentation links/catalog | PASS, 59 pages / 572 local links |
 | Physical new-candidate scan/concurrent playback | NOT_RUN |
+| Physical stock 1k scan/reuse, DATA and SD | PASS, separate storage owner receipts; zero failures/controller fault deltas |
 
 Runtime versions: avutil 61.1.102, avcodec/avformat 63.1.102,
 avfilter 12.1.102, swresample 7.1.102, swscale 10.1.102. ELF and runtime
@@ -412,8 +447,9 @@ only. Fixture writers are not production tag parsers.
 
 `a22107c` — Harden FFmpeg metadata and bound incremental library ingestion.
 `43a695c` — Skip media opens for sidecar-only collection artwork; explicitly
-assert QEMU diagnostic success. Following local documentation commits record
-this receipt and paired planning audit; their hashes are in the handoff. No push.
+assert QEMU diagnostic success. `bf1c50a` records the initial receipt and
+`0d692f2` the paired Linux audit. Following documentation commits reconcile
+the later physical stock receipts; their hashes are in the handoff. No push.
 
 ## 15. Remaining Platform 1.0 limitations
 

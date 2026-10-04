@@ -17,7 +17,7 @@
     "qemu": "3 alternating scans, qemu-arm Cortex-A7 with four host CPU affinity; includes emulator RSS, not physical timing/RAM",
     "parse": "20 native -Os direct-library owner initializations per file; timer stops before close; old C copied from b71b468 with timing only",
     "artwork": "10 native decode calls per file including cold first load",
-    "physical_candidate": "NOT_RUN; shared lock was busy; separate storage lane may report stock scanner only"
+    "physical_candidate": "NOT_RUN; initial shared lock busy, subsequent slot reserved for suspend; verified stock scanner receipts appear separately"
   },
   "host_scans": [
     {
@@ -929,7 +929,7 @@
       "reborn_pages": 59,
       "reborn_local_links": 572,
       "reborn_errors": 0,
-      "linux": "289 pages, 4347 links; one unchanged legacy Y2Player link unavailable in isolated sibling layout; new links resolve"
+      "linux": "289 pages, 4350 links; one unchanged legacy Y2Player link unavailable in isolated sibling layout; new links resolve"
     }
   },
   "ffmpeg_runtime": {
@@ -1194,5 +1194,308 @@
       }
     ]
   },
-  "final_source_commit": "43a695cbb550e20a6a7e8afd2c078a50d5d45d90"
+  "final_source_commit": "43a695cbb550e20a6a7e8afd2c078a50d5d45d90",
+  "physical_stock_baseline": {
+    "origin": "Independent storage-owner 2026-10-04 device slot; this lane only read retained receipts",
+    "new_candidate": "NOT_RUN",
+    "restored_boot": "27e6d684-3794-4490-95db-a489027cd4f4",
+    "restored_taint": 0,
+    "restoration_sha256": "c59b4f48ba07dabe43156ef640728f4cd0e9d1c1db50334baebd0977de508d83",
+    "media": {
+      "emmc": "HS200",
+      "sd": "ext4 SDR104"
+    },
+    "measurements": [
+      {
+        "volume": "/data",
+        "record": {
+          "boot_id": "27e6d684-3794-4490-95db-a489027cd4f4",
+          "build_id": "Y2LINUX-BASELINE-02",
+          "evidence_level": "IMPLEMENTED",
+          "failure": null,
+          "kernel": "6.18.0-y2linux-baseline-02",
+          "monotonic_ns": 8251736148160,
+          "parameters": {},
+          "reborn_commit": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+          "result": "OK",
+          "rootfs_release": "2025.02.18-platform-v1.21",
+          "units": {},
+          "wall_timestamp": "2026-10-04T12:36:11.469301+00:00",
+          "workload": "mixed-music-storage",
+          "y2linux_commit": "8584ccd85f052f351fe51650b2348c83ca894ed4"
+        },
+        "receipt_sha256": "076b5044c5ab73a9adc26d95bad090c3f20e7100d367cf46d84293f288e2bb68",
+        "receipt_origin": "/home/luca/Dokumente/Code/worktrees/platform-v1-storage/Y2Linux/out/platform-v1-storage/emmc-corpus.json",
+        "harness_sha256": "16e64c9ebd4139b0324a39d15e6d1bfdb57986f926e3e013d4a55c6db36400f0",
+        "scope": "stock b71b468 scanner plus installed old native membrane; independent storage lane; not the metadata candidate",
+        "operations": [
+          {
+            "operation": "initial",
+            "metrics": {
+              "complete": true,
+              "discovered": 1000,
+              "elapsed_ms": 5526,
+              "failures": 0,
+              "rescanned": 1000,
+              "reused": 0,
+              "tracks_per_sec": 180.95582168256558
+            },
+            "peak_rss_kib": 10468
+          },
+          {
+            "operation": "incremental",
+            "metrics": {
+              "complete": true,
+              "discovered": 1000,
+              "elapsed_ms": 393,
+              "failures": 0,
+              "rescanned": 0,
+              "reused": 1000,
+              "tracks_per_sec": 2543.7278260065746
+            },
+            "peak_rss_kib": 10656
+          }
+        ],
+        "scan_cpu_busy_percent": 27.28421052631579,
+        "storage_io": [
+          {
+            "operation": "mixed_corpus_write_fsync",
+            "files": 1000,
+            "bytes": 23703609,
+            "elapsed_ns": 13691291349,
+            "MB_per_second": 1.7312909641449776
+          },
+          {
+            "operation": "mixed_corpus_read_sha256",
+            "files": 1000,
+            "bytes": 23703609,
+            "elapsed_ns": 7699802676,
+            "MB_per_second": 3.0784696696037774
+          }
+        ],
+        "controller_fault_deltas": [
+          {
+            "operation": "mixed_corpus_write_fsync",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          },
+          {
+            "operation": "mixed_corpus_read_sha256",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          },
+          {
+            "operation": "library_scan_initial_and_incremental",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "volume": "/media/sd",
+        "record": {
+          "boot_id": "27e6d684-3794-4490-95db-a489027cd4f4",
+          "build_id": "Y2LINUX-BASELINE-02",
+          "evidence_level": "IMPLEMENTED",
+          "failure": null,
+          "kernel": "6.18.0-y2linux-baseline-02",
+          "monotonic_ns": 8415079621245,
+          "parameters": {},
+          "reborn_commit": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+          "result": "OK",
+          "rootfs_release": "2025.02.18-platform-v1.21",
+          "units": {},
+          "wall_timestamp": "2026-10-04T12:38:54.812776+00:00",
+          "workload": "mixed-music-storage",
+          "y2linux_commit": "8584ccd85f052f351fe51650b2348c83ca894ed4"
+        },
+        "receipt_sha256": "682d7f4c8f30eb6e76033d1d6df38e11cb9bcaf71096f33861ea5f64f6e4ebd9",
+        "receipt_origin": "/home/luca/Dokumente/Code/worktrees/platform-v1-storage/Y2Linux/out/platform-v1-storage/sd-corpus.json",
+        "harness_sha256": "16e64c9ebd4139b0324a39d15e6d1bfdb57986f926e3e013d4a55c6db36400f0",
+        "scope": "stock b71b468 scanner plus installed old native membrane; independent storage lane; not the metadata candidate",
+        "operations": [
+          {
+            "operation": "initial",
+            "metrics": {
+              "complete": true,
+              "discovered": 1000,
+              "elapsed_ms": 5495,
+              "failures": 0,
+              "rescanned": 1000,
+              "reused": 0,
+              "tracks_per_sec": 181.9737075332344
+            },
+            "peak_rss_kib": 10580
+          },
+          {
+            "operation": "incremental",
+            "metrics": {
+              "complete": true,
+              "discovered": 1000,
+              "elapsed_ms": 401,
+              "failures": 0,
+              "rescanned": 0,
+              "reused": 1000,
+              "tracks_per_sec": 2492.2119808619955
+            },
+            "peak_rss_kib": 10936
+          }
+        ],
+        "scan_cpu_busy_percent": 27.112232030264817,
+        "storage_io": [
+          {
+            "operation": "mixed_corpus_write_fsync",
+            "files": 1000,
+            "bytes": 23703609,
+            "elapsed_ns": 15467962029,
+            "MB_per_second": 1.5324325826220322
+          },
+          {
+            "operation": "mixed_corpus_read_sha256",
+            "files": 1000,
+            "bytes": 23703609,
+            "elapsed_ns": 7813484358,
+            "MB_per_second": 3.0336797149572026
+          }
+        ],
+        "controller_fault_deltas": [
+          {
+            "operation": "mixed_corpus_write_fsync",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          },
+          {
+            "operation": "mixed_corpus_read_sha256",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          },
+          {
+            "operation": "library_scan_initial_and_incremental",
+            "controllers": {
+              "11230000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              },
+              "11240000.mmc": {
+                "controller_events": 0,
+                "crc_events": 0,
+                "fallbacks": 0,
+                "resets": 0,
+                "timeout_events": 0,
+                "tuning_events": 0,
+                "verify_events": 0,
+                "voltage_events": 0
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
 }
