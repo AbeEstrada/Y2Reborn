@@ -73,7 +73,7 @@ fn status() -> Value {
         "bluetooth":{"selected_peer":{"trusted":true},"reconnect":{"state":"Connected"}},
         "system":{"versions":{"release_version":"1.0.0-reborn-product-ui-v2-candidate.1","rootfs_version":"2025.02.18-platform-v1.10","build_id":"Y2LINUX-REBORN-PRODUCT-UI-V2","reborn_source_commit":"preview","build_git_commit":"preview"},
             "time":{"tls_ready":true,"source":"ntp"},"ssh":{"state":"Ready","bind":"10.42.0.1:22","sftp":true},
-            "usb":{"udcs":[{"state":"configured"}],"dma":{"transfer":"dma","dma_errors":0}},
+            "usb":{"file_transfer":{"schema":"org.y2linux.usb-transfer/v1","boot_id":"preview-boot","mode":"mtp","state":"Ready"},"udcs":[{"state":"configured"}],"dma":{"transfer":"dma","dma_errors":0}},
             "update":{"state":"Idle","download":{"state":"Checked","release_version":"1.0.0-reborn-product-ui-v2-candidate.1"}},
             "boot_history":{"previous_boot_id":"previous","last_stage":"application_ready"},
             "previous_boot_evidence":{"previous_orderly_shutdown":true},"kernel_taint":0},
@@ -289,6 +289,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::PcTransfer, ""),
         |_, m| {
             m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Disconnected;
+        }
+    );
+    case!(
+        "25b-pc-transfer-copying",
+        at(Screen::PcTransfer, ""),
+        |_, m| {
+            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
+        }
+    );
+    case!(
+        "25c-pc-transfer-error",
+        at(Screen::PcTransfer, ""),
+        |_, m| {
+            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Error;
+        }
+    );
+    case!(
+        "25d-pc-transfer-refreshing",
+        at(Screen::PcTransfer, ""),
+        |_, m| {
+            m.library.scanning = true;
         }
     );
     case!("26-audio", at(Screen::SettingsAudio, ""));

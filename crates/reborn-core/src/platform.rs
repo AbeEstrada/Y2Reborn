@@ -192,6 +192,9 @@ pub enum UsbTransfer {
     /// Cable attached, transfer service still starting.
     Starting,
     Ready,
+    Copying,
+    /// Advanced network transfer on images without the consumer MTP function.
+    Developer,
     /// A computer is attached but the transfer service failed.
     Error,
 }
@@ -292,6 +295,8 @@ pub struct PlatformSnapshot {
     pub info: PlatformInfo,
     pub storage: StorageState,
     pub usb: UsbTransfer,
+    /// Durable file changes, coalesced into incremental scans by the app.
+    pub usb_refresh_generation: u64,
     pub sleep: SleepState,
     pub bluetooth_quality: BluetoothQuality,
     pub update: UpdateState,

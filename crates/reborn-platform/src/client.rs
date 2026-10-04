@@ -364,8 +364,24 @@ pub fn usb(status: &Value) -> UsbTransfer {
     if !attached {
         return UsbTransfer::Disconnected;
     }
+    let transfer = &status["system"]["usb"]["file_transfer"];
+    if transfer["schema"] == "org.y2linux.usb-transfer/v1"
+        && transfer["boot_id"] == status["record"]["boot_id"]
+        && transfer["boot_id"].as_str().is_some()
+    {
+        if transfer["error"].as_i64().is_some_and(|code| code > 0) {
+            return UsbTransfer::Error;
+        }
+        return match transfer["state"].as_str() {
+            Some("Copying") => UsbTransfer::Copying,
+            Some("Ready") if transfer["mode"] == "mtp" => UsbTransfer::Ready,
+            Some("Ready") => UsbTransfer::Developer,
+            Some("Failed" | "Unavailable") => UsbTransfer::Error,
+            _ => UsbTransfer::Starting,
+        };
+    }
     match status["system"]["ssh"]["state"].as_str() {
-        Some("Ready") if cable == Some("configured") => UsbTransfer::Ready,
+        Some("Ready") if cable == Some("configured") => UsbTransfer::Developer,
         Some("Failed") => UsbTransfer::Error,
         _ => UsbTransfer::Starting,
     }
@@ -453,12 +469,25 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         },
         storage: storage(status),
         usb: usb(status),
+        usb_refresh_generation: usb_refresh_generation(status),
         sleep: sleep(&status["power"]["sleep"]),
         bluetooth_quality: bluetooth_quality(&status["bluetooth"]["codec_settings"]),
         update: update(status, ota),
         health: HealthLevel::Unknown,
         diagnostics: diagnostics(status, caps),
         enabled,
+    }
+}
+
+fn usb_refresh_generation(status: &Value) -> u64 {
+    let transfer = &status["system"]["usb"]["file_transfer"];
+    if transfer["schema"] == "org.y2linux.usb-transfer/v1"
+        && transfer["boot_id"] == status["record"]["boot_id"]
+        && transfer["boot_id"].as_str().is_some()
+    {
+        transfer["refresh_generation"].as_u64().unwrap_or(0)
+    } else {
+        0
     }
 }
 
@@ -860,17 +889,24 @@ fn diagnostics(s: &Value, caps: &Value) -> Vec<DiagnosticSection> {
     });
     // USB
     let dma = &s["system"]["usb"]["dma"];
+    let transfer = &s["system"]["usb"]["file_transfer"];
     let mut usb = vec![
-        fact("Transfer service", &s["system"]["ssh"]["state"]),
+        fact("File transfer", &transfer["state"]),
+        fact("USB mode", &transfer["mode"]),
+        fact("Transfer error", &transfer["error"]),
+        fact("Advanced transfer", &s["system"]["ssh"]["state"]),
         fact("Address", &s["system"]["ssh"]["bind"]),
         fact("SFTP", &s["system"]["ssh"]["sftp"]),
         fact("Transfer path", &dma["transfer"]),
         fact("DMA errors", &dma["dma_errors"]),
         fact("DMA RX bytes", &dma["dma_rx_programmed_bytes"]),
         fact("DMA TX bytes", &dma["dma_tx_programmed_bytes"]),
+        fact("PIO RX bytes", &dma["pio_rx_bytes"]),
+        fact("PIO TX bytes", &dma["pio_tx_bytes"]),
     ];
     for udc in entries(&s["system"]["usb"]["udcs"]) {
         usb.insert(0, fact("Cable", &udc["state"]));
+        usb.insert(1, fact("USB speed", &udc["speed"]));
     }
     out.push(DiagnosticSection {
         id: "usb",
@@ -1048,7 +1084,7 @@ mod tests {
         assert_eq!(s.storage.internal.state, VolumeState::LowSpace);
         assert_eq!(s.storage.internal.free_bytes, Some(1_000_000_000));
         assert_eq!(s.storage.sd, SdCard::Absent);
-        assert_eq!(s.usb, UsbTransfer::Ready);
+        assert_eq!(s.usb, UsbTransfer::Developer);
         assert_eq!(
             s.update.phase,
             UpdatePhase::Available {
@@ -1095,6 +1131,21 @@ mod tests {
         assert!(!update(&v, false).can_check);
     }
 
+    #[test]
+    fn mtp_state_and_refresh_require_current_boot_receipt() {
+        let mut v = status();
+        v["record"]["boot_id"] = json!("this-boot");
+        v["system"]["usb"]["file_transfer"] = json!({"schema":"org.y2linux.usb-transfer/v1","boot_id":"this-boot","mode":"mtp","state":"Ready","refresh_generation":9});
+        assert_eq!(usb(&v), UsbTransfer::Ready);
+        assert_eq!(usb_refresh_generation(&v), 9);
+        v["system"]["usb"]["file_transfer"]["state"] = json!("Copying");
+        assert_eq!(usb(&v), UsbTransfer::Copying);
+        v["system"]["usb"]["file_transfer"]["error"] = json!(28);
+        assert_eq!(usb(&v), UsbTransfer::Error);
+        v["system"]["usb"]["file_transfer"]["boot_id"] = json!("old-boot");
+        assert_eq!(usb(&v), UsbTransfer::Developer);
+        assert_eq!(usb_refresh_generation(&v), 0);
+    }
     #[test]
     fn usb_cable_and_service_states() {
         let mut v = status();
