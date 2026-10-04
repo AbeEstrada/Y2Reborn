@@ -10,7 +10,7 @@ use reborn_core::{
     Track,
 };
 use reborn_graphics::Renderer;
-use reborn_library::{Database, Filter, Scanner};
+use reborn_library::{Database, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
 use reborn_platform::client;
 use reborn_platform::{avrcp, bluetooth, input, power, storage, wifi};
@@ -2034,6 +2034,7 @@ fn run() -> Result<(), String> {
     startup_phase(&log, process_started, "storage_ready");
     let db = Database::spawn(root.join("library.db"), log.clone())?;
     db.sources(model.sources.clone())?;
+    let initial_catalog = db.catalog()?;
     let scanner = Scanner::spawn(db.clone(), log.clone())?;
     scanner.scan(model.sources.clone())?;
     startup_phase(&log, process_started, "library_workers_ready");
@@ -2122,7 +2123,7 @@ fn run() -> Result<(), String> {
         root: root.clone(),
         headless,
         last_activity: Instant::now(),
-        query: None,
+        query: Some(initial_catalog),
         action_depth: 0,
         action_before: None,
         action_dirty_before: None,
@@ -2401,6 +2402,12 @@ fn run() -> Result<(), String> {
             }
         }
         if let Ok(result) = rt.scanner.results.try_recv() {
+            // A no-op scan must not rematerialize the resident catalog or
+            // invalidate its cached navigation rows. Deletions alone count.
+            let refresh_catalog = match &result {
+                Ok(stats) => stats.rescanned != 0 || stats.removed != 0,
+                Err(_) => true,
+            };
             match result {
                 Ok(stats) if stats.complete => {
                     rt.model
@@ -2433,13 +2440,9 @@ fn run() -> Result<(), String> {
             // An incomplete scan still publishes validated rows to SQLite,
             // while intentionally refusing pruning. Show those usable rows;
             // keep the failed/incomplete scan state visible and truthful.
-            rt.query = rt
-                .db
-                .list(Filter {
-                    limit: 20000,
-                    ..Default::default()
-                })
-                .ok();
+            if refresh_catalog {
+                rt.query = rt.db.catalog().ok();
+            }
             rt.dirty.mark_render();
         }
         if let Some(rx) = &rt.query {
@@ -2808,6 +2811,9 @@ fn run() -> Result<(), String> {
                         rt.playback.stop(rt.model.generation)
                     }
                     let _ = rt.db.sources(sources);
+                    // Publish cached metadata with the new online flags now;
+                    // scanner completion reloads only actual row changes.
+                    rt.query = rt.db.catalog().ok();
                     rt.model.apply(Event::LibraryScanStarted);
                     if let Err(error) = rt.scanner.scan(rt.model.sources.clone()) {
                         rt.model.apply(Event::LibraryScanFailed(error.clone()));

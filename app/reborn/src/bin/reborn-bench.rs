@@ -21,6 +21,72 @@ fn run() -> Result<(), String> {
         return Err("scratch directory must be empty".into());
     }
     let tracks = args[4].parse::<usize>().map_err(|e| e.to_string())?;
+    if args.iter().any(|a| a == "--platform-db") {
+        let media_root = args
+            .windows(2)
+            .find(|pair| pair[0] == "--media-fd")
+            .map(|pair| {
+                let fd = pair[1].parse::<u32>().map_err(|e| e.to_string())?;
+                if fd < 3 {
+                    return Err("media directory fd must be >=3".to_owned());
+                }
+                let path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+                if fs::read_dir(&path).map_err(|e| e.to_string())?.count() != 0 {
+                    return Err("media scratch directory must be empty".to_owned());
+                }
+                Ok(path)
+            })
+            .transpose()?;
+        let (report, library) =
+            reborn_library::benchmark::platform_db_on_media(&root, media_root.as_deref(), tracks)?;
+        let mut model = AppModel::default();
+        let mut ui = Ui::default();
+        let mut measurements = vec![];
+        for (name, screen) in [
+            ("songs_catalog", Screen::Tracks),
+            ("albums_catalog", Screen::Albums),
+            ("artists_catalog", Screen::Artists),
+        ] {
+            model.screen = screen;
+            let mut samples = vec![];
+            for _ in 0..21 {
+                ui.invalidate_catalog();
+                timed(&mut samples, || {
+                    Ok(ui.action(&mut model, &library, Action::WheelClockwise(1)))
+                })?;
+            }
+            measurements.push(summary(name, &samples));
+        }
+        model.screen = Screen::Tracks;
+        let mut samples = vec![];
+        for _ in 0..128 {
+            timed(&mut samples, || {
+                Ok(ui.action(&mut model, &library, Action::WheelClockwise(1)))
+            })?;
+        }
+        measurements.push(summary("cached_wheel_navigation", &samples));
+        samples.clear();
+        for _ in 0..7 {
+            timed(&mut samples, || {
+                model.replace_queue(
+                    library
+                        .iter()
+                        .take(reborn_core::MAX_QUEUE)
+                        .cloned()
+                        .collect(),
+                    0,
+                )
+            })?;
+        }
+        measurements.push(summary("queue_population", &samples));
+        println!(
+            "{}",
+            json!({"database":report,"ui":measurements,
+            "memory":fs::read_to_string("/proc/self/status").ok(),
+            "evidence":"scratch-only userspace; page cache uncontrolled"})
+        );
+        return Ok(());
+    }
     if ![1000, 10000, 20000].contains(&tracks) {
         return Err("tracks must be 1000, 10000 or 20000".into());
     }
@@ -50,7 +116,16 @@ fn run() -> Result<(), String> {
     }
     measurements.push(summary("wheel_navigation", &samples));
     samples.clear();
-    timed(&mut samples, || model.replace_queue(library.clone(), 0))?;
+    timed(&mut samples, || {
+        model.replace_queue(
+            library
+                .iter()
+                .take(reborn_core::MAX_QUEUE)
+                .cloned()
+                .collect(),
+            0,
+        )
+    })?;
     measurements.push(summary("queue_construction", &samples));
     let scan = if args.iter().any(|a| a == "--scan") {
         Some(scanner(&root, tracks)?)
