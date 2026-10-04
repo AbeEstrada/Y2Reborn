@@ -442,6 +442,9 @@ impl Runtime {
     }
 
     fn restore_sleep(&mut self) -> Result<Value, String> {
+        // A failed display restore must also discard the wake gesture before
+        // input is accepted again, so its release cannot request another sleep.
+        self.input_resume = true;
         self.sleep_prepared = false;
         self.model.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Waking;
         self.effect_inner(Effect::ScreenWake)?;
@@ -454,7 +457,6 @@ impl Runtime {
         } else if !self.headless {
             return Err("display_restoration_failed".into());
         }
-        self.input_resume = true;
         self.playback_hints.clear();
         self.last_activity = Instant::now();
         self.dirty.mark_render();
