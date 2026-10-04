@@ -269,16 +269,36 @@ pub fn scanner(root: &Path, count: usize) -> Result<Value, String> {
 /// Platform pass: deterministic tags and actual scanner reuse, without timing
 /// FFmpeg initial parsing (owned by the metadata pass). Each process is isolated.
 pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), String> {
+    platform_db_on_media(root, None, count)
+}
+
+/// Optional separate empty media scratch FD keeps the database on Y2DATA while
+/// measuring a collection on SD. The caller owns both descriptor-pinned roots.
+pub fn platform_db_on_media(
+    root: &Path,
+    media_root: Option<&Path>,
+    count: usize,
+) -> Result<(Value, Vec<Track>), String> {
     if ![100, 1_000, 10_000, 25_000, 50_000].contains(&count) {
         return Err("platform dataset must be 100, 1000, 10000, 25000 or 50000".into());
     }
     let media = root.join("media");
+    let extra_media = media_root.map(|p| p.join("media"));
+    if let Some(path) = &extra_media {
+        fs::create_dir(path).map_err(|e| e.to_string())?;
+    }
     fs::create_dir(&media).map_err(|e| e.to_string())?;
     let mut fixtures = Vec::with_capacity(count);
     let bytes = wave();
     for i in 0..count {
         let album = i / 24;
-        let directory = media.join(format!("release{album:05}"));
+        let extra = extra_media.is_some() && i >= count / 2;
+        let collection = if extra {
+            extra_media.as_ref().unwrap()
+        } else {
+            &media
+        };
+        let directory = collection.join(format!("release{album:05}"));
         fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         let path = directory.join(format!("{i:05}.wav"));
         fs::write(&path, &bytes).map_err(|e| e.to_string())?;
@@ -286,7 +306,7 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
         let missing = album % 29 == 0;
         let compilation = album % 7 == 0;
         fixtures.push(Track {
-            source_id: "fixture".into(),
+            source_id: if extra { "fixture-sd" } else { "fixture" }.into(),
             path,
             filename: format!("{i:05}.wav"),
             size: meta.len(),
@@ -341,6 +361,14 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
                 [media.to_string_lossy()],
             )
             .map_err(err)?;
+        if let Some(path) = &extra_media {
+            populate
+                .execute(
+                    "INSERT INTO sources VALUES('fixture-sd',?1,1)",
+                    [path.to_string_lossy()],
+                )
+                .map_err(err)?;
+        }
         timed(&mut times, || {
             for chunk in fixtures.chunks(64) {
                 batch(&mut populate, chunk.to_vec(), 1)?;
@@ -356,6 +384,13 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
         [media.to_string_lossy()],
     )
     .map_err(err)?;
+    if let Some(path) = &extra_media {
+        c.execute(
+            "INSERT INTO sources VALUES('fixture-sd',?1,1)",
+            [path.to_string_lossy()],
+        )
+        .map_err(err)?;
+    }
     for chunk in fixtures.chunks(64) {
         batch(&mut c, chunk.to_vec(), 1)?;
     }
@@ -473,14 +508,22 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
         mount: "scratch".into(),
         mount_id: None,
     };
-    db.sources(vec![source.clone()])?;
+    let mut sources = vec![source.clone()];
+    if let Some(path) = &extra_media {
+        sources.push(Source {
+            id: "fixture-sd".into(),
+            root: path.clone(),
+            ..source.clone()
+        });
+    }
+    db.sources(sources.clone())?;
     let scanner = Scanner::spawn(db.clone(), log)?;
     let mut scans = vec![];
     let before_writes = proc_write_bytes();
     times.clear();
     for _ in 0..7 {
         let result = timed(&mut times, || {
-            scanner.scan(vec![source.clone()])?;
+            scanner.scan(sources.clone())?;
             scanner
                 .results
                 .recv_timeout(Duration::from_secs(180))
@@ -492,7 +535,9 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
         scans.push(json!(result));
     }
     measurements.push(summary("unchanged_scan", &times));
-    let unchanged_write_bytes = proc_write_bytes().saturating_sub(before_writes);
+    let unchanged_write_bytes = before_writes
+        .zip(proc_write_bytes())
+        .map(|(before, after)| after.saturating_sub(before));
     // Real mutation: new, changed, removed and rename. Scan has no destructive
     // replacement, and unrelated rows retain their stable IDs.
     times.clear();
@@ -512,7 +557,7 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
             .write_all(&[0; 8])
             .map_err(|e| e.to_string())?;
         let mutation = timed(&mut times, || {
-            scanner.scan(vec![source.clone()])?;
+            scanner.scan(sources.clone())?;
             scanner
                 .results
                 .recv_timeout(Duration::from_secs(180))
@@ -551,7 +596,7 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
             }
             Ok(())
         })?;
-        db.sources(vec![source.clone()])?;
+        db.sources(sources.clone())?;
         db.list(Filter {
             limit: 1,
             ..Default::default()
@@ -596,7 +641,7 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
         .query_row("SELECT count(*) FROM tracks", [], |r| r.get(0))
         .map_err(err)?;
     Ok((
-        json!({"tracks":count,"fixture":"deterministic v1; 24-track multi-disc, 127 artists, compilations, missing tags, duplicate titles/releases",
+        json!({"tracks":count,"source_count":sources.len(),"media_layout":if extra_media.is_some(){"split across data + external media scratch"}else{"data scratch"},"fixture":"deterministic v1; 24-track multi-disc, 127 artists, compilations, missing tags, duplicate titles/releases",
         "sqlite_version":rusqlite::version(),"measurements":measurements,"query_plans":plans,"settings":settings,
         "db_bytes":fs::metadata(&path).map_err(|e|e.to_string())?.len(),"unchanged_scan_write_bytes":unchanged_write_bytes,
         "write_metric":"/proc/self/io write_bytes; includes log/temp I/O, excludes already dirty pages and physical flash amplification",
@@ -606,16 +651,13 @@ pub fn platform_db(root: &Path, count: usize) -> Result<(Value, Vec<Track>), Str
     ))
 }
 
-fn proc_write_bytes() -> u64 {
-    fs::read_to_string("/proc/self/io")
-        .ok()
-        .and_then(|s| {
-            s.lines().find_map(|line| {
-                line.strip_prefix("write_bytes: ")
-                    .and_then(|v| v.trim().parse().ok())
-            })
+fn proc_write_bytes() -> Option<u64> {
+    fs::read_to_string("/proc/self/io").ok().and_then(|s| {
+        s.lines().find_map(|line| {
+            line.strip_prefix("write_bytes: ")
+                .and_then(|v| v.trim().parse().ok())
         })
-        .unwrap_or(0)
+    })
 }
 
 fn benchmark_prune(c: &mut Connection, source: &Source) -> Result<(), String> {
@@ -625,6 +667,31 @@ fn benchmark_prune(c: &mut Connection, source: &Source) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn split_media_fixture_scans_both_sources_without_cross_pruning() {
+        let root = std::env::temp_dir().join(format!("reborn-split-media-{}", std::process::id()));
+        let data = root.join("data");
+        let sd = root.join("sd");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir(&sd).unwrap();
+        let (report, tracks) = platform_db_on_media(&data, Some(&sd), 100).unwrap();
+        assert_eq!(report["source_count"], 2);
+        assert_eq!(report["live_rows"], 100);
+        assert_eq!(
+            tracks.iter().filter(|t| t.source_id == "fixture").count(),
+            50
+        );
+        assert_eq!(
+            tracks
+                .iter()
+                .filter(|t| t.source_id == "fixture-sd")
+                .count(),
+            50
+        );
+        assert!(sd.join("media").is_dir());
+        assert!(!sd.join("library.sqlite").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn disposable_benchmark_exercises_current_schema_and_refuses_existing_database() {
         let root =

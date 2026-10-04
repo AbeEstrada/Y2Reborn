@@ -22,7 +22,23 @@ fn run() -> Result<(), String> {
     }
     let tracks = args[4].parse::<usize>().map_err(|e| e.to_string())?;
     if args.iter().any(|a| a == "--platform-db") {
-        let (report, library) = reborn_library::benchmark::platform_db(&root, tracks)?;
+        let media_root = args
+            .windows(2)
+            .find(|pair| pair[0] == "--media-fd")
+            .map(|pair| {
+                let fd = pair[1].parse::<u32>().map_err(|e| e.to_string())?;
+                if fd < 3 {
+                    return Err("media directory fd must be >=3".to_owned());
+                }
+                let path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+                if fs::read_dir(&path).map_err(|e| e.to_string())?.count() != 0 {
+                    return Err("media scratch directory must be empty".to_owned());
+                }
+                Ok(path)
+            })
+            .transpose()?;
+        let (report, library) =
+            reborn_library::benchmark::platform_db_on_media(&root, media_root.as_deref(), tracks)?;
         let mut model = AppModel::default();
         let mut ui = Ui::default();
         let mut measurements = vec![];
