@@ -108,3 +108,39 @@ pub fn filesystem_uuid(device: &str) -> Option<String> {
         result
     }
 }
+
+/// Wait for Bluetooth D-Bus activity, a queued user command, or its next deadline.
+pub fn bluetooth_wait(
+    bus: std::os::fd::RawFd,
+    read: bool,
+    write: bool,
+    commands: std::os::fd::RawFd,
+    timeout: std::time::Duration,
+) -> std::io::Result<()> {
+    let mut fds = [
+        libc::pollfd {
+            fd: bus,
+            events: (if read { libc::POLLIN } else { 0 }) | (if write { libc::POLLOUT } else { 0 }),
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: commands,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    let milliseconds = timeout
+        .as_millis()
+        .saturating_add(u128::from(!timeout.is_zero()))
+        .min(i32::MAX as u128) as i32;
+    // SAFETY: poll only writes the two initialized pollfd records; both
+    // descriptors are borrowed from live owners for the duration of the call.
+    let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, milliseconds) };
+    if result < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
