@@ -115,8 +115,10 @@ fn load(key: &Key, cancel: Cancel) -> (Option<Vec<u8>>, bool) {
     let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::ArtworkDecode,
     );
-    if let Ok(mut decoder) = MediaFile::open(&key.path, cancel) {
-        if decoder.metadata.artwork {
+    // The indexed artwork flag belongs to this file revision. Sidecar-only
+    // tracks need no second media open when browsing a collection.
+    if key.embedded {
+        if let Ok(mut decoder) = MediaFile::open(&key.path, cancel) {
             if let Ok(pixels) = decoder.artwork() {
                 return (Some(pixels), true);
             }

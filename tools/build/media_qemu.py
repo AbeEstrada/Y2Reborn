@@ -40,7 +40,9 @@ def main():
             results=[]
             for command in [['status'],['test','decoder'],['test','database'],['test','library'],['metrics'],['status']]:
                 result=subprocess.run(qemu+[str(binaries/'rebornctl'),*command,'--socket',str(socket),'--json'],capture_output=True,text=True,check=True,timeout=90,env=env)
-                results.append({'command':command,'result':json.loads(result.stdout)})
+                payload=json.loads(result.stdout)
+                if command[0]=='test':assert payload.get('passed') is True,(command,payload)
+                results.append({'command':command,'result':payload})
             runtime=results[-1]['result']['decoder']['runtime']
             assert runtime['libraries']=={'libavutil':'61.1.102','libavcodec':'63.1.102','libavformat':'63.1.102','libavfilter':'12.1.102','libswresample':'7.1.102','libswscale':'10.1.102'},runtime
             assert '9.0.2' in runtime['version']
