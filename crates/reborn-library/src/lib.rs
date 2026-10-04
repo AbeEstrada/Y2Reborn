@@ -29,6 +29,8 @@ pub struct ScanMetrics {
     pub discovered: u64,
     pub reused: u64,
     pub rescanned: u64,
+    #[serde(default)]
+    pub removed: u64,
     pub failures: u64,
     pub elapsed_ms: u64,
     pub tracks_per_sec: f64,
@@ -55,7 +57,7 @@ enum DbCommand {
         SyncSender<Result<Vec<bool>, String>>,
     ),
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
-    Finish(Source, i64, bool, SyncSender<Result<bool, String>>),
+    Finish(Source, i64, bool, SyncSender<Result<ScanFinish, String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
     #[cfg(test)]
     TestSql(String, SyncSender<Result<(), String>>),
@@ -284,16 +286,26 @@ fn probe(
     tx.commit().map_err(err)?;
     Ok(matches)
 }
-fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<bool, String> {
+#[derive(Clone)]
+struct ScanFinish {
+    verified: bool,
+    removed: u64,
+}
+fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<ScanFinish, String> {
     let prune = complete && source_identity_is_current(source);
     let tx = c.transaction().map_err(err)?;
-    if prune {
-        tx.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND deleted=0 AND NOT EXISTS (SELECT 1 FROM scan_seen WHERE id=tracks.id)", [&source.id]).map_err(err)?;
-    }
+    let removed = if prune {
+        tx.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND deleted=0 AND NOT EXISTS (SELECT 1 FROM scan_seen WHERE id=tracks.id)", [&source.id]).map_err(err)? as u64
+    } else {
+        0
+    };
     tx.execute("DELETE FROM scan_seen", []).map_err(err)?;
     tx.execute("DELETE FROM scan_candidates", []).map_err(err)?;
     tx.commit().map_err(err)?;
-    Ok(prune)
+    Ok(ScanFinish {
+        verified: prune,
+        removed,
+    })
 }
 fn update_sources(c: &mut Connection, sources: &[Source]) -> Result<(), String> {
     let tx = c.transaction().map_err(err)?;
@@ -1280,10 +1292,11 @@ fn scan_sources_with_identity_and_reuse(
         db.tx
             .send(DbCommand::Finish(source.clone(), seen, complete, reply))
             .map_err(|e| e.to_string())?;
-        let pruned = result
+        let finished = result
             .recv_timeout(Duration::from_secs(15))
             .map_err(|e| e.to_string())??;
-        if complete && !pruned {
+        stats.removed += finished.removed;
+        if complete && !finished.verified {
             complete = false;
             stats.failures += 1;
         }
@@ -2159,7 +2172,25 @@ mod scan_safety_tests {
                 .unwrap();
 
         assert!(stats.complete);
+        assert_eq!(stats.removed, 1);
         assert!(tracks(&db).is_empty());
+        let unchanged = scan_sources_with_identity(
+            &db,
+            &[Source {
+                id: "internal".into(),
+                kind: MediaSource::Internal,
+                root: root.clone(),
+                online: true,
+                mount: "test".into(),
+                mount_id: None,
+            }],
+            &log,
+            &AtomicBool::new(false),
+            |_| true,
+        )
+        .unwrap();
+        assert_eq!(unchanged.removed, 0);
+        assert_eq!(unchanged.rescanned, 0);
         db.stop();
     }
 

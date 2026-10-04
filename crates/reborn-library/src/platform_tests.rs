@@ -110,7 +110,7 @@ fn unchanged_presence_and_sources_do_not_mutate_persistent_rows() {
         probe(&mut c, "one", &[fingerprint], true).unwrap(),
         vec![true]
     );
-    assert!(finish(&mut c, &source("one"), true).unwrap());
+    assert!(finish(&mut c, &source("one"), true).unwrap().verified);
     assert_eq!(count(&c), 1);
     assert_eq!(
         c.query_row("SELECT seen FROM tracks", [], |r| r.get::<_, i64>(0))
@@ -133,7 +133,7 @@ fn same_path_on_replacement_media_does_not_reuse_or_prune_old_card() {
     assert_eq!(probe(&mut c, "two", &[stamp], true).unwrap(), vec![false]);
     batch_tracked(&mut c, vec![fixture(0, "two")], 2, true).unwrap();
     update_sources(&mut c, &[source("two")]).unwrap();
-    assert!(finish(&mut c, &source("two"), true).unwrap());
+    assert!(finish(&mut c, &source("two"), true).unwrap().verified);
     let tracks = catalog(&mut c).unwrap();
     assert_eq!(tracks.len(), 2);
     assert_ne!(tracks[0].id, tracks[1].id);
@@ -322,7 +322,7 @@ fn interrupted_scan_keeps_published_rows_and_retry_can_prune() {
         mtime: t.mtime,
     };
     assert_eq!(probe(&mut c, "one", &[stamp], true).unwrap(), vec![true]);
-    assert!(finish(&mut c, &source("one"), true).unwrap());
+    assert!(finish(&mut c, &source("one"), true).unwrap().verified);
     assert_eq!(count(&c), 1);
     drop(c);
     fs::remove_dir_all(root).unwrap();
