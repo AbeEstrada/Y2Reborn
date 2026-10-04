@@ -1,5 +1,22 @@
 # Bluetooth codecs: current capability audit and proposed Auto policy
 
+## Bluetooth control optimization — 2026-10-04
+
+The isolated Platform 1.0 Bluetooth pass preserves FFmpeg decode, shared DSP,
+one negotiated sink conversion and BlueALSA encoding. Reborn now refreshes
+Bluetooth observations on relevant D-Bus signals and user commands, with a 30s
+reconciliation backstop, instead of a 20ms worker timer and 2s enumeration.
+A bounded notified command queue wakes descriptor-based waiting immediately.
+Pairing/discovery deadlines and transport invalidation remain active while idle;
+BlueZ owner return recreates the pairing agent. Codec capabilities remain cached
+by transport epoch, requested and negotiated codec remain separate, and Reborn
+adds no reconnect loop or encoder. Source validation covers idle wake behavior,
+command responsiveness, stale PCM removal and owner/agent recovery. Physical
+peer audio, optional codec CPU and coexistence remain separate gates; the owner
+has no headset available for this pass. Full receipt is in the sibling Y2Linux
+repository at `docs/validation/Y2-PLATFORM-V1-BLUETOOTH-OPTIMIZATION.md`.
+
+
 **Historical audit/design at its 2026-09-22 revisions.** Later Hardware Final
 source/ARM work compiled a private optional-encoder profile and implemented a
 gated Auto control, while normal radio launch keeps optional endpoints disabled.

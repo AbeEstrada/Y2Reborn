@@ -18,6 +18,18 @@ opaque context, cancellation, bounded scheduling and diagnostics. The only
 additional integer PCM operation is the final bounded live user-volume ramp;
 Rust has no competing decoder, resampler or DSP graph.
 
+**Metadata/ingest source contract, 2026-10-04:** `MediaFile` owns a separate
+demux-only context for library ingestion and embedded collection covers. Complete
+single-audio-stream headers supply tags/properties without PCM decoding or DSP
+setup; MP3/raw AAC and incomplete headers retain normal FFmpeg stream analysis.
+Detection budgets remain unchanged. Source precision/encoding, decoder format,
+FLTP and sink format are separate properties; lossy source precision is unknown.
+Incremental scans use bounded file stamps and an extractor revision, and do not
+reopen unchanged files. Header reads and artwork allocations/dimensions are
+bounded. See the [media pass receipt](../validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md)
+for measurements and physical qualification limits. The app and native membrane
+must be rebuilt and packaged together after this private ABI extension.
+
 The cold startup path does not link the FFmpeg membrane into the `reborn`
 executable. Buildroot installs the one shared membrane at
 `/usr/lib/reborn/libreborn_media.so`; `reborn-media` resolves its `rb_*` API on
@@ -34,7 +46,8 @@ demux -> decode -> stereo FLTP -> aformat -> ReplayGain/user volume
       -> optional equalizer -> alimiter -> final libswresample -> ALSA
 ```
 
-ReplayGain reads track and album gain/peak tags from the container metadata.
+ReplayGain reads track and album gain/peak tags from container/stream metadata,
+with FFmpeg coded ReplayGain side data as a fallback when tags are absent.
 `Off`, `Track` and `Album` are distinct settings. Peak-aware headroom is applied
 before the FFmpeg volume filter and the limiter protects the integer sink. The
 source file is never changed. EQ bands are passed into `equalizer` and a graph

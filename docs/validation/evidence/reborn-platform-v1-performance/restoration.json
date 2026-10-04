@@ -1,0 +1,43 @@
+{
+  "/proc/sys/kernel/random/boot_id": "88b85fa3-2282-4d93-b0b8-818a105ddd0a",
+  "/proc/sys/kernel/tainted": "0",
+  "/sys/module/spm/parameters/dormant_budget": "-1",
+  "/sys/devices/system/cpu/cpu0/cpuidle/state2/disable": "0",
+  "/run/y2/cpu-idle-policy.json": "{\"boot_id\":\"88b85fa3-2282-4d93-b0b8-818a105ddd0a\",\"budget\":\"-1\",\"disabled\":\"0\",\"policy\":\"qualified_CPU0_DORMANT\",\"reasons\":[],\"schema\":\"org.y2linux.cpu-idle-policy/v1\",\"state\":\"Enabled\"}",
+  "/sys/module/system_idle/parameters/enabled": "Y",
+  "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor": "schedutil",
+  "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq": "598000",
+  "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq": "1300000",
+  "/sys/power/pm_test": "[none] core processors platform devices freezer",
+  "versions": {
+    "release_version": "1.0.0-baseline-candidate.2",
+    "rootfs_version": "2025.02.18-platform-v1.21",
+    "build_id": "Y2LINUX-BASELINE-02",
+    "platform_api_version": 1,
+    "feature_contract_version": 2,
+    "battery_profile_schema": 1,
+    "low_battery_policy_schema": 2,
+    "layout_version": 1,
+    "kernel_version": "6.18.0-y2linux-baseline-02",
+    "data_schema_version": 1,
+    "reborn_version": "0.2.0",
+    "build_git_commit": "8584ccd85f052f351fe51650b2348c83ca894ed4",
+    "reborn_source_commit": "b71b468860233faa0a42b8448ec5777fa952b8e3"
+  },
+  "restored_executable": "/usr/bin/reborn",
+  "restored_build": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+  "restored_screen_off": true,
+  "restored_playback": "paused",
+  "restored_tracks": 3,
+  "strace": "/usr/bin/strace",
+  "ext4_errors": {
+    "/sys/fs/ext4/mmcblk1p1/errors_count": "0",
+    "/sys/fs/ext4/mmcblk0p7/errors_count": "0",
+    "/sys/fs/ext4/mmcblk0p5/errors_count": "0"
+  },
+  "mounts": [
+    "/dev/mmcblk0p5 / ext4 rw,relatime 0 0",
+    "/dev/mmcblk0p7 /data ext4 rw,nosuid,nodev,relatime 0 0",
+    "/dev/mmcblk1p1 /media/sd ext4 rw,nosuid,nodev,noexec,relatime 0 0"
+  ]
+}

@@ -1,0 +1,1002 @@
+[
+  {
+    "total_ms": 10.389584000222385,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 0.677689999974973
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.3631529998529004
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.47746000018378254
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.2827680000336841
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.26107600024261046
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.2495380003892933
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.24384500011365162
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.2396910003881203
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.4654610002035042
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.31899900022835936
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.4513829999268637
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.283153000054881
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.2583069999673171
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.2489219996277825
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.24299899996549357
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.2419219999865163
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.40522900053474586
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.45199799933470786
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.27515300007507904
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.42407599994476186
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.26669199996831594
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 1.7737640000632382
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.3288449997853604
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.2726909997363691
+      }
+    ]
+  },
+  {
+    "total_ms": 10.888582000006863,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 0.6527670002469677
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.3557680001904373
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.4937679996146471
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.2943839999716147
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.26630699994711904
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.25230699975509197
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.2478460000929772
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.24438399941573152
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.4408450004120823
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.2825379997375421
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.48353700003644917
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.32846100020833546
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.2729989992076298
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.2610000001368462
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.25284599996666657
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.2486909997969633
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.44538299971463857
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.43961400024272734
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.280845999441226
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.4363059997558594
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.2764609998848755
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.1064550001028692
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.3440749997025705
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.27692200001183664
+      }
+    ]
+  },
+  {
+    "total_ms": 19.083479999608244,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.009536000310618
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.6079980003050878
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.8827660003589699
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.5528450001293095
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.5230759998084977
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.5169980004211538
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5148440004631993
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5099990003145649
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8773819999987609
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.5923059998167446
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 1.006459000564064
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.5931519999649026
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.5382290000852663
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.5266140005915076
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.5191520003791084
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.5159980000826181
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.8430740008407156
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.839228000586445
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5474599993249285
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8429980007349513
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.5440750001071137
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.5952989999495912
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.661075000607525
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.5441520006570499
+      }
+    ]
+  },
+  {
+    "total_ms": 18.875095999646874,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.0379970008216333
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.6115359992691083
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.8847670005707187
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.555152999368147
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.5253060007817112
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.5137680000188993
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5110760002935422
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5092290002721711
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8393059997615637
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.5412290001913789
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.844689999212278
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.6416900005206116
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.5679979994965834
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.5353059996195952
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.518460000421328
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.5190749998291722
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.8531510002285358
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.8441509999101982
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5447669991553994
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8502279997628648
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.5346130001271376
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.520607999940694
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.5939220000072964
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.599381999563775
+      }
+    ]
+  },
+  {
+    "total_ms": 18.893404000664304,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.060457999301434
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.6163060006656451
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.8803049995549372
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.5534600004466483
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.5305369995767251
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.5203059999985271
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5115370004205033
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5066910007371916
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8372279999093735
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.5415369996626396
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.8496899999954621
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.5380749998948886
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.52399800006242
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.6366130000969861
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.5379989997891244
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.5210760000409209
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.8421510001426213
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.8409980000578798
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5440750001071137
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8443050001005759
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.5403060004027793
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.544684999520541
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.5703059996449156
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.5329980003807577
+      }
+    ]
+  },
+  {
+    "total_ms": 18.992481000168482,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.0770740000225487
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.6054589994164417
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.9044589996847208
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.6204600003911764
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.5445369997687521
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.5221529991104035
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5124599992996082
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5068450000180746
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8429979998254566
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.5481520001922036
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.8453049995296169
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.5353830001695314
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.5195369994908106
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.5168449997654534
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.5942289999438799
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.5719219998354674
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.88007500016829
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.865689999955066
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5505369999809773
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8580740004617837
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.5410760004451731
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.5629150004533585
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.5745369999203831
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.532998999915435
+      }
+    ]
+  },
+  {
+    "total_ms": 18.954866000058246,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.1199969994777348
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.6342289998428896
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.8999199999379925
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.5599989999609534
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.5281529993226286
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.520921000315866
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5561520001720055
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5309980006131809
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8623820003776927
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.554151999494934
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.8536899995306158
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.5434599997897749
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.5245370002739946
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.517229000251973
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.516536999384698
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.5133829999977024
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 0.8999199999379925
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.8485360003760434
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5480749996422674
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8485360003760434
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.5414600000221981
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.517992000321101
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.5582290004895185
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.5290750004860456
+      }
+    ]
+  },
+  {
+    "total_ms": 19.6148639997773,
+    "reads": [
+      {
+        "supply": "y2-usb-input",
+        "attribute": "type",
+        "ms": 1.0761510002339492
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "status",
+        "ms": 0.7513820000895066
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "online",
+        "ms": 0.9453809998376528
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "present",
+        "ms": 0.5780749997938983
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "capacity",
+        "ms": 0.534228999640618
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "voltage_now",
+        "ms": 0.5164599997442565
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "current_now",
+        "ms": 0.5136910003784578
+      },
+      {
+        "supply": "y2-usb-input",
+        "attribute": "temp",
+        "ms": 0.5082300003778073
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "type",
+        "ms": 0.8441509999101982
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "status",
+        "ms": 0.5949989999862737
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "online",
+        "ms": 0.8705359996383777
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "present",
+        "ms": 0.5752289998781634
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "capacity",
+        "ms": 0.5613829998765141
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "voltage_now",
+        "ms": 0.5320749996826635
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "current_now",
+        "ms": 0.5429980001281365
+      },
+      {
+        "supply": "y2-usb-presence",
+        "attribute": "temp",
+        "ms": 0.56522899922129
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "type",
+        "ms": 1.0195360000579967
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "status",
+        "ms": 0.9055350001290208
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "online",
+        "ms": 0.5649209997500293
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "present",
+        "ms": 0.8576899999752641
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "capacity",
+        "ms": 0.571613999454712
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "voltage_now",
+        "ms": 2.585762000308023
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "current_now",
+        "ms": 0.571843999750854
+      },
+      {
+        "supply": "BAT0",
+        "attribute": "temp",
+        "ms": 0.5368450001697056
+      }
+    ]
+  }
+]
