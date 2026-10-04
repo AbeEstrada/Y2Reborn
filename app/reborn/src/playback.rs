@@ -1747,7 +1747,7 @@ mod tests {
             assert_eq!(actual.position_ms, expected.position_ms, "{name}");
             tested += 1;
         }
-        assert_eq!(tested, 33);
+        assert_eq!(tested, 35);
         let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
         assert!(external_artwork(pinned.path()).is_err());
         for name in [

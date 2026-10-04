@@ -107,6 +107,26 @@ def make_gapless(temp: Path) -> dict[str, int]:
     return {"rate": rate, "frames_per_track": count, "boundary_sample": -12000 + count - 1}
 
 
+def make_precision_flac(temp: Path) -> None:
+    # Same exact reference sequence as the native membrane low-bit test.
+    pattern = (0, 1, -1, 127, -127, 255, -255, 256, -256, 257, -257,
+               1023, -1023, 32767, -32768, 0, 0x234500, 0x234501,
+               0x23457f, 0x234580, 0x2345ff, -0x234600, -0x2345ff,
+               -0x234581, -0x234580, -0x234501)
+    data = b"".join((value & 0xffffff).to_bytes(3, "little")
+                    for frame in range(1024)
+                    for value in (pattern[frame % len(pattern)],
+                                  pattern[(frame + 5) % len(pattern)]))
+    for rate in (44100, 48000):
+        source = temp / f"precision-24-{rate}.wav"
+        with wave.open(str(source), "wb") as stream:
+            stream.setparams((2, 3, rate, 1024, "NONE", "not compressed"))
+            stream.writeframes(data)
+        run("-i", str(source), "-c:a", "flac", "-sample_fmt", "s32",
+            "-map_metadata", "-1", "-fflags", "+bitexact",
+            str(OUT / f"precision-24-{rate}.flac"))
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reborn-fixtures-") as directory:
@@ -182,6 +202,7 @@ def main() -> None:
             shutil.copyfile(OUT / "artwork-png.flac", OUT / "artwork.flac")
 
         gapless = make_gapless(temp)
+        make_precision_flac(temp)
 
     # An intentionally malformed ID3 size precedes valid MP3 frames. FFmpeg
     # must preserve the useful stream or return a clean error, never crash.
@@ -217,6 +238,10 @@ def main() -> None:
         "artwork_cases": ["embedded JPEG", "embedded PNG", "embedded WebP",
                            "external JPEG", "external PNG", "external WebP"],
         "gapless": gapless,
+        "precision": {"frames": 1024, "source_bits": 24,
+                      "rates_hz": [44100, 48000],
+                      "generator_ffmpeg_version": generator_version,
+                      "reference": "native.rs packed24 low-bit test; positive/negative pairs share upper16 bits"},
         "files": files,
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
