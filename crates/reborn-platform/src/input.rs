@@ -13,6 +13,8 @@ use std::{
 pub const LONG_PRESS: Duration = Duration::from_millis(650);
 pub const REPEAT_START: Duration = Duration::from_millis(400);
 pub const REPEAT_RATE: Duration = Duration::from_millis(90);
+const RESCAN_RATE: Duration = Duration::from_secs(1);
+const MAX_READS_PER_DEVICE: usize = 16;
 
 /// Same-direction wheel records closer than this are one physical detent seen
 /// twice (a bounced data-ready edge re-reading the latched APT32F frame). A
@@ -47,7 +49,7 @@ impl WheelCadence {
         let Some(gap) = at_us.checked_sub(then) else {
             return Some(self.restart());
         };
-        if direction != clockwise || gap > WHEEL_RESET_US {
+        if direction != clockwise || gap >= WHEEL_RESET_US {
             return Some(self.restart());
         }
         if gap < WHEEL_DUPLICATE_US {
@@ -124,7 +126,7 @@ pub fn devices() -> Vec<Device> {
             ) {
                 return None;
             }
-            let identity = fs::canonicalize(e.path().join("device")).ok()?;
+            let identity = hardware_identity(fs::canonicalize(e.path().join("device")).ok()?);
             Some(Device {
                 path: PathBuf::from("/dev/input").join(e.file_name()),
                 name,
@@ -132,6 +134,23 @@ pub fn devices() -> Vec<Device> {
             })
         })
         .collect()
+}
+
+// inputN is allocated anew after driver rebind; the physical parent is stable.
+fn hardware_identity(path: PathBuf) -> PathBuf {
+    if path.file_name().is_some_and(|name| {
+        name.to_str().is_some_and(|name| {
+            name.strip_prefix("input")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+        })
+    }) && path
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "input")
+    {
+        return path.parent().unwrap().parent().unwrap().to_owned();
+    }
+    path
 }
 
 fn rediscover_device(device: &Device, candidates: &[Device]) -> Option<Device> {
@@ -153,15 +172,46 @@ struct Record {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputEvent {
-    /// Kernel evdev timestamp; CLOCK_MONOTONIC is requested when opening.
-    pub evdev_us: Option<u64>,
     pub device: String,
     pub input: NormalizedInput,
+    pub kernel_mono_us: Option<u64>,
+}
+
+#[derive(Default, serde::Serialize)]
+pub struct InputCapture {
+    pub records: Vec<InputTrace>,
+    pub truncated: bool,
+    pub raw_wheel: u64,
+    pub accepted_wheel: u64,
+    pub rejected_wheel: u64,
+    pub syn_dropped: u64,
+    pub device_losses: u64,
+    pub rescans: u64,
+    pub reopens: u64,
+    pub read_limit_hits: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct InputTrace {
+    device: String,
+    kernel_mono_us: Option<u64>,
+    received_mono_us: Option<u64>,
+    kind: u16,
+    code: u16,
+    value: i32,
+    normalized: Vec<NormalizedInput>,
+    cadence_streak: Option<u32>,
+    cadence_interval_us: Option<u64>,
+}
+
+pub fn monotonic_us() -> Option<u64> {
+    crate::native::monotonic_seconds().map(|s| (s * 1e6) as u64)
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Pressed {
     started: Instant,
+    stamp_us: Option<u64>,
     last_repeat: Instant,
     long_emitted: bool,
 }
@@ -169,8 +219,9 @@ struct Pressed {
 /// The only layer that knows Linux event types, key codes, and device names.
 /// It converts those events into stable physical events and owns all timing.
 pub struct InputManager {
-    files: Vec<(Device, File, Vec<u8>)>,
-    missing: Vec<Device>,
+    files: Vec<(Device, File, Vec<u8>, bool)>,
+    next_rescan: Instant,
+    capture: Option<InputCapture>,
     pressed: HashMap<(String, PhysicalControl), Pressed>,
     wheel: HashMap<String, WheelCadence>,
     dropping: HashSet<String>,
@@ -183,11 +234,12 @@ impl InputManager {
             files: devices()
                 .into_iter()
                 .filter_map(|d| {
-                    let f = open_device(&d.path)?;
-                    Some((d, f, vec![]))
+                    let (f, monotonic) = open_device(&d.path)?;
+                    Some((d, f, vec![], monotonic))
                 })
                 .collect(),
-            missing: Vec::new(),
+            next_rescan: Instant::now() + RESCAN_RATE,
+            capture: None,
             pressed: HashMap::new(),
             wheel: HashMap::new(),
             dropping: HashSet::new(),
@@ -199,7 +251,8 @@ impl InputManager {
     pub fn empty() -> Self {
         Self {
             files: vec![],
-            missing: Vec::new(),
+            next_rescan: Instant::now() + RESCAN_RATE,
+            capture: None,
             pressed: HashMap::new(),
             wheel: HashMap::new(),
             dropping: HashSet::new(),
@@ -209,6 +262,39 @@ impl InputManager {
 
     pub fn count(&self) -> usize {
         self.files.len()
+    }
+
+    /// Opt-in, memory-bounded diagnostics for the existing control monitor.
+    pub fn begin_capture(&mut self) {
+        self.capture = Some(InputCapture::default());
+    }
+
+    pub fn finish_capture(&mut self) -> Option<InputCapture> {
+        self.capture.take()
+    }
+
+    pub fn reset_wheel(&mut self) {
+        self.wheel.clear();
+    }
+
+    /// Full suspend owners call this at their boundary, then route its Cancel
+    /// records. Reopening evdev discards pre-sleep queues and unknown held state.
+    pub fn reset(&mut self) -> Vec<InputEvent> {
+        let identities = self
+            .pressed
+            .iter()
+            .map(|((identity, _), _)| identity.clone())
+            .collect::<Vec<_>>();
+        let mut canceled = vec![];
+        for identity in identities {
+            canceled.extend(self.cancel_stale_device(&identity));
+        }
+        self.files.clear();
+        self.wheel.clear();
+        self.dropping.clear();
+        self.rescan(devices());
+        self.next_rescan = Instant::now() + RESCAN_RATE;
+        canceled
     }
 
     pub fn poll(&mut self) -> Vec<InputEvent> {
@@ -223,8 +309,11 @@ impl InputManager {
         } else {
             timeout.min(Duration::from_millis(15))
         };
-        crate::native::wait_readable(self.files.iter().map(|(_, file, _)| file.as_fd()), timeout)
-            .map(|_| ())
+        crate::native::wait_readable(
+            self.files.iter().map(|(_, file, _, _)| file.as_fd()),
+            timeout,
+        )
+        .map(|_| ())
     }
 
     #[cfg(test)]
@@ -270,23 +359,44 @@ impl InputManager {
     }
 
     fn poll_at(&mut self, now: Instant) -> Vec<InputEvent> {
-        self.reconnect_missing();
+        if now >= self.next_rescan {
+            if let Some(capture) = &mut self.capture {
+                capture.rescans += 1;
+            }
+            self.rescan(devices());
+            self.next_rescan = now + RESCAN_RATE;
+        }
         let mut events = vec![];
         let size = std::mem::size_of::<libc::input_event>();
         let mut raw = Vec::new();
         let mut reopen = Vec::new();
-        for (index, (device, file, pending)) in self.files.iter_mut().enumerate() {
+        let mono_us = crate::native::monotonic_seconds().map(|s| (s * 1e6) as u64);
+        let mut drain_incomplete = HashSet::new();
+        for (index, (device, file, pending, monotonic)) in self.files.iter_mut().enumerate() {
             let mut bytes = [0u8; 1024];
-            match file.read(&mut bytes) {
-                Ok(0) => {
-                    pending.clear();
-                    reopen.push(index);
+            // Drain a real evdev queue, bounded so a faulty producer cannot
+            // starve rendering. No separate semantic channel queues motion.
+            for read in 0..MAX_READS_PER_DEVICE {
+                match file.read(&mut bytes) {
+                    Ok(0) => {
+                        pending.clear();
+                        reopen.push(index);
+                        break;
+                    }
+                    Ok(n) => pending.extend_from_slice(&bytes[..n]),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => {
+                        pending.clear();
+                        reopen.push(index);
+                        break;
+                    }
                 }
-                Ok(n) => pending.extend_from_slice(&bytes[..n]),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(_) => {
-                    pending.clear();
-                    reopen.push(index);
+                if read + 1 == MAX_READS_PER_DEVICE {
+                    drain_incomplete.insert(device.identity.to_string_lossy().into_owned());
+                    if let Some(capture) = &mut self.capture {
+                        capture.read_limit_hits += 1;
+                    }
                 }
             }
             while pending.len() >= size {
@@ -294,7 +404,11 @@ impl InputManager {
                 let kind = u16::from_ne_bytes(pending[offset..offset + 2].try_into().unwrap());
                 let code = u16::from_ne_bytes(pending[offset + 2..offset + 4].try_into().unwrap());
                 let value = i32::from_ne_bytes(pending[offset + 4..offset + 8].try_into().unwrap());
-                let stamp = record_timestamp_us(&pending[..offset]);
+                let stamp = if *monotonic {
+                    record_timestamp_us(&pending[..offset])
+                } else {
+                    None
+                };
                 pending.drain(..size);
                 raw.push((
                     device.name.clone(),
@@ -308,15 +422,13 @@ impl InputManager {
                 ));
             }
         }
+        // Preserve cross-device ordering (not event-node enumeration order).
+        raw.sort_by_key(|(_, _, record)| record.stamp_us);
         for (device, identity, record) in raw {
-            let mut normalized = self.ingest(&device, &identity, record, now);
-            for event in &mut normalized {
-                event.evdev_us = record.stamp_us;
-            }
-            events.extend(normalized);
+            let at = event_instant(now, mono_us, record.stamp_us);
+            events.extend(self.ingest(&device, &identity, record, at));
         }
         if !reopen.is_empty() {
-            let candidates = devices();
             reopen.sort_unstable();
             reopen.dedup();
             for index in reopen.into_iter().rev() {
@@ -326,37 +438,31 @@ impl InputManager {
                 let device = self.files[index].0.clone();
                 let identity = device.identity.to_string_lossy().into_owned();
                 events.extend(self.cancel_stale_device(&identity));
-                if let Some(replacement) = rediscover_device(&device, &candidates) {
-                    if let Some(file) = open_device(&replacement.path) {
-                        self.files[index] = (replacement, file, Vec::new());
-                        continue;
-                    }
-                }
                 self.files.remove(index);
-                self.missing.push(device);
+                if let Some(capture) = &mut self.capture {
+                    capture.device_losses += 1;
+                }
             }
         }
-        events.extend(self.tick_at(now));
+        // A queued release must be read before a held key can age/repeat.
+        events.extend(self.tick_ready(now, &drain_incomplete));
         events
     }
 
-    fn reconnect_missing(&mut self) {
-        if self.missing.is_empty() {
-            return;
-        }
-        let candidates = devices();
-        let mut still_missing = Vec::new();
-        for device in self.missing.drain(..) {
-            let Some(replacement) = rediscover_device(&device, &candidates) else {
-                still_missing.push(device);
-                continue;
-            };
-            match open_device(&replacement.path) {
-                Some(file) => self.files.push((replacement, file, Vec::new())),
-                None => still_missing.push(device),
+    fn rescan(&mut self, candidates: Vec<Device>) {
+        for device in candidates {
+            let opened = self.files.iter().any(|(existing, _, _, _)| {
+                rediscover_device(existing, std::slice::from_ref(&device)).is_some()
+            });
+            if !opened {
+                if let Some((file, monotonic)) = open_device(&device.path) {
+                    self.files.push((device, file, Vec::new(), monotonic));
+                    if let Some(capture) = &mut self.capture {
+                        capture.reopens += 1;
+                    }
+                }
             }
         }
-        self.missing = still_missing;
     }
 
     fn cancel_stale_device(&mut self, identity: &str) -> Vec<InputEvent> {
@@ -370,17 +476,65 @@ impl InputManager {
             self.pressed.remove(key);
         }
         self.wheel.remove(identity);
+        self.dropping.remove(identity);
         controls
             .into_iter()
             .map(|(_, control)| InputEvent {
-                evdev_us: None,
                 device: "input-recovery".into(),
+                kernel_mono_us: None,
                 input: NormalizedInput::Cancel(control),
             })
             .collect()
     }
 
     fn ingest(
+        &mut self,
+        device: &str,
+        identity: &str,
+        record: Record,
+        now: Instant,
+    ) -> Vec<InputEvent> {
+        let mut events = self.ingest_record(device, identity, record, now);
+        for event in &mut events {
+            event.kernel_mono_us = record.stamp_us;
+        }
+        if let Some(capture) = &mut self.capture {
+            if capture.records.len() < 2048 {
+                capture.records.push(InputTrace {
+                    device: device.to_owned(),
+                    kernel_mono_us: record.stamp_us,
+                    received_mono_us: monotonic_us(),
+                    kind: record.kind,
+                    code: record.code,
+                    value: record.value,
+                    normalized: events.iter().map(|e| e.input).collect(),
+                    cadence_streak: self.wheel.get(identity).map(|c| c.streak),
+                    cadence_interval_us: self.wheel.get(identity).map(|c| c.interval_us),
+                });
+            } else {
+                capture.truncated = true;
+            }
+            if matches!(
+                map(device, record.kind, record.code, record.value),
+                Some(
+                    NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
+                )
+            ) {
+                capture.raw_wheel += 1;
+                if events.is_empty() {
+                    capture.rejected_wheel += 1;
+                } else {
+                    capture.accepted_wheel += 1;
+                }
+            }
+            if record.kind == EV_SYN && record.code == SYN_DROPPED {
+                capture.syn_dropped += 1;
+            }
+        }
+        events
+    }
+
+    fn ingest_record(
         &mut self,
         device: &str,
         identity: &str,
@@ -395,8 +549,9 @@ impl InputManager {
         } = record;
         if kind == EV_SYN {
             if code == SYN_DROPPED {
+                let canceled = self.cancel_stale_device(identity);
                 self.dropping.insert(identity.to_owned());
-                return self.cancel_stale_device(identity);
+                return canceled;
             }
             if self.dropping.contains(identity) {
                 if code == SYN_REPORT {
@@ -408,6 +563,11 @@ impl InputManager {
         }
         if self.dropping.contains(identity) {
             return vec![];
+        }
+        if kind == EV_KEY && !matches!(value, 0..=2) {
+            // A malformed key record cannot leave a previous press aging or
+            // repeating indefinitely. Recovery never synthesizes activation.
+            return self.cancel_stale_device(identity);
         }
         let Some(input) = map(device, kind, code, value) else {
             return vec![];
@@ -425,7 +585,11 @@ impl InputManager {
             let at_us = stamp_us
                 .unwrap_or_else(|| now.saturating_duration_since(self.epoch).as_micros() as u64);
             let cadence = self.wheel.entry(identity.to_owned()).or_default();
-            let steps = if raw_detents > 1 {
+            let steps = if stamp_us.is_none() {
+                // Receipt time cannot distinguish separate queued detents.
+                cadence.reset();
+                raw_detents.min(4)
+            } else if raw_detents > 1 {
                 // A relative wheel reporting several detents in one record is
                 // explicit fast movement, never a duplicate.
                 cadence.detent(clockwise, at_us);
@@ -437,8 +601,8 @@ impl InputManager {
                 }
             };
             return vec![InputEvent {
-                evdev_us: None,
                 device: device.to_owned(),
+                kernel_mono_us: None,
                 input: if clockwise {
                     NormalizedInput::WheelClockwise(steps)
                 } else {
@@ -456,60 +620,80 @@ impl InputManager {
                     key,
                     Pressed {
                         started: now,
+                        stamp_us,
                         last_repeat: now,
                         long_emitted: false,
                     },
                 );
                 vec![InputEvent {
-                    evdev_us: None,
                     device: device.to_owned(),
+                    kernel_mono_us: None,
                     input: NormalizedInput::Press(control),
                 }]
             }
             NormalizedInput::Release(control) => {
-                let input = if self
-                    .pressed
-                    .remove(&(identity.to_owned(), control))
-                    .is_some()
-                {
-                    NormalizedInput::Release(control)
-                } else {
-                    NormalizedInput::Cancel(control)
-                };
-                vec![InputEvent {
-                    evdev_us: None,
+                let state = self.pressed.remove(&(identity.to_owned(), control));
+                let mut out = vec![];
+                if let Some(state) = state {
+                    let held = stamp_us
+                        .zip(state.stamp_us)
+                        .and_then(|(end, start)| end.checked_sub(start))
+                        .map(Duration::from_micros)
+                        .unwrap_or_else(|| now.saturating_duration_since(state.started));
+                    if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
+                        out.push(InputEvent {
+                            device: device.to_owned(),
+                            kernel_mono_us: None,
+                            input: NormalizedInput::LongPress(control),
+                        });
+                    }
+                }
+                out.push(InputEvent {
                     device: device.to_owned(),
-                    input,
-                }]
+                    kernel_mono_us: None,
+                    input: if state.is_some() {
+                        NormalizedInput::Release(control)
+                    } else {
+                        NormalizedInput::Cancel(control)
+                    },
+                });
+                out
             }
             NormalizedInput::Repeat(control)
                 if self.pressed.contains_key(&(identity.to_owned(), control)) =>
             {
-                vec![InputEvent {
-                    evdev_us: None,
-                    device: device.to_owned(),
-                    input: NormalizedInput::Repeat(control),
-                }]
+                // InputManager is the sole repeat authority, including when a
+                // kernel device happens to advertise EV_REP.
+                vec![]
             }
             NormalizedInput::Repeat(control) => vec![InputEvent {
-                evdev_us: None,
                 device: device.to_owned(),
+                kernel_mono_us: None,
                 input: NormalizedInput::Cancel(control),
             }],
             _ => vec![],
         }
     }
 
+    #[cfg(test)]
     fn tick_at(&mut self, now: Instant) -> Vec<InputEvent> {
+        self.tick_ready(now, &HashSet::new())
+    }
+
+    fn tick_ready(&mut self, now: Instant, blocked: &HashSet<String>) -> Vec<InputEvent> {
         let mut events = vec![];
         for (key, state) in &mut self.pressed {
+            if blocked.contains(&key.0) {
+                continue;
+            }
             let control = key.1;
             let held = now.saturating_duration_since(state.started);
             if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
                 state.long_emitted = true;
+                state.last_repeat = now;
                 events.push(InputEvent {
-                    evdev_us: None,
                     device: "timing".into(),
+                    kernel_mono_us: None,
                     input: NormalizedInput::LongPress(control),
                 });
             }
@@ -519,8 +703,8 @@ impl InputManager {
             {
                 state.last_repeat = now;
                 events.push(InputEvent {
-                    evdev_us: None,
                     device: "timing".into(),
+                    kernel_mono_us: None,
                     input: NormalizedInput::Repeat(control),
                 });
             }
@@ -529,14 +713,22 @@ impl InputManager {
     }
 }
 
-fn open_device(path: &std::path::Path) -> Option<File> {
+fn event_instant(now: Instant, mono_us: Option<u64>, stamp_us: Option<u64>) -> Instant {
+    mono_us
+        .zip(stamp_us)
+        .and_then(|(mono, stamp)| mono.checked_sub(stamp))
+        .and_then(|age| now.checked_sub(Duration::from_micros(age)))
+        .unwrap_or(now)
+}
+
+fn open_device(path: &std::path::Path) -> Option<(File, bool)> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
         .ok()?;
-    crate::evdev_monotonic_clock(&file);
-    Some(file)
+    let monotonic = crate::evdev_monotonic_clock(&file);
+    Some((file, monotonic))
 }
 
 /// Decode the `struct input_event` time prefix. Its two fields share one
@@ -582,25 +774,56 @@ fn is_repeat_control(control: PhysicalControl) -> bool {
 #[derive(Default)]
 pub struct ActionRouter {
     long_pressed: HashSet<PhysicalControl>,
+    dark_navigation: HashSet<PhysicalControl>,
+    power_started_on: Option<bool>,
+    screen_on: Option<bool>,
+    precise_wheel: bool,
 }
 
 impl ActionRouter {
+    /// A screen transition inside an already-decoded batch must not carry
+    /// invisible wheel cadence into the newly visible UI.
+    pub fn begin_batch(&mut self) {
+        self.precise_wheel = false;
+    }
+
     pub fn route(&mut self, event: &InputEvent, screen_on: bool) -> Vec<Action> {
+        if self.screen_on != Some(screen_on) {
+            self.screen_on = Some(screen_on);
+            self.precise_wheel = true;
+        }
         match event.input {
             NormalizedInput::WheelClockwise(steps) if screen_on => {
-                vec![Action::WheelClockwise(steps)]
+                vec![Action::WheelClockwise(if self.precise_wheel {
+                    1
+                } else {
+                    steps
+                })]
             }
             NormalizedInput::WheelCounterClockwise(steps) if screen_on => {
-                vec![Action::WheelCounterClockwise(steps)]
+                vec![Action::WheelCounterClockwise(if self.precise_wheel {
+                    1
+                } else {
+                    steps
+                })]
             }
             NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_) => {
                 vec![]
             }
-            NormalizedInput::Press(control) => match control {
-                PhysicalControl::VolumeUp => vec![Action::VolumeUp],
-                PhysicalControl::VolumeDown => vec![Action::VolumeDown],
-                _ => vec![],
-            },
+            NormalizedInput::Press(control) => {
+                if control == PhysicalControl::Power {
+                    self.power_started_on = Some(screen_on);
+                }
+                if !screen_on && matches!(control, PhysicalControl::Select | PhysicalControl::Back)
+                {
+                    self.dark_navigation.insert(control);
+                }
+                match control {
+                    PhysicalControl::VolumeUp => vec![Action::VolumeUp],
+                    PhysicalControl::VolumeDown => vec![Action::VolumeDown],
+                    _ => vec![],
+                }
+            }
             NormalizedInput::Repeat(control) => match control {
                 PhysicalControl::VolumeUp => vec![Action::VolumeUp],
                 PhysicalControl::VolumeDown => vec![Action::VolumeDown],
@@ -613,10 +836,18 @@ impl ActionRouter {
                 _ => vec![],
             },
             NormalizedInput::LongPress(control) => {
-                if !screen_on {
+                // A dark Power gesture belongs to wake even if another wake
+                // source already lit the display. Never turn it into a menu.
+                if control == PhysicalControl::Power && self.power_started_on == Some(false) {
                     return vec![];
                 }
                 self.long_pressed.insert(control);
+                if self.dark_navigation.contains(&control)
+                    || (!screen_on
+                        && !matches!(control, PhysicalControl::Previous | PhysicalControl::Next))
+                {
+                    return vec![];
+                }
                 match control {
                     PhysicalControl::Select => vec![Action::ContextMenu],
                     PhysicalControl::Back => vec![Action::Home],
@@ -629,9 +860,22 @@ impl ActionRouter {
             }
             NormalizedInput::Cancel(control) => {
                 self.long_pressed.remove(&control);
+                self.dark_navigation.remove(&control);
+                if control == PhysicalControl::Power {
+                    self.power_started_on = None;
+                }
                 vec![]
             }
             NormalizedInput::Release(control) => {
+                let power_started_on = if control == PhysicalControl::Power {
+                    self.power_started_on.take()
+                } else {
+                    None
+                };
+                if self.dark_navigation.remove(&control) {
+                    self.long_pressed.remove(&control);
+                    return vec![];
+                }
                 if self.long_pressed.remove(&control) {
                     return vec![];
                 }
@@ -642,7 +886,9 @@ impl ActionRouter {
                     PhysicalControl::Next => vec![Action::NextTrack],
                     PhysicalControl::PlayPause => vec![Action::PlayPause],
                     PhysicalControl::Power => {
-                        if screen_on {
+                        if power_started_on.is_some_and(|started| started != screen_on) {
+                            vec![]
+                        } else if screen_on {
                             vec![Action::ScreenSleep]
                         } else {
                             vec![Action::ScreenWake]
@@ -656,6 +902,10 @@ impl ActionRouter {
 
     pub fn reset(&mut self) {
         self.long_pressed.clear();
+        self.dark_navigation.clear();
+        self.power_started_on = None;
+        self.screen_on = None;
+        self.precise_wheel = false;
     }
 }
 
@@ -760,8 +1010,8 @@ mod tests {
         );
         let mut router = ActionRouter::default();
         let event = InputEvent {
-            evdev_us: None,
             device: CLICK_WHEEL.into(),
+            kernel_mono_us: None,
             input: NormalizedInput::WheelClockwise(1),
         };
         assert_eq!(router.route(&event, true), vec![Action::WheelClockwise(1)]);
@@ -951,8 +1201,8 @@ mod tests {
     fn screen_off_drops_wheel_actions() {
         let mut router = ActionRouter::default();
         let event = InputEvent {
-            evdev_us: None,
             device: CLICK_WHEEL.into(),
+            kernel_mono_us: None,
             input: NormalizedInput::WheelClockwise(1),
         };
         assert!(router.route(&event, false).is_empty());
@@ -980,12 +1230,23 @@ mod tests {
     fn queued_release_is_consumed_before_long_press_aging() {
         let mut input = InputManager::empty();
         let start = Instant::now();
-        let _ = input.feed(NAVIGATION_BUTTONS, EV_KEY, 28, 1, start);
-        let release = input.feed(
+        let record = |value, stamp_us| Record {
+            kind: EV_KEY,
+            code: 28,
+            value,
+            stamp_us: Some(stamp_us),
+        };
+        let _ = input.ingest(
             NAVIGATION_BUTTONS,
-            EV_KEY,
-            28,
-            0,
+            NAVIGATION_BUTTONS,
+            record(1, 1_000_000),
+            start,
+        );
+        // A physical 100-ms press read late must still be short.
+        let release = input.ingest(
+            NAVIGATION_BUTTONS,
+            NAVIGATION_BUTTONS,
+            record(0, 1_100_000),
             start + LONG_PRESS + Duration::from_millis(1),
         );
         assert_eq!(
@@ -1099,8 +1360,8 @@ mod tests {
         assert!(router.route(&canceled[0], true).is_empty());
 
         let repeat = InputEvent {
-            evdev_us: None,
             device: "timing".into(),
+            kernel_mono_us: None,
             input: NormalizedInput::Repeat(PhysicalControl::Next),
         };
         assert!(router.route(&repeat, true).is_empty());
@@ -1150,5 +1411,511 @@ mod tests {
             Some(replacement)
         );
         assert_eq!(rediscover_device(&original, &[reused_node]), None);
+    }
+    #[test]
+    fn queued_kernel_timestamps_preserve_a_real_long_hold() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        for (value, at_us) in [(1, 1_000_000), (0, 1_700_000)] {
+            let events = input.ingest(
+                NAVIGATION_BUTTONS,
+                NAVIGATION_BUTTONS,
+                Record {
+                    kind: EV_KEY,
+                    code: 28,
+                    value,
+                    stamp_us: Some(at_us),
+                },
+                now,
+            );
+            if value == 0 {
+                assert_eq!(
+                    events.iter().map(|e| e.input).collect::<Vec<_>>(),
+                    vec![
+                        NormalizedInput::LongPress(PhysicalControl::Select),
+                        NormalizedInput::Release(PhysicalControl::Select)
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hardware_repeat_cannot_double_the_owned_volume_timer() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(KEYPAD, EV_KEY, 115, 1, now);
+        assert!(input
+            .feed(KEYPAD, EV_KEY, 115, 2, now + REPEAT_START)
+            .is_empty());
+        assert_eq!(input.tick(now + REPEAT_START).len(), 1);
+        input.feed(KEYPAD, EV_KEY, 115, 0, now + REPEAT_START + REPEAT_RATE);
+        assert!(input.tick(now + Duration::from_secs(10)).is_empty());
+    }
+
+    #[test]
+    fn screen_off_long_transport_seeks_without_a_short_track_skip() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: NAVIGATION_BUTTONS.into(),
+            kernel_mono_us: None,
+            input,
+        };
+        router.route(&event(NormalizedInput::Press(PhysicalControl::Next)), false);
+        assert_eq!(
+            router.route(
+                &event(NormalizedInput::LongPress(PhysicalControl::Next)),
+                false
+            ),
+            vec![Action::SeekForward]
+        );
+        assert!(router
+            .route(
+                &event(NormalizedInput::Release(PhysicalControl::Next)),
+                false
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn power_wake_gesture_does_not_sleep_an_externally_woken_display() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: PMIC_KEYS.into(),
+            kernel_mono_us: None,
+            input,
+        };
+        router.route(
+            &event(NormalizedInput::Press(PhysicalControl::Power)),
+            false,
+        );
+        assert!(router
+            .route(
+                &event(NormalizedInput::Release(PhysicalControl::Power)),
+                true
+            )
+            .is_empty());
+    }
+    fn record_bytes(kind: u16, code: u16, value: i32, at_us: u64) -> Vec<u8> {
+        let mut out = vec![];
+        let (sec, usec) = (at_us / 1_000_000, at_us % 1_000_000);
+        if std::mem::size_of::<libc::input_event>() == 24 {
+            out.extend_from_slice(&sec.to_ne_bytes());
+            out.extend_from_slice(&usec.to_ne_bytes());
+        } else {
+            out.extend_from_slice(&(sec as u32).to_ne_bytes());
+            out.extend_from_slice(&(usec as u32).to_ne_bytes());
+        }
+        out.extend_from_slice(&kind.to_ne_bytes());
+        out.extend_from_slice(&code.to_ne_bytes());
+        out.extend_from_slice(&value.to_ne_bytes());
+        out
+    }
+
+    fn queued_input(name: &str) -> (InputManager, std::os::unix::net::UnixStream) {
+        let (reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let fd: std::os::fd::OwnedFd = reader.into();
+        let mut input = InputManager::empty();
+        input.files.push((
+            Device {
+                path: PathBuf::from("test-only"),
+                name: name.into(),
+                identity: PathBuf::from(name),
+            },
+            File::from(fd),
+            vec![],
+            true,
+        ));
+        (input, writer)
+    }
+
+    #[test]
+    fn a_queued_wheel_burst_is_drained_without_replay_or_coalescing_buttons() {
+        use std::io::Write;
+        let (mut input, mut writer) = queued_input(CLICK_WHEEL);
+        let mut bytes = vec![];
+        for i in 0..100 {
+            for (kind, code, value) in [
+                (EV_KEY, KEY_DOWN, 1),
+                (EV_SYN, SYN_REPORT, 0),
+                (EV_KEY, KEY_DOWN, 0),
+                (EV_SYN, SYN_REPORT, 0),
+            ] {
+                bytes.extend(record_bytes(kind, code, value, 1_000_000 + i * 250_000));
+            }
+        }
+        writer.write_all(&bytes).unwrap();
+        let events = input.poll();
+        assert_eq!(events.len(), 100);
+        assert!(events
+            .iter()
+            .all(|e| e.input == NormalizedInput::WheelClockwise(1)));
+        assert!(
+            input.poll().is_empty(),
+            "nothing remains to replay after the spin"
+        );
+    }
+
+    #[test]
+    fn draining_a_cross_device_batch_preserves_kernel_order() {
+        use std::io::Write;
+        let (mut input, mut nav) = queued_input(NAVIGATION_BUTTONS);
+        let (power_input, mut power) = queued_input(PMIC_KEYS);
+        input.files.extend(power_input.files);
+        nav.write_all(&record_bytes(EV_KEY, 28, 1, 1_100_000))
+            .unwrap();
+        nav.write_all(&record_bytes(EV_KEY, 28, 0, 1_200_000))
+            .unwrap();
+        power
+            .write_all(&record_bytes(EV_KEY, 116, 1, 1_000_000))
+            .unwrap();
+        power
+            .write_all(&record_bytes(EV_KEY, 116, 0, 1_300_000))
+            .unwrap();
+        let events = input.poll();
+        assert_eq!(
+            events.iter().map(|e| e.input).collect::<Vec<_>>(),
+            vec![
+                NormalizedInput::Press(PhysicalControl::Power),
+                NormalizedInput::Press(PhysicalControl::Select),
+                NormalizedInput::Release(PhysicalControl::Select),
+                NormalizedInput::Release(PhysicalControl::Power)
+            ]
+        );
+    }
+
+    #[test]
+    fn split_records_and_device_eof_do_not_leave_a_key_stuck() {
+        use std::io::Write;
+        let (mut input, mut writer) = queued_input(NAVIGATION_BUTTONS);
+        let bytes = record_bytes(EV_KEY, 28, 1, monotonic_us().unwrap());
+        writer.write_all(&bytes[..7]).unwrap();
+        assert!(input.poll().is_empty());
+        writer.write_all(&bytes[7..]).unwrap();
+        assert_eq!(
+            input.poll()[0].input,
+            NormalizedInput::Press(PhysicalControl::Select)
+        );
+        drop(writer);
+        assert_eq!(
+            input.poll()[0].input,
+            NormalizedInput::Cancel(PhysicalControl::Select)
+        );
+        assert_eq!(input.count(), 0);
+        assert!(input.tick(Instant::now() + LONG_PRESS).is_empty());
+    }
+
+    #[test]
+    fn read_budget_defers_timers_until_a_queued_release_is_consumed() {
+        use std::io::Write;
+        let (mut input, mut writer) = queued_input(NAVIGATION_BUTTONS);
+        let now = Instant::now();
+        input.feed(NAVIGATION_BUTTONS, EV_KEY, 28, 1, now);
+        let mut bytes = vec![];
+        for _ in 0..800 {
+            bytes.extend(record_bytes(EV_SYN, SYN_REPORT, 0, 1_000_000));
+        }
+        bytes.extend(record_bytes(EV_KEY, 28, 0, 1_100_000));
+        writer.write_all(&bytes).unwrap();
+        assert!(input.poll_at(now + LONG_PRESS).is_empty());
+        let events = input.poll_at(now + LONG_PRESS);
+        assert!(matches!(
+            events.last().unwrap().input,
+            NormalizedInput::Release(PhysicalControl::Select)
+        ));
+        assert!(input.tick(now + Duration::from_secs(10)).is_empty());
+    }
+
+    #[test]
+    fn rebind_identity_uses_physical_parent_and_startup_open_failures_retry() {
+        assert_eq!(
+            hardware_identity(PathBuf::from(
+                "/sys/devices/platform/navigation-keys/input/input2"
+            )),
+            hardware_identity(PathBuf::from(
+                "/sys/devices/platform/navigation-keys/input/input29"
+            ))
+        );
+        let (mut input, writer) = queued_input(NAVIGATION_BUTTONS);
+        let candidate = input.files[0].0.clone();
+        input.rescan(vec![candidate]);
+        assert_eq!(
+            input.count(),
+            1,
+            "never open a second reader for an existing identity"
+        );
+        drop(writer);
+        input.poll();
+        let path = std::env::temp_dir().join(format!("reborn-input-rescan-{}", std::process::id()));
+        let candidate = Device {
+            path: path.clone(),
+            name: NAVIGATION_BUTTONS.into(),
+            identity: PathBuf::from("physical-test-parent"),
+        };
+        input.rescan(vec![candidate.clone()]);
+        assert_eq!(input.count(), 0);
+        File::create(&path).unwrap();
+        input.rescan(vec![candidate]);
+        assert_eq!(
+            input.count(),
+            1,
+            "a failed initial open is retried on rescan"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn exact_pause_threshold_and_unstamped_batches_keep_fine_control() {
+        let mut cadence = WheelCadence::default();
+        for i in 0..10 {
+            cadence.detent(true, i * 40_000);
+        }
+        assert_eq!(cadence.detent(true, 360_000 + WHEEL_RESET_US), Some(1));
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        for _ in 0..10 {
+            assert_eq!(
+                input.feed(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1, now)[0].input,
+                NormalizedInput::WheelClockwise(1)
+            );
+        }
+    }
+
+    #[test]
+    fn volume_repeat_is_bounded_and_seek_hold_emits_once_at_threshold() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(KEYPAD, EV_KEY, 115, 1, now);
+        assert!(input
+            .tick(now + REPEAT_START - Duration::from_millis(1))
+            .is_empty());
+        assert_eq!(input.tick(now + REPEAT_START).len(), 1);
+        assert!(input
+            .tick(now + REPEAT_START + Duration::from_millis(1))
+            .is_empty());
+        assert_eq!(
+            input.tick(now + Duration::from_secs(5)).len(),
+            1,
+            "no catch-up burst"
+        );
+        let mut input = InputManager::empty();
+        input.feed(NAVIGATION_BUTTONS, EV_KEY, 106, 1, now);
+        assert_eq!(
+            input
+                .tick(now + LONG_PRESS)
+                .iter()
+                .map(|e| e.input)
+                .collect::<Vec<_>>(),
+            vec![NormalizedInput::LongPress(PhysicalControl::Next)]
+        );
+        assert_eq!(
+            input
+                .tick(now + LONG_PRESS + REPEAT_RATE)
+                .iter()
+                .map(|e| e.input)
+                .collect::<Vec<_>>(),
+            vec![NormalizedInput::Repeat(PhysicalControl::Next)]
+        );
+    }
+
+    #[test]
+    fn dark_navigation_stays_suppressed_through_wake_and_power_cancel() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: NAVIGATION_BUTTONS.into(),
+            input,
+            kernel_mono_us: None,
+        };
+        router.route(
+            &event(NormalizedInput::Press(PhysicalControl::Select)),
+            false,
+        );
+        assert!(router
+            .route(
+                &event(NormalizedInput::Release(PhysicalControl::Select)),
+                true
+            )
+            .is_empty());
+        router.route(
+            &event(NormalizedInput::Press(PhysicalControl::Power)),
+            false,
+        );
+        router.route(
+            &event(NormalizedInput::Cancel(PhysicalControl::Power)),
+            false,
+        );
+        router.route(&event(NormalizedInput::Press(PhysicalControl::Power)), true);
+        assert_eq!(
+            router.route(
+                &event(NormalizedInput::Release(PhysicalControl::Power)),
+                true
+            ),
+            vec![Action::ScreenSleep]
+        );
+    }
+
+    #[test]
+    fn diagnostic_capture_is_opt_in_and_memory_bounded() {
+        let mut input = InputManager::empty();
+        assert!(input.finish_capture().is_none());
+        input.begin_capture();
+        for i in 0..2200 {
+            detent(&mut input, KEY_DOWN, 1000 + i * 250);
+        }
+        let capture = input.finish_capture().unwrap();
+        assert_eq!(capture.records.len(), 2048);
+        assert!(capture.truncated);
+        assert_eq!(capture.accepted_wheel, 2200);
+        assert_eq!(capture.rejected_wheel, 0);
+        assert!(input.finish_capture().is_none());
+    }
+    #[test]
+    fn wheel_cadence_from_a_dark_batch_cannot_accelerate_after_wake() {
+        let mut router = ActionRouter::default();
+        let event = |input| InputEvent {
+            device: CLICK_WHEEL.into(),
+            input,
+            kernel_mono_us: None,
+        };
+        router.begin_batch();
+        assert!(router
+            .route(&event(NormalizedInput::WheelClockwise(4)), false)
+            .is_empty());
+        assert_eq!(
+            router.route(&event(NormalizedInput::WheelClockwise(4)), true),
+            vec![Action::WheelClockwise(1)]
+        );
+        assert_eq!(
+            router.route(&event(NormalizedInput::WheelClockwise(4)), true),
+            vec![Action::WheelClockwise(1)]
+        );
+        router.begin_batch();
+        assert_eq!(
+            router.route(&event(NormalizedInput::WheelClockwise(2)), true),
+            vec![Action::WheelClockwise(2)]
+        );
+    }
+
+    #[test]
+    fn every_short_and_long_button_is_exclusive_and_duplicate_downs_are_ignored() {
+        for (device, code, short, long) in [
+            (NAVIGATION_BUTTONS, 28, Action::Select, Action::ContextMenu),
+            (NAVIGATION_BUTTONS, 158, Action::Back, Action::Home),
+            (
+                NAVIGATION_BUTTONS,
+                105,
+                Action::PreviousTrack,
+                Action::SeekBackward,
+            ),
+            (
+                NAVIGATION_BUTTONS,
+                106,
+                Action::NextTrack,
+                Action::SeekForward,
+            ),
+            (
+                NAVIGATION_BUTTONS,
+                164,
+                Action::PlayPause,
+                Action::ShowNowPlaying,
+            ),
+            (PMIC_KEYS, 116, Action::ScreenSleep, Action::PowerMenu),
+        ] {
+            for held in [false, true] {
+                let mut input = InputManager::empty();
+                let mut router = ActionRouter::default();
+                let now = Instant::now();
+                for event in input.feed(device, EV_KEY, code, 1, now) {
+                    assert!(router.route(&event, true).is_empty());
+                }
+                assert!(input
+                    .feed(device, EV_KEY, code, 1, now + Duration::from_millis(1))
+                    .is_empty());
+                let mut actions = vec![];
+                if held {
+                    for event in input.tick(now + LONG_PRESS) {
+                        actions.extend(router.route(&event, true));
+                    }
+                }
+                for event in input.feed(
+                    device,
+                    EV_KEY,
+                    code,
+                    0,
+                    now + if held {
+                        LONG_PRESS + Duration::from_millis(1)
+                    } else {
+                        Duration::from_millis(50)
+                    },
+                ) {
+                    actions.extend(router.route(&event, true));
+                }
+                assert_eq!(actions, vec![if held { long } else { short }]);
+            }
+        }
+    }
+    #[test]
+    fn full_reset_cancels_holds_and_forgets_a_drop_before_reopen() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
+        input
+            .wheel
+            .entry(CLICK_WHEEL.into())
+            .or_default()
+            .detent(true, 1_000_000);
+        input.dropping.insert(CLICK_WHEEL.into());
+        let canceled = input.reset();
+        assert_eq!(
+            canceled.iter().map(|e| e.input).collect::<Vec<_>>(),
+            vec![NormalizedInput::Cancel(PhysicalControl::Power)]
+        );
+        assert!(input.pressed.is_empty());
+        assert!(input.wheel.is_empty());
+        assert!(input.dropping.is_empty());
+        assert!(input.tick(now + Duration::from_secs(10)).is_empty());
+    }
+
+    #[test]
+    fn evdev_overflow_forgets_wheel_acceleration_until_a_fresh_detent() {
+        let mut input = InputManager::empty();
+        for i in 0..12 {
+            detent(&mut input, KEY_DOWN, 1_000 + i * 40);
+        }
+        let now = Instant::now();
+        input.feed(CLICK_WHEEL, EV_SYN, SYN_DROPPED, 0, now);
+        assert!(input.feed(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1, now).is_empty());
+        input.feed(CLICK_WHEEL, EV_SYN, SYN_REPORT, 0, now);
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 1_490),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+    }
+    #[test]
+    fn malformed_key_values_cancel_pressed_timers_without_activation() {
+        for (device, code, control) in [
+            (NAVIGATION_BUTTONS, 28, PhysicalControl::Select),
+            (NAVIGATION_BUTTONS, 158, PhysicalControl::Back),
+            (KEYPAD, 115, PhysicalControl::VolumeUp),
+        ] {
+            for value in [-1, 3] {
+                let mut input = InputManager::empty();
+                let now = Instant::now();
+                input.feed(device, EV_KEY, code, 1, now);
+                let events = input.feed(
+                    device,
+                    EV_KEY,
+                    code,
+                    value,
+                    now + Duration::from_millis(100),
+                );
+                assert_eq!(
+                    events.iter().map(|e| e.input).collect::<Vec<_>>(),
+                    vec![NormalizedInput::Cancel(control)]
+                );
+                assert!(input.tick(now + Duration::from_secs(10)).is_empty());
+            }
+        }
     }
 }

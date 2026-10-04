@@ -1083,3 +1083,53 @@ fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
         Effect::Platform(PlatformTask::SbcQuality(SbcQuality::Xq))
     );
 }
+
+#[test]
+fn wheel_keeps_selection_visible_at_both_ends_of_realistic_library_sizes() {
+    for count in [10, 100, 1_000, 10_000] {
+        let mut ui = Ui::default();
+        let mut m = app(Screen::Tracks);
+        m.library.tracks = (0..count)
+            .map(|i| Track {
+                id: i as i64,
+                title: format!("{i:05} — 夜の静けさ — long title"),
+                source_id: "internal".into(),
+                path: format!("/data/music/{i}.flac").into(),
+                filename: format!("{i}.flac"),
+                online: true,
+                ..Default::default()
+            })
+            .collect();
+        let visible = screens::visible_rows_for(Screen::Tracks);
+        for _ in 0..(count / 4 + 12) {
+            ui.model_action(&mut m, Action::WheelClockwise(4));
+            assert!(m.navigation.focus < count);
+            assert!(m.navigation.focus >= m.navigation.scroll);
+            assert!(m.navigation.focus < m.navigation.scroll + visible);
+        }
+        // Short lists deliberately ignore acceleration: finish with slow detents.
+        for _ in 0..count.min(40) {
+            ui.model_action(&mut m, Action::WheelClockwise(1));
+        }
+        assert_eq!(m.navigation.focus, count - 1);
+        assert_eq!(
+            focus_target_count(&ui.draw(&m, &m.library.tracks, false)),
+            1
+        );
+        let before = m.navigation.focus;
+        ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+        assert_eq!(
+            m.navigation.focus,
+            before - 1,
+            "first reversed detent is precise"
+        );
+        for _ in 0..count {
+            ui.model_action(&mut m, Action::WheelCounterClockwise(4));
+        }
+        assert_eq!((m.navigation.focus, m.navigation.scroll), (0, 0));
+        assert_eq!(
+            focus_target_count(&ui.draw(&m, &m.library.tracks, false)),
+            1
+        );
+    }
+}

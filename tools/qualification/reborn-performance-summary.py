@@ -34,7 +34,7 @@ def summarize(directory):
         actions[str(data['action'])] += 1
         # Only true kernel timestamps in this monotonic domain are latency
         # evidence. Timer-generated repeats carry no evdev timestamp.
-        stamp = data.get('evdev_us')
+        stamp = data.get('kernel_mono_us', data.get('evdev_us'))
         if stamp is None: continue
         at = stamp/1e6
         if not 0 <= event['monotonic_s']-at <= 5: continue

@@ -956,7 +956,10 @@ impl Runtime {
                 self.playback.set_volume(self.model.settings.volume);
                 self.ui
                     .flash(format!("Volume {}", self.model.settings.volume));
-                self.checkpoint();
+                // A hold may adjust every 90 ms. Keep the atomic audio target
+                // immediate; persist on the existing bounded checkpoint and
+                // shutdown boundaries instead of fsyncing each step.
+                self.dirty.mark_persistence();
             }
             Effect::ScanLibrary => {
                 if self.model.library.scanning {
@@ -2209,6 +2212,7 @@ fn run() -> Result<(), String> {
     );
     let mut monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
     let mut action_router = input::ActionRouter::default();
+    let mut input_screen_off = rt.model.screen_off;
     let mut last_sd = storage::sd_present();
     let mut usb_refresh = storage::TransferRefresh::default();
     let mut observation_pending = false;
@@ -2336,6 +2340,11 @@ fn run() -> Result<(), String> {
             rt.interaction_hints.clear();
         }
         if let Some(input) = &mut inputs {
+            if input_screen_off != rt.model.screen_off {
+                input.reset_wheel();
+                input_screen_off = rt.model.screen_off;
+            }
+            action_router.begin_batch();
             for event in input.poll() {
                 // The first frame is revealed under the boot cover; input only
                 // counts once the finished UI is fully visible.
@@ -2344,13 +2353,6 @@ fn run() -> Result<(), String> {
                 }
                 if !rt.model.screen_off {
                     rt.interaction_hints.interactive();
-                }
-                if let Some((_, _, _, events)) = &mut monitor {
-                    if events.len() < 512 {
-                        events.push(
-                            json!({"device":event.device,"normalized":event.input,"mono_ms":log.uptime()*1000}),
-                        );
-                    }
                 }
                 log.emit(
                     Level::Debug,
@@ -2361,11 +2363,12 @@ fn run() -> Result<(), String> {
                     json!({"device":event.device,"input":event.input}),
                 );
                 let actions = action_router.route(&event, !rt.model.screen_off);
-                for action in actions {
+                for &action in &actions {
                     let action_started = Instant::now();
                     if performance.enabled() {
-                        performance.record("input", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"evdev_us":event.evdev_us}));
+                        performance.record("input", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"kernel_mono_us":event.kernel_mono_us}));
                     }
+
                     log.emit(
                         Level::Debug,
                         "input",
@@ -2385,13 +2388,31 @@ fn run() -> Result<(), String> {
                         performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
                     }
                 }
+                if let Some((_, _, _, events)) = &mut monitor {
+                    if events.len() < 512 {
+                        events.push(json!({"device":event.device,"normalized":event.input,
+                            "kernel_mono_us":event.kernel_mono_us,"actions":actions,
+                            "state_applied_mono_us":input::monotonic_us(),
+                            "screen":rt.model.screen,"screen_off":rt.model.screen_off,
+                            "focus":rt.model.navigation.focus,"scroll":rt.model.navigation.scroll,
+                            "modal_focus":rt.model.navigation.modal_focus,"volume":rt.model.settings.volume,
+                            "pending_frame":!actions.is_empty() && !rt.model.screen_off && rt.dirty.render,
+                            "present_return_mono_us":null}));
+                    }
+                }
+                if input_screen_off != rt.model.screen_off {
+                    input.reset_wheel();
+                    input_screen_off = rt.model.screen_off;
+                }
             }
         }
         if monitor.as_ref().is_some_and(|m| Instant::now() > m.0) {
             let (_, reply, id, events) = monitor.take().unwrap();
             let _ = reply.try_send(Response::ok(
                 id,
-                json!({"events":events,"count":events.len()}),
+                json!({"events":events,"count":events.len(),
+                    "raw":inputs.as_mut().and_then(input::InputManager::finish_capture),
+                    "clock":"CLOCK_MONOTONIC","frame_boundary":"renderer present returned"}),
             ));
         }
         while let Ok(e) = rt.playback.events.try_recv() {
@@ -2758,6 +2779,9 @@ fn run() -> Result<(), String> {
                     if monitor.is_some() {
                         Err("input monitor busy".into())
                     } else {
+                        if let Some(input) = &mut inputs {
+                            input.begin_capture();
+                        }
                         monitor = Some((
                             Instant::now() + Duration::from_secs(seconds),
                             reply,
@@ -3034,6 +3058,16 @@ fn run() -> Result<(), String> {
                 } else {
                     if performance.enabled() {
                         performance.record("frame", json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,"quads":draw.len(),"layout_ms":layout_ms,"frame_ms":frame_started.elapsed().as_secs_f64()*1000.,"render":g.timings}));
+                    }
+                    if let Some((_, _, _, events)) = &mut monitor {
+                        let presented = input::monotonic_us();
+                        for event in events
+                            .iter_mut()
+                            .filter(|event| event["pending_frame"] == true)
+                        {
+                            event["present_return_mono_us"] = json!(presented);
+                            event["pending_frame"] = json!(false);
+                        }
                     }
                     if fading {
                         rt.boot_fade -= 1;
