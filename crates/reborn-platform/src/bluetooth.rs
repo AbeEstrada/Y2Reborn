@@ -5,7 +5,7 @@ use dbus::{
         stdintf::org_freedesktop_dbus::{ObjectManager, Properties},
         Connection,
     },
-    channel::{MatchingReceiver, Sender},
+    channel::{BusType, Channel, MatchingReceiver, Sender},
     message::MatchRule,
     Message, Path as DbusPath,
 };
@@ -16,10 +16,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    io::{Read, Write},
+    os::{fd::AsRawFd, unix::net::UnixStream},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
+        mpsc::{sync_channel, Receiver, RecvTimeoutError, SendError, SyncSender, TrySendError},
         Arc, Mutex,
     },
     thread,
@@ -212,8 +214,30 @@ pub enum Command {
     },
     Stop,
 }
+/// Preserve the bounded command queue and wake the D-Bus worker immediately.
+#[derive(Clone)]
+pub struct CommandSender {
+    queue: SyncSender<Command>,
+    wake: Arc<UnixStream>,
+}
+impl CommandSender {
+    pub fn send(&self, command: Command) -> Result<(), SendError<Command>> {
+        self.queue.send(command)?;
+        self.notify();
+        Ok(())
+    }
+    pub fn try_send(&self, command: Command) -> Result<(), TrySendError<Command>> {
+        self.queue.try_send(command)?;
+        self.notify();
+        Ok(())
+    }
+    fn notify(&self) {
+        // At most eight queued commands; a nonblocking byte never delays UI.
+        let _ = (&*self.wake).write(&[1]);
+    }
+}
 pub struct Bluetooth {
-    pub commands: SyncSender<Command>,
+    pub commands: CommandSender,
     pub events: Receiver<Status>,
 }
 struct Pending {
@@ -375,8 +399,8 @@ fn write_intent(operation: &str) -> Result<(), String> {
 }
 
 type Objects = HashMap<DbusPath<'static>, HashMap<String, PropMap>>;
-fn objects(c: &Connection) -> Result<Objects, String> {
-    c.with_proxy("org.bluez", "/", Duration::from_secs(2))
+fn objects(c: &Connection, owner: &str) -> Result<Objects, String> {
+    c.with_proxy(owner, "/", Duration::from_secs(2))
         .get_managed_objects()
         .map_err(|e| {
             format!(
@@ -485,7 +509,13 @@ fn name_owner(c: &Connection, name: &str) -> Option<String> {
 fn status(c: &Connection) -> Result<(String, Status), String> {
     let mut state = Status::default();
     let mut adapter = String::new();
-    for (path, interfaces) in objects(c)? {
+    state.bluez_owner = name_owner(c, "org.bluez");
+    state.bluealsa_owner = name_owner(c, "org.bluealsa");
+    let owner = state
+        .bluez_owner
+        .as_deref()
+        .ok_or("BlueZ owner unavailable")?;
+    for (path, interfaces) in objects(c, owner)? {
         if let Some(p) = interfaces.get("org.bluez.Adapter1") {
             if adapter.is_empty() {
                 adapter = path.to_string();
@@ -513,8 +543,6 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
             });
         }
     }
-    state.bluez_owner = name_owner(c, "org.bluez");
-    state.bluealsa_owner = name_owner(c, "org.bluealsa");
     state.bluealsa = state.bluealsa_owner.is_some();
     if let Some(owner) = state.bluealsa_owner.as_deref() {
         let marker = Path::new("/run/y2/bt-codec-uncertain.json");
@@ -532,7 +560,11 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
     // BlueALSA 5 exposes PCM objects through ObjectManager. Its negotiated
     // properties are Rate and Format; Sampling was the incompatible v4 name.
     let pcms: Result<Objects, _> = c
-        .with_proxy("org.bluealsa", "/org/bluealsa", Duration::from_secs(1))
+        .with_proxy(
+            state.bluealsa_owner.as_deref().unwrap_or("org.bluealsa"),
+            "/org/bluealsa",
+            Duration::from_secs(1),
+        )
         .get_managed_objects();
     if let Ok(pcms) = pcms {
         state.pcms = pcms
@@ -566,6 +598,11 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
                 }
             })
             .collect();
+    }
+    if name_owner(c, "org.bluez") != state.bluez_owner
+        || name_owner(c, "org.bluealsa") != state.bluealsa_owner
+    {
+        return Err("Bluetooth service owner changed during observation".into());
     }
     state.devices.sort_by(|a, b| a.name.cmp(&b.name));
     state.devices.truncate(128);
@@ -945,7 +982,11 @@ impl Bluetooth {
     pub fn spawn(log: Observer) -> std::io::Result<Self> {
         Self::spawn_with(
             log,
-            Connection::new_system,
+            || {
+                let mut channel = Channel::get_private(BusType::System)?;
+                channel.set_watch_enabled(true);
+                Ok(channel.into())
+            },
             "/data/bluetooth/enabled".into(),
         )
     }
@@ -955,6 +996,13 @@ impl Bluetooth {
         preference: PathBuf,
     ) -> std::io::Result<Self> {
         let (tx, rx) = sync_channel(8);
+        let (wake_sender, wake_receiver) = UnixStream::pair()?;
+        wake_sender.set_nonblocking(true)?;
+        wake_receiver.set_nonblocking(true)?;
+        let tx = CommandSender {
+            queue: tx,
+            wake: Arc::new(wake_sender),
+        };
         let (et, er) = sync_channel(2);
         thread::Builder::new()
             .name("bluetooth".into())
@@ -976,16 +1024,20 @@ impl Bluetooth {
                             });
                             match rx.recv_timeout(Duration::from_secs(3)) {
                                 Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => return,
-                                _ => continue,
+                                Ok(_) => { let _ = (&wake_receiver).read(&mut [0u8]); continue; }
+                                Err(RecvTimeoutError::Timeout) => continue,
                             }
                         }
                     };
+                    c.set_signal_match_mode(true);
+                    let observation_dirty = Arc::new(AtomicBool::new(true));
                     let operations:Operations=Arc::new(Mutex::new(HashMap::new()));
                     let (completed_tx, completed_rx) = sync_channel::<Option<String>>(16);
                     for kind in [dbus::MessageType::MethodReturn,dbus::MessageType::Error] {
-                        let ops=operations.clone();let observer=log.clone();let completed=completed_tx.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
+                        let ops=operations.clone();let observer=log.clone();let completed=completed_tx.clone();let dirty=observation_dirty.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
                         c.start_receive(rule,Box::new(move|mut msg,connection|{
                             if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some(mut operation)=ops.remove(&serial){
+                                dirty.store(true,Ordering::Release);
                                 match operation.reply(connection, &mut msg) {
                                     Ok(Some(next)) => {
                                         observer.emit(Level::Info,"bluetooth","pair_bonded","Bond saved; audio connection requested",Some(operation.id),json!({"trusted":true}));
@@ -1058,6 +1110,7 @@ impl Bluetooth {
                             true
                         }),
                     );
+                    let mut agent_owner = name_owner(&c, "org.bluez");
                     let registered: Result<(), dbus::Error> = c
                         .with_proxy("org.bluez", "/org/bluez", Duration::from_secs(3))
                         .method_call(
@@ -1079,6 +1132,9 @@ impl Bluetooth {
                     let invalidation_sink = transport_invalidations.clone();
                     let daemon_invalidated = Arc::new(AtomicBool::new(false));
                     let daemon_invalidation_sink = daemon_invalidated.clone();
+                    let owner_dirty = observation_dirty.clone();
+                    let agent_invalidated = Arc::new(AtomicBool::new(false));
+                    let agent_invalidation_sink = agent_invalidated.clone();
                     let mut transport_watches_ready = true;
                     let mut owner_changed = MatchRule::new_signal(
                         "org.freedesktop.DBus",
@@ -1089,8 +1145,10 @@ impl Bluetooth {
                     if let Err(error) = c.add_match::<(String, String, String), _>(
                         owner_changed,
                         move |(name, _, _), _, _| {
+                            if name == "org.bluez" { agent_invalidation_sink.store(true, Ordering::Release); }
                             if name == "org.bluez" || name == "org.bluealsa" {
                                 daemon_invalidation_sink.store(true, Ordering::Release);
+                                owner_dirty.store(true, Ordering::Release);
                             }
                             true
                         },
@@ -1171,14 +1229,80 @@ impl Bluetooth {
                             json!({"recovery":"periodic_snapshot_only"}),
                         );
                     }
+                    // Subscribe before the initial snapshot so additions, removals,
+                    // device/adapter state and PCM Running changes cannot wait for
+                    // a periodic refresh. RSSI/encoder statistics do not enumerate.
+                    for service in ["org.bluez", "org.bluealsa"] {
+                        for member in ["InterfacesAdded", "InterfacesRemoved", "PropertiesChanged"] {
+                            let mut rule = MatchRule::new_signal(
+                                if member == "PropertiesChanged" { "org.freedesktop.DBus.Properties" }
+                                else { "org.freedesktop.DBus.ObjectManager" }, member);
+                            rule.sender = Some(service.into());
+                            let dirty = observation_dirty.clone();
+                            let registered = c.add_match::<(), _>(rule, move |_, _, msg| {
+                                let relevant = if member == "PropertiesChanged" {
+                                    msg.read3::<String, PropMap, Vec<String>>().is_ok_and(|(interface, changed, invalidated)| {
+                                        let keys: &[&str] = match interface.as_str() {
+                                            "org.bluez.Adapter1" => &["Powered", "Discovering"],
+                                            "org.bluez.Device1" => &["Alias", "Address", "UUIDs", "Paired", "Bonded", "Trusted", "Connected"],
+                                            "org.bluealsa.PCM1" => &["Device", "Transport", "Mode", "Codec", "Format", "Rate", "Channels", "Running"],
+                                            _ => &[],
+                                        };
+                                        keys.iter().any(|key| changed.contains_key(*key) || invalidated.iter().any(|v| v == key))
+                                    })
+                                } else { true };
+                                if relevant { dirty.store(true, Ordering::Release); }
+                                true
+                            });
+                            if let Err(error) = registered {
+                                transport_watches_ready = false;
+                                log.emit(Level::Warn, "bluetooth", "state_watch_failed", &dbus_error(error), None, json!({"service":service,"member":member}));
+                            }
+                        }
+                    }
                     let mut transport_epochs = TransportEpochs::default();
-                    let mut refresh = Instant::now() - Duration::from_secs(5);
+                    let mut refresh = Instant::now() - Duration::from_secs(30);
                     let mut current = Status::default();
                     let mut adapter = String::new();
                     let mut discovery: Option<Discovery> = None;
                     let mut operation_error = None;
+                    let mut unpublished = false;
+                    let mut commands_pending = false;
                     loop {
-                        if c.process(Duration::from_millis(20)).is_err() {
+                        let mut disconnected = false;
+                        for index in 0..64 {
+                            match c.process(Duration::ZERO) {
+                                Ok(false) => break,
+                                Ok(true) => { if index == 63 { observation_dirty.store(true, Ordering::Release); } }
+                                Err(_) => { disconnected = true; break; }
+                            }
+                        }
+                        let now = Instant::now();
+                        let mut until = refresh + Duration::from_secs(30);
+                        if commands_pending { until = now; }
+                        if unpublished { until = until.min(now + Duration::from_millis(100)); }
+                        if observation_dirty.load(Ordering::Acquire) { until = now; }
+                        if let Some(scan) = &discovery { until = until.min(scan.until); }
+                        if let Ok(ops) = operations.lock() {
+                            for operation in ops.values() { until = until.min(operation.started + Duration::from_secs(70)); }
+                        }
+                        if let Ok(p) = pending.lock() {
+                            if current.pending.as_ref().map(|v| (&v.device, &v.display)) != p.as_ref().map(|v| (&v.display.device, &v.display.display)) { until = now; }
+                            if let Some(p) = p.as_ref() { until = until.min(p.started + Duration::from_secs(60)); }
+                        }
+                        let wait = until.saturating_duration_since(now);
+                        let watch = c.channel().watch();
+                        let result = crate::native::bluetooth_wait(watch.fd, watch.read, watch.write, wake_receiver.as_raw_fd(), wait)
+                            .map_err(|e| e.to_string())
+                            .and_then(|()| {
+                                // Drain buffered messages before sleeping again. A
+                                // zero wait also flushes pending async method calls.
+                                for _ in 0..64 {
+                                    if !c.process(Duration::ZERO).map_err(dbus_error)? { break; }
+                                }
+                                Ok(())
+                            });
+                        if disconnected || result.is_err() {
                             cancel_operations(&c, &operations);
                             current.available = false;
                             current.error = Some("Bluetooth service disconnected".into());
@@ -1186,15 +1310,21 @@ impl Bluetooth {
                             let _ = et.try_send(current);
                             break;
                         }
+                        // Drain notifications independently of queue consumption:
+                        // a command can be consumed during D-Bus activity before
+                        // its sender writes the wake byte. Leaving that late byte
+                        // unread would make poll permanently ready.
+                        while (&wake_receiver).read(&mut [0u8; 64]).is_ok_and(|n| n > 0) {}
                         let mut changed = false;
                         if let Ok(mut ops)=operations.lock(){ops.retain(|_,operation|{if operation.started.elapsed()>Duration::from_secs(70){operation.cancel(&c);log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(operation.id),json!({"method":operation.method}));operation_error=Some("Bluetooth operation timed out".into());current.error=operation_error.clone();changed=true;false}else{true}});}
                         while let Ok(error) = completed_rx.try_recv() {
                             operation_error = error;
                             current.error = operation_error.clone();
-                            refresh = Instant::now() - Duration::from_secs(5);
+                            refresh = Instant::now() - Duration::from_secs(30);
                             changed = true;
                         }
-                        if refresh.elapsed() > Duration::from_secs(2) {
+                        if observation_dirty.swap(false, Ordering::AcqRel) || refresh.elapsed() >= Duration::from_secs(30) {
+                            if agent_invalidated.swap(false, Ordering::AcqRel) { agent_owner = None; }
                             match status(&c) {
                                 Ok((a, mut s)) => {
                                     if !transport_watches_ready {
@@ -1212,6 +1342,17 @@ impl Bluetooth {
                                         &invalidated,
                                         daemon_invalidated.swap(false, Ordering::AcqRel),
                                     );
+                                    if current.bluez_owner != s.bluez_owner { cancel_operations(&c, &operations); }
+                                    if agent_owner != s.bluez_owner {
+                                        agent_owner = s.bluez_owner.clone();
+                                        if let Some(owner) = agent_owner.as_deref() {
+                                            let registration: Result<(), dbus::Error> = c.with_proxy(owner, "/org/bluez", Duration::from_secs(3))
+                                                .method_call("org.bluez.AgentManager1", "RegisterAgent", (DbusPath::from("/org/reborn/agent"), "DisplayYesNo"));
+                                            if let Err(error) = registration {
+                                                log.emit(Level::Warn, "bluetooth", "agent_unavailable", &dbus_error(error), None, json!({}));
+                                            }
+                                        }
+                                    }
                                     adapter = a;
                                     s.codec_policy = refresh_codec_policy(current.codec_policy.as_ref(), &s, || {
                                         discover_codec_policy(&c, &s, Path::new("/etc/y2linux/bluetooth-codecs.json"), crate::codecs::experimental_enabled())
@@ -1221,7 +1362,14 @@ impl Bluetooth {
                                     current = s
                                 }
                                 Err(e) => {
+                                    cancel_operations(&c, &operations);
                                     current.available = false;
+                                    current.pcms.clear();
+                                    current.codec_policy = None;
+                                    current.devices.clear();
+                                    current.bluez_owner = None;
+                                    current.bluealsa_owner = None;
+                                    current.bluealsa = false;
                                     current.error = Some(e)
                                 }
                             }
@@ -1255,7 +1403,7 @@ impl Bluetooth {
                                     log.emit(Level::Warn, "bluetooth", "scan_failed", &e, Some(job.id), json!({"method":"StopDiscovery","recovery_attempted":false}));
                                 }
                             }
-                            refresh = Instant::now() - Duration::from_secs(5);
+                            refresh = Instant::now() - Duration::from_secs(30);
                             changed = true;
                         }
                         if let Ok(mut p) = pending.lock() {
@@ -1266,7 +1414,9 @@ impl Bluetooth {
                                     let _ = c.send(rejected(&v.message));
                                 }
                             }
-                            current.pending = p.as_ref().map(|v| v.display.clone());
+                            let display = p.as_ref().map(|v| v.display.clone());
+                            changed |= current.pending.as_ref().map(|v| (&v.device, &v.display)) != display.as_ref().map(|v| (&v.device, &v.display));
+                            current.pending = display;
                         }
                         let command = match rx.try_recv() {
                             Ok(c) => Some(c),
@@ -1276,6 +1426,7 @@ impl Bluetooth {
                             }
                             Err(_) => None,
                         };
+                        commands_pending = command.is_some();
                         if let Some(cmd) = command {
                             if matches!(cmd, Command::Stop) {
                                 cancel_operations(&c, &operations);
@@ -1298,8 +1449,10 @@ impl Bluetooth {
                             // restart the bounded operation.
                             if matches!(cmd, Command::Scan(true)) && discovery.is_some() { continue; }
                             let scan_command = matches!(cmd, Command::Scan(_));
-                            operation_error = None;
-                            current.error = None;
+                            if !matches!(cmd, Command::Refresh) {
+                                operation_error = None;
+                                current.error = None;
+                            }
                             let result = match cmd {
                                 Command::Stop | Command::Refresh => Ok(()),
                                 Command::Codec { address, preference } => {
@@ -1417,7 +1570,7 @@ impl Bluetooth {
                                 );
                             }
                             changed = true;
-                            refresh = Instant::now() - Duration::from_secs(5);
+                            refresh = Instant::now() - Duration::from_secs(30);
                         }
                         let now = current
                             .devices
@@ -1452,11 +1605,12 @@ impl Bluetooth {
                                 "BlueZ unavailable"
                             },
                         );
-                        if changed
-                            || refresh.elapsed() < Duration::from_millis(80)
-                            || current.pending.is_some()
-                        {
-                            let _ = et.try_send(current.clone());
+                        if changed || unpublished {
+                            match et.try_send(current.clone()) {
+                                Ok(()) => unpublished = false,
+                                Err(TrySendError::Full(_)) => unpublished = true,
+                                Err(TrySendError::Disconnected(_)) => { cancel_operations(&c, &operations); return; }
+                            }
                         }
                     }
                 }
@@ -1747,6 +1901,7 @@ mod tests {
         fn connect(address: &str) -> Result<Connection, dbus::Error> {
             let mut channel = Channel::open_private(address.trim())?;
             channel.register()?;
+            channel.set_watch_enabled(true);
             Ok(channel.into())
         }
         let service = connect(&address).unwrap();
@@ -1756,8 +1911,14 @@ mod tests {
         service
             .request_name("org.bluealsa", false, true, false)
             .unwrap();
+        let restart = Arc::new(AtomicBool::new(false));
+        let restart_service = restart.clone();
+        let registrations = Arc::new(AtomicUsize::new(0));
+        let agent_registrations = registrations.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let ending = stop.clone();
+        let snapshots = Arc::new(AtomicUsize::new(0));
+        let snapshot_calls = snapshots.clone();
         let starts = Arc::new(AtomicUsize::new(0));
         let starts_out = starts.clone();
         let stops = Arc::new(AtomicUsize::new(0));
@@ -1791,6 +1952,7 @@ mod tests {
                 let mut reply = msg.method_return();
                 match member.as_str() {
                     "GetManagedObjects" => {
+                        snapshot_calls.fetch_add(1, Ordering::Relaxed);
                         let mut objects = Objects::new();
                         if msg.path().unwrap() == "/org/bluealsa" {
                             let mut properties = PropMap::new();
@@ -1932,7 +2094,9 @@ mod tests {
                         discovering = false;
                         stops_out.fetch_add(1, Ordering::Relaxed);
                     }
-                    "RegisterAgent" => {}
+                    "RegisterAgent" => {
+                        agent_registrations.fetch_add(1, Ordering::Relaxed);
+                    }
                     _ => panic!("unexpected method {member}"),
                 }
                 c.send(reply).unwrap();
@@ -1943,6 +2107,13 @@ mod tests {
             let mut last_rate = 44_100;
             while !ending.load(Ordering::Relaxed) {
                 service.process(Duration::from_millis(10)).unwrap();
+                if restart_service.swap(false, Ordering::AcqRel) {
+                    service.release_name("org.bluez").unwrap();
+                    thread::sleep(Duration::from_millis(300));
+                    service
+                        .request_name("org.bluez", false, true, false)
+                        .unwrap();
+                }
                 let rate = observed_pcm_rate.load(Ordering::Relaxed) as u32;
                 if rate != last_rate {
                     let mut changed = PropMap::new();
@@ -2030,9 +2201,53 @@ mod tests {
                 }
             }
         }
-        wait(&bt.events, |s| s.available && !s.powered);
-        let initial_pcm = wait(&bt.events, |s| !s.pcms.is_empty());
+        let initial_pcm = wait(&bt.events, |s| {
+            s.available && !s.powered && !s.pcms.is_empty()
+        });
         let initial_epoch = initial_pcm.pcms[0].transport_generation;
+        // After startup settles, idle state makes no recurring snapshots and
+        // no 20ms timer wakes. Measure the actual worker, not just constants.
+        thread::sleep(Duration::from_millis(250));
+        while bt.events.try_recv().is_ok() {}
+        bt.commands.queue.send(Command::Refresh).unwrap();
+        bt.commands.notify();
+        wait(&bt.events, |s| s.available);
+        // A late or coalesced notification with an empty queue must not spin.
+        bt.commands.notify();
+        thread::sleep(Duration::from_millis(100));
+        while bt.events.try_recv().is_ok() {}
+        let thread_status = fs::read_dir("/proc/self/task")
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                fs::read_to_string(entry.path().join("comm"))
+                    .is_ok_and(|name| name.trim() == "bluetooth")
+            })
+            .unwrap()
+            .path()
+            .join("status");
+        let context_switches = || {
+            fs::read_to_string(&thread_status)
+                .unwrap()
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("voluntary_ctxt_switches:")
+                        .map(|n| n.trim().parse::<u64>().unwrap())
+                })
+                .unwrap()
+        };
+        let before = context_switches();
+        let enumerations = snapshots.load(Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(2200));
+        assert_eq!(snapshots.load(Ordering::Relaxed), enumerations);
+        assert!(
+            context_switches() - before <= 2,
+            "idle Bluetooth worker kept waking"
+        );
+        assert!(
+            bt.events.try_recv().is_err(),
+            "idle state was repeatedly published"
+        );
         pcm_rate.store(48_000, Ordering::Release);
         let changed_pcm = wait(&bt.events, |s| {
             s.pcms.first().is_some_and(|pcm| {
@@ -2094,13 +2309,27 @@ mod tests {
         fail.store(true, Ordering::Relaxed);
         bt.commands.send(Command::Scan(true)).unwrap();
         wait(&bt.events, |s| matches!(s.scan, RadioScan::Failed { .. }));
-        // A periodic successful ObjectManager read must not erase the operation error.
+        // A successful requested snapshot must not erase the operation error.
+        bt.commands.send(Command::Refresh).unwrap();
         let failed = wait(&bt.events, |s| matches!(s.scan, RadioScan::Failed { .. }));
         assert!(failed.error.unwrap().contains("org.bluez.Error.Failed"));
+        let command_start = Instant::now();
         bt.commands.send(Command::Power(false)).unwrap();
         let off = wait(&bt.events, |s| !s.powered);
+        assert!(
+            command_start.elapsed() < Duration::from_millis(500),
+            "command did not wake worker"
+        );
         assert_eq!(off.scan, RadioScan::Idle);
         assert!(off.error.is_none());
+        let previous_epoch = off.pcms[0].transport_generation;
+        restart.store(true, Ordering::Release);
+        let unavailable = wait(&bt.events, |s| !s.available);
+        assert!(unavailable.pcms.is_empty());
+        assert!(unavailable.devices.is_empty());
+        let recovered = wait(&bt.events, |s| s.available && !s.pcms.is_empty());
+        assert_ne!(recovered.pcms[0].transport_generation, previous_epoch);
+        assert_eq!(registrations.load(Ordering::Relaxed), 2);
         bt.commands.send(Command::Power(true)).unwrap();
         wait(&bt.events, |s| s.powered);
         pair_mode.store(3, Ordering::Relaxed);
