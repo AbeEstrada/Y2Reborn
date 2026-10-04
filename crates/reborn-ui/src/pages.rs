@@ -223,6 +223,8 @@ fn playback_summary(m: &AppModel) -> String {
 fn usb_summary(m: &AppModel) -> &'static str {
     match m.platform.snapshot.usb {
         UsbTransfer::Ready => "Ready",
+        UsbTransfer::Copying => "Copying files…",
+        UsbTransfer::Developer => "Advanced transfer",
         UsbTransfer::Starting => "Preparing…",
         UsbTransfer::Error => "Reconnect cable",
         UsbTransfer::Disconnected | UsbTransfer::Unknown => "",
@@ -427,26 +429,41 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
 
 fn pc_transfer(m: &AppModel) -> Page {
     let free = free_text(&m.platform.snapshot.storage.internal);
-    let page = match m.platform.snapshot.usb {
-        UsbTransfer::Ready => Page::hero(
-            "PC Transfer Ready",
-            "Copy music to the Music folder from your computer.",
-        ),
-        UsbTransfer::Starting => {
-            Page::hero("Preparing PC Transfer…", "Keep the USB cable connected.")
+    let page = if m.library.scanning && m.platform.snapshot.usb != UsbTransfer::Copying {
+        Page::hero(
+            "Refreshing Music…",
+            "Your music will appear when the scan finishes.",
+        )
+    } else {
+        match m.platform.snapshot.usb {
+            UsbTransfer::Ready => Page::hero(
+                "USB File Transfer",
+                "Open Y2 on your computer to copy music.",
+            ),
+            UsbTransfer::Copying => Page::hero(
+                "Copying Files…",
+                "Keep the cable connected until your computer finishes.",
+            ),
+            UsbTransfer::Developer => Page::hero(
+                "Advanced USB Transfer",
+                "Use your configured file-transfer client to copy music.",
+            ),
+            UsbTransfer::Starting => {
+                Page::hero("Preparing PC Transfer…", "Keep the USB cable connected.")
+            }
+            UsbTransfer::Error => Page::hero(
+                "File Transfer Interrupted",
+                "Check storage space. Reconnect the USB cable and retry the copy.",
+            ),
+            UsbTransfer::Disconnected => Page::hero(
+                "Connect to a Computer",
+                "Connect Y2 to a computer with a USB cable to transfer music.",
+            ),
+            UsbTransfer::Unknown => Page::hero(
+                "Checking Connection…",
+                "Connect Y2 to a computer with a USB cable to transfer music.",
+            ),
         }
-        UsbTransfer::Error => Page::hero(
-            "PC Transfer Disconnected",
-            "Reconnect the USB cable and try again.",
-        ),
-        UsbTransfer::Disconnected => Page::hero(
-            "Connect to a Computer",
-            "Connect Y2 to a computer with a USB cable to transfer music.",
-        ),
-        UsbTransfer::Unknown => Page::hero(
-            "Checking Connection…",
-            "Connect Y2 to a computer with a USB cable to transfer music.",
-        ),
     };
     match free {
         Some(free) => page.fact("Internal Storage", free),

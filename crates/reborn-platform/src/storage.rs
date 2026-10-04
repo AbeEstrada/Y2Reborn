@@ -406,9 +406,78 @@ pub fn sd_present() -> bool {
             fs::canonicalize(e.path()).is_ok_and(|p| p.to_string_lossy().contains("/11240000.mmc/"))
         })
 }
+
+/// Durable changes only: incomplete copies stay hidden and never trigger a scan.
+pub fn usb_changes() -> (u64, bool) {
+    let receipt = fs::read_to_string("/run/y2/usb-transfer.json")
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    receipt
+        .filter(|r| {
+            r["schema"] == "org.y2linux.usb-transfer/v1"
+                && !boot.trim().is_empty()
+                && r["boot_id"].as_str() == Some(boot.trim())
+        })
+        .map(|r| {
+            (
+                r["refresh_generation"].as_u64().unwrap_or(0),
+                r["active"] == true,
+            )
+        })
+        .unwrap_or((0, false))
+}
+
+#[derive(Default)]
+pub struct TransferRefresh {
+    seen: u64,
+    requested: u64,
+    quiet_since: Option<Instant>,
+    copying: bool,
+}
+impl TransferRefresh {
+    pub fn observe(&mut self, generation: u64, copying: bool, now: Instant) {
+        if generation != 0 && generation != self.seen {
+            self.seen = generation;
+            self.quiet_since = Some(now);
+        }
+        if self.copying && !copying {
+            self.quiet_since = Some(now);
+        }
+        self.copying = copying;
+    }
+    pub fn ready(&self, scanner_busy: bool, media_ready: bool, now: Instant) -> bool {
+        self.seen != self.requested
+            && !self.copying
+            && !scanner_busy
+            && media_ready
+            && self
+                .quiet_since
+                .is_some_and(|start| now.duration_since(start) >= Duration::from_secs(2))
+    }
+    pub fn requested(&mut self) {
+        self.requested = self.seen;
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transfer_refresh_coalesces_and_retries_after_busy_or_unstable_media() {
+        let mut refresh = TransferRefresh::default();
+        let now = Instant::now();
+        refresh.observe(5, true, now);
+        assert!(!refresh.ready(false, true, now + Duration::from_secs(10)));
+        refresh.observe(6, false, now + Duration::from_secs(10));
+        assert!(!refresh.ready(false, true, now + Duration::from_secs(11)));
+        assert!(!refresh.ready(true, true, now + Duration::from_secs(12)));
+        assert!(!refresh.ready(false, false, now + Duration::from_secs(12)));
+        assert!(refresh.ready(false, true, now + Duration::from_secs(12)));
+        refresh.requested();
+        assert!(!refresh.ready(false, true, now + Duration::from_secs(15)));
+        refresh.observe(7, false, now + Duration::from_secs(16));
+        assert!(refresh.ready(false, true, now + Duration::from_secs(18)));
+    }
     #[test]
     fn mount_names_not_block_numbers() {
         let m = parse_mounts(

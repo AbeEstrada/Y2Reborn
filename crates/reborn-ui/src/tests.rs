@@ -870,7 +870,11 @@ fn storage_battery_and_pc_transfer_present_user_states() {
     let mut m = app(Screen::PcTransfer);
     assert!(visible_text(&ui, &m).contains("Connect Y2 to a computer"));
     m.platform.snapshot.usb = UsbTransfer::Ready;
-    assert!(visible_text(&ui, &m).contains("PC Transfer Ready"));
+    assert!(visible_text(&ui, &m).contains("USB File Transfer"));
+    m.platform.snapshot.usb = UsbTransfer::Copying;
+    assert!(visible_text(&ui, &m).contains("Keep the cable connected"));
+    m.platform.snapshot.usb = UsbTransfer::Developer;
+    assert!(visible_text(&ui, &m).contains("Advanced USB Transfer"));
     m.platform.snapshot.usb = UsbTransfer::Error;
     assert!(visible_text(&ui, &m).contains("Reconnect the USB cable"));
 }

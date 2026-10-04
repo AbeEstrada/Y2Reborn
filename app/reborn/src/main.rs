@@ -2175,6 +2175,7 @@ fn run() -> Result<(), String> {
     let mut monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
     let mut action_router = input::ActionRouter::default();
     let mut last_sd = storage::sd_present();
+    let mut usb_refresh = storage::TransferRefresh::default();
     let mut xrun_bundle = 0.;
     let mut shutdown_intent = None;
     let mut power_poll = Instant::now() - Duration::from_secs(1);
@@ -2814,6 +2815,16 @@ fn run() -> Result<(), String> {
                     }
                     rt.dirty.mark_render();
                     rt.dirty.mark_persistence();
+                }
+                let (generation, copying) = storage::usb_changes();
+                let now = Instant::now();
+                usb_refresh.observe(generation, copying, now);
+                if usb_refresh.ready(rt.model.library.scanning, !rt.model.sources.is_empty(), now)
+                    && rt.scanner.scan(rt.model.sources.clone()).is_ok()
+                {
+                    usb_refresh.requested();
+                    rt.model.apply(Event::LibraryScanStarted);
+                    rt.dirty.mark_render();
                 }
             }
             if !headless
