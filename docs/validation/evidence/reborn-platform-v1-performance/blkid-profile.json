@@ -1,0 +1,82 @@
+[
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.194291999941925,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.195600000661216,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.060677000074065,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.184368999834987,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.042523000156507,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.1507540001694,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.077754000012646,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.090830999506579,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.054061000009824,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.196831000830571,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.317445000400767,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.823522000355297,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.0267549995623995,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.113215999699605,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk0p7",
+    "safeprobe_ms": 5.025445999308431,
+    "result": 0
+  },
+  {
+    "device": "/dev/mmcblk1p1",
+    "safeprobe_ms": 5.299060999277572,
+    "result": 0
+  }
+]

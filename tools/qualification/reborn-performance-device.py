@@ -89,6 +89,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--profile-audio', action='store_true', help='Untimed one-second syscall sample after playback counters')
     parser.add_argument('--qualify-audio-controls', action='store_true', help='Untimed seek/reopen/pause/resume/stop and active shutdown on the last private start')
+    parser.add_argument('--play-pause-only', action='store_true', help='Narrow 16 pause/resume pairs on Now Playing; skips SQL/GPU/idle fixtures')
     args = parser.parse_args()
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     original = call('status')
@@ -112,14 +113,15 @@ def main():
                 raise RuntimeError('production service did not stop')
             time.sleep(.1)
         # Only fresh scratch data is mutated by the SQLite/10k-track fixture.
-        with tempfile.TemporaryDirectory(prefix='library-', dir=scratch) as directory:
-            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                result = subprocess.run([str(args.benchmark), '--scratch-fd', str(fd), '--tracks', '10000', '--graphics', '--capture-dir', str(args.output/'pixels'), '--artwork-dir', '/usr/share/reborn/fixtures'],
-                    pass_fds=(fd,), capture_output=True, timeout=240, check=True)
-                (args.output/'library-10000.json').write_bytes(result.stdout)
-            finally:
-                os.close(fd)
+        if not args.play_pause_only:
+            with tempfile.TemporaryDirectory(prefix='library-', dir=scratch) as directory:
+                fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    result = subprocess.run([str(args.benchmark), '--scratch-fd', str(fd), '--tracks', '10000', '--graphics', '--capture-dir', str(args.output/'pixels'), '--artwork-dir', '/usr/share/reborn/fixtures'],
+                        pass_fds=(fd,), capture_output=True, timeout=240, check=True)
+                    (args.output/'library-10000.json').write_bytes(result.stdout)
+                finally:
+                    os.close(fd)
         shutil.copytree('/data/reborn', scratch/'app')
         session_path = scratch/'app/state/session.json'
         session = json.loads(session_path.read_text())
@@ -150,7 +152,8 @@ def main():
         status = wait_ready(process)
         if status['playback']['queue_length'] != 1: raise RuntimeError('private fixture session was rejected')
         receipt['pid'] = process.pid
-        receipt['idle'].append(idle(process.pid, 'home_static_paused'))
+        if not args.play_pause_only:
+            receipt['idle'].append(idle(process.pid, 'home_static_paused'))
         paths = {p.joinpath('device/name').read_text().strip(): Path('/dev/input')/p.name
                  for p in Path('/sys/class/input').glob('event*')}
         input_files = {name: path.open('wb', buffering=0) for name, path in paths.items() if name in ('Y2 navigation buttons', 'APT32F click-wheel', 'mt6582-keypad', 'mtk-pmic-keys')}
@@ -172,6 +175,31 @@ def main():
             record('APT32F click-wheel', code, 0)
             receipt['injected'].append({'label': label, 'monotonic_s': at})
             time.sleep(delay)
+        if args.play_pause_only:
+            wheel(1)
+            key(28, 'open_now_playing')
+            if call('status')['current_screen'] != 'now_playing':
+                raise RuntimeError('control fixture did not reach Now Playing')
+            for n in range(16):
+                for label, state in [('play_pause_resume','playing'),('play_pause_pause','paused')]:
+                    key(164, label)
+                    deadline = time.monotonic()+3
+                    while call('status')['playback']['state'] != state:
+                        if time.monotonic() > deadline: raise RuntimeError('Play/Pause did not reach '+state)
+                        time.sleep(.02)
+                    if state == 'playing':
+                        while call('audio')['audio'].get('state') != 'playing':
+                            if time.monotonic() > deadline: raise RuntimeError('native resume did not complete')
+                            time.sleep(.02)
+                    # Vary phase against the fixed frame cadence deterministically.
+                    time.sleep(.1+n*.007)
+            for file in input_files.values(): file.close()
+            receipt['startup'] = call('logs', last=30, subsystem='startup', level=None, since_ms=None)
+            receipt['metrics'] = call('metrics')
+            receipt['final_playback'] = call('status')['playback']
+            receipt['play_pause_pairs'] = 16
+            process.terminate(); process.wait(timeout=10); process = None
+            return
         key(28, 'select_library')
         if call('status')['current_screen'] != 'music':
             raise RuntimeError('evdev injection did not reach Music')

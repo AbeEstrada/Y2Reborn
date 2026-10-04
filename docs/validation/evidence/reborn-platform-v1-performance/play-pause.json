@@ -1,0 +1,689 @@
+{
+  "schema": 1,
+  "before": {
+    "binary_sha256": "2342b483c7dc7c61e9562da80a4068afd75a9f2774a7be574a778d386bd50927",
+    "benchmark_sha256": "18ec93991a4b7122dd3d8e37e88865cfa36c762f69c471e46bea09f301b84ee5",
+    "boot": "88b85fa3-2282-4d93-b0b8-818a105ddd0a",
+    "versions": {
+      "release_version": "1.0.0-baseline-candidate.2",
+      "rootfs_version": "2025.02.18-platform-v1.21",
+      "build_id": "Y2LINUX-BASELINE-02",
+      "platform_api_version": 1,
+      "feature_contract_version": 2,
+      "battery_profile_schema": 1,
+      "low_battery_policy_schema": 2,
+      "layout_version": 1,
+      "kernel_version": "6.18.0-y2linux-baseline-02",
+      "data_schema_version": 1,
+      "reborn_version": "0.2.0",
+      "build_git_commit": "8584ccd85f052f351fe51650b2348c83ca894ed4",
+      "reborn_source_commit": "b71b468860233faa0a42b8448ec5777fa952b8e3"
+    },
+    "same_boot": true,
+    "taint": "0",
+    "restored_build": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+    "forced_kill": false,
+    "trace_dropped": 0,
+    "input_origin": "synthetic records injected into real supported evdev nodes",
+    "startup": [
+      {
+        "event": "starting",
+        "ffmpeg": "9.0.2",
+        "headless": false,
+        "process_setup_ms": 1,
+        "version": "0.2.0-product-ui-v2"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 2,
+        "phase": "model_restored"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 135,
+        "phase": "graphics_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 147,
+        "phase": "storage_ready"
+      },
+      {
+        "event": "database_ready",
+        "elapsed_ms": 152
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 153,
+        "phase": "library_workers_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 160,
+        "phase": "core_services_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 161,
+        "phase": "audio_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 162,
+        "phase": "radio_workers_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 166,
+        "phase": "runtime_ready"
+      },
+      {
+        "event": "ready",
+        "display_handoff": "explicit KMS presentation",
+        "elapsed_ms": 200
+      },
+      {
+        "event": "library_ready",
+        "elapsed_ms": 291,
+        "tracks": 3
+      },
+      {
+        "event": "interactive",
+        "elapsed_ms": 769
+      }
+    ],
+    "startup_statistics": {},
+    "latency": {
+      "wheel": {
+        "input_to_handler_complete_ms": {
+          "samples": 1,
+          "p50_ms": 5.22183800012499,
+          "p95_ms": 5.22183800012499,
+          "p99_ms": 5.22183800012499,
+          "max_ms": 5.22183800012499
+        },
+        "handler_ms": {
+          "samples": 1,
+          "p50_ms": 0.114922,
+          "p95_ms": 0.114922,
+          "p99_ms": 0.114922,
+          "max_ms": 0.114922
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 1,
+          "p50_ms": 5.114301000048727,
+          "p95_ms": 5.114301000048727,
+          "p99_ms": 5.114301000048727,
+          "max_ms": 5.114301000048727
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 30.496023000068817,
+          "p95_ms": 30.496023000068817,
+          "p99_ms": 30.496023000068817,
+          "max_ms": 30.496023000068817
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 25.274184999943827,
+          "p95_ms": 25.274184999943827,
+          "p99_ms": 25.274184999943827,
+          "max_ms": 25.274184999943827
+        }
+      },
+      "open_now_playing": {
+        "input_to_handler_complete_ms": {
+          "samples": 1,
+          "p50_ms": 6.561356000020169,
+          "p95_ms": 6.561356000020169,
+          "p99_ms": 6.561356000020169,
+          "max_ms": 6.561356000020169
+        },
+        "handler_ms": {
+          "samples": 1,
+          "p50_ms": 0.10623,
+          "p95_ms": 0.10623,
+          "p99_ms": 0.10623,
+          "max_ms": 0.10623
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 1,
+          "p50_ms": 6.457740999849193,
+          "p95_ms": 6.457740999849193,
+          "p99_ms": 6.457740999849193,
+          "max_ms": 6.457740999849193
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 25.043210000148974,
+          "p95_ms": 25.043210000148974,
+          "p99_ms": 25.043210000148974,
+          "max_ms": 25.043210000148974
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 18.481854000128806,
+          "p95_ms": 18.481854000128806,
+          "p99_ms": 18.481854000128806,
+          "max_ms": 18.481854000128806
+        }
+      },
+      "play_pause_resume": {
+        "input_to_handler_complete_ms": {
+          "samples": 16,
+          "p50_ms": 8.551701999749639,
+          "p95_ms": 24.677074999999604,
+          "p99_ms": 24.677074999999604,
+          "max_ms": 24.677074999999604
+        },
+        "handler_ms": {
+          "samples": 16,
+          "p50_ms": 2.3430590000000002,
+          "p95_ms": 14.201504,
+          "p99_ms": 14.201504,
+          "max_ms": 14.201504
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 16,
+          "p50_ms": 6.5007180000975495,
+          "p95_ms": 11.79126199986058,
+          "p99_ms": 11.79126199986058,
+          "max_ms": 11.79126199986058
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 24.10842600011165,
+          "p95_ms": 43.97961499989833,
+          "p99_ms": 43.97961499989833,
+          "max_ms": 43.97961499989833
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 15.477725000437204,
+          "p95_ms": 20.50791700003174,
+          "p99_ms": 20.50791700003174,
+          "max_ms": 20.50791700003174
+        }
+      },
+      "play_pause_pause": {
+        "input_to_handler_complete_ms": {
+          "samples": 16,
+          "p50_ms": 14.315492999685375,
+          "p95_ms": 39.838923000388604,
+          "p99_ms": 39.838923000388604,
+          "max_ms": 39.838923000388604
+        },
+        "handler_ms": {
+          "samples": 16,
+          "p50_ms": 6.16749,
+          "p95_ms": 23.40474,
+          "p99_ms": 23.40474,
+          "max_ms": 23.40474
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 16,
+          "p50_ms": 7.606280999880255,
+          "p95_ms": 33.68512600036411,
+          "p99_ms": 33.68512600036411,
+          "max_ms": 33.68512600036411
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 23.445986999831803,
+          "p95_ms": 64.69688100014537,
+          "p99_ms": 64.69688100014537,
+          "max_ms": 64.69688100014537
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 10.683378000067023,
+          "p95_ms": 25.47810699979891,
+          "p99_ms": 25.47810699979891,
+          "max_ms": 25.47810699979891
+        }
+      }
+    },
+    "actions": {
+      "{'wheel_clockwise': 1}": 1,
+      "select": 1,
+      "play_pause": 32
+    },
+    "idle": [],
+    "frames": [],
+    "ui": [],
+    "wheel_invariants": {
+      "injected_steps": 0,
+      "routed_steps": 0,
+      "selection_mismatches": 0,
+      "non_single_steps": 0
+    },
+    "database": [],
+    "artwork": [],
+    "allocations": null,
+    "large_collections": null,
+    "metrics": {
+      "audio_buffer_frames": 28672.0,
+      "audio_buffer_ms": 597.3333333333334,
+      "audio_crossfade_errors": 0.0,
+      "audio_crossfades": 0.0,
+      "audio_filter_rebuilds": 16.0,
+      "audio_recoveries": 0.0,
+      "audio_resamples": 0.0,
+      "audio_sink_fallbacks": 16.0,
+      "audio_xruns": 0.0,
+      "bluetooth_connects": 0.0,
+      "bluetooth_disconnects": 0.0,
+      "bluetooth_errors": 0.0,
+      "database_query_latency_ms": 0.932608,
+      "decoder_stalls": 57.0,
+      "ffmpeg_corrupt_packets": 0.0,
+      "ffmpeg_decode_errors": 0.0,
+      "ffmpeg_filter_errors": 0.0,
+      "ffmpeg_frames_decoded": 885008.0,
+      "ffmpeg_packets_decoded": 217.0,
+      "gapless_transition_ms": 0.0,
+      "gapless_transitions": 0.0,
+      "graphics_context_losses": 0.0,
+      "graphics_frame_time_ms": 15.224881,
+      "graphics_frames": 78.0,
+      "graphics_missed_frames": 0.0,
+      "library_scan_errors": 0.0,
+      "library_scan_files_per_sec": 23.340675492919765,
+      "library_tracks": 3.0,
+      "log_write_errors": 0.0,
+      "logs_dropped": 15.0,
+      "playback_errors": 0.0,
+      "playback_tracks_completed": 0.0,
+      "playback_tracks_started": 16.0,
+      "reborn_uptime_seconds": 14.0,
+      "sd_insertions": 0.0,
+      "sd_removals": 0.0,
+      "wifi_connects": 1.0,
+      "wifi_disconnects": 0.0,
+      "wifi_errors": 0.0
+    },
+    "playing_status": null,
+    "audio_during_playback": null,
+    "metrics_before_audio_profile": null,
+    "audio_controls": null,
+    "audio_control_metrics": null,
+    "active_shutdown_ms": null,
+    "background_observation": {
+      "samples": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "live_frames": {
+      "layout_ms": {
+        "samples": 78,
+        "p50_ms": 0.105153,
+        "p95_ms": 0.20353600000000002,
+        "p99_ms": 0.25130600000000003,
+        "max_ms": 0.25130600000000003
+      },
+      "frame_ms": {
+        "samples": 78,
+        "p50_ms": 14.248658,
+        "p95_ms": 20.432685999999997,
+        "p99_ms": 31.427675,
+        "max_ms": 31.427675
+      }
+    },
+    "screens": {
+      "home": 11,
+      "now_playing": 67
+    }
+  },
+  "after": {
+    "binary_sha256": "7871ec67f6678c7f522b1b84da0f1e53ab1646e89bc6abb6b7eafe10c02286c7",
+    "benchmark_sha256": "2bbe524b347ec8c0748f67774629d0a9bca5cc2cefbb66e9d6d196c371eb361f",
+    "boot": "88b85fa3-2282-4d93-b0b8-818a105ddd0a",
+    "versions": {
+      "release_version": "1.0.0-baseline-candidate.2",
+      "rootfs_version": "2025.02.18-platform-v1.21",
+      "build_id": "Y2LINUX-BASELINE-02",
+      "platform_api_version": 1,
+      "feature_contract_version": 2,
+      "battery_profile_schema": 1,
+      "low_battery_policy_schema": 2,
+      "layout_version": 1,
+      "kernel_version": "6.18.0-y2linux-baseline-02",
+      "data_schema_version": 1,
+      "reborn_version": "0.2.0",
+      "build_git_commit": "8584ccd85f052f351fe51650b2348c83ca894ed4",
+      "reborn_source_commit": "b71b468860233faa0a42b8448ec5777fa952b8e3"
+    },
+    "same_boot": true,
+    "taint": "0",
+    "restored_build": "b71b468860233faa0a42b8448ec5777fa952b8e3",
+    "forced_kill": false,
+    "trace_dropped": 0,
+    "input_origin": "synthetic records injected into real supported evdev nodes",
+    "startup": [
+      {
+        "event": "starting",
+        "ffmpeg": "9.0.2",
+        "headless": false,
+        "process_setup_ms": 1,
+        "version": "0.2.0-product-ui-v2"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 2,
+        "phase": "model_restored"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 134,
+        "phase": "graphics_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 145,
+        "phase": "storage_ready"
+      },
+      {
+        "event": "database_ready",
+        "elapsed_ms": 151
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 152,
+        "phase": "library_workers_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 159,
+        "phase": "core_services_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 160,
+        "phase": "audio_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 160,
+        "phase": "radio_workers_ready"
+      },
+      {
+        "event": "phase",
+        "elapsed_ms": 165,
+        "phase": "runtime_ready"
+      },
+      {
+        "event": "ready",
+        "display_handoff": "explicit KMS presentation",
+        "elapsed_ms": 176
+      },
+      {
+        "event": "library_ready",
+        "elapsed_ms": 272,
+        "tracks": 3
+      },
+      {
+        "event": "interactive",
+        "elapsed_ms": 499
+      }
+    ],
+    "startup_statistics": {},
+    "latency": {
+      "wheel": {
+        "input_to_handler_complete_ms": {
+          "samples": 1,
+          "p50_ms": 0.5587020000348275,
+          "p95_ms": 0.5587020000348275,
+          "p99_ms": 0.5587020000348275,
+          "max_ms": 0.5587020000348275
+        },
+        "handler_ms": {
+          "samples": 1,
+          "p50_ms": 0.10023,
+          "p95_ms": 0.10023,
+          "p99_ms": 0.10023,
+          "max_ms": 0.10023
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 1,
+          "p50_ms": 0.46462599993901676,
+          "p95_ms": 0.46462599993901676,
+          "p99_ms": 0.46462599993901676,
+          "max_ms": 0.46462599993901676
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 13.180688999909762,
+          "p95_ms": 13.180688999909762,
+          "p99_ms": 13.180688999909762,
+          "max_ms": 13.180688999909762
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 12.621986999874935,
+          "p95_ms": 12.621986999874935,
+          "p99_ms": 12.621986999874935,
+          "max_ms": 12.621986999874935
+        }
+      },
+      "open_now_playing": {
+        "input_to_handler_complete_ms": {
+          "samples": 1,
+          "p50_ms": 0.3954039998461667,
+          "p95_ms": 0.3954039998461667,
+          "p99_ms": 0.3954039998461667,
+          "max_ms": 0.3954039998461667
+        },
+        "handler_ms": {
+          "samples": 1,
+          "p50_ms": 0.143614,
+          "p95_ms": 0.143614,
+          "p99_ms": 0.143614,
+          "max_ms": 0.143614
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 1,
+          "p50_ms": 0.24925199977587909,
+          "p95_ms": 0.24925199977587909,
+          "p99_ms": 0.24925199977587909,
+          "max_ms": 0.24925199977587909
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 9.965720999844052,
+          "p95_ms": 9.965720999844052,
+          "p99_ms": 9.965720999844052,
+          "max_ms": 9.965720999844052
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 1,
+          "p50_ms": 9.570316999997885,
+          "p95_ms": 9.570316999997885,
+          "p99_ms": 9.570316999997885,
+          "max_ms": 9.570316999997885
+        }
+      },
+      "play_pause_resume": {
+        "input_to_handler_complete_ms": {
+          "samples": 16,
+          "p50_ms": 2.4829009998939,
+          "p95_ms": 15.627205000328104,
+          "p99_ms": 15.627205000328104,
+          "max_ms": 15.627205000328104
+        },
+        "handler_ms": {
+          "samples": 16,
+          "p50_ms": 2.352367,
+          "p95_ms": 15.476197,
+          "p99_ms": 15.476197,
+          "max_ms": 15.476197
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 16,
+          "p50_ms": 0.1263990002371429,
+          "p95_ms": 0.21632300013152417,
+          "p99_ms": 0.21632300013152417,
+          "max_ms": 0.21632300013152417
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 16.265137000118557,
+          "p95_ms": 22.549269999672106,
+          "p99_ms": 22.549269999672106,
+          "max_ms": 22.549269999672106
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 13.041523000083544,
+          "p95_ms": 18.831942999895546,
+          "p99_ms": 18.831942999895546,
+          "max_ms": 18.831942999895546
+        }
+      },
+      "play_pause_pause": {
+        "input_to_handler_complete_ms": {
+          "samples": 16,
+          "p50_ms": 7.626041000094119,
+          "p95_ms": 17.223001000274962,
+          "p99_ms": 17.223001000274962,
+          "max_ms": 17.223001000274962
+        },
+        "handler_ms": {
+          "samples": 16,
+          "p50_ms": 7.483485,
+          "p95_ms": 9.386856,
+          "p99_ms": 9.386856,
+          "max_ms": 9.386856
+        },
+        "evdev_to_dispatch_ms": {
+          "samples": 16,
+          "p50_ms": 0.1328299999840965,
+          "p95_ms": 7.99145100017995,
+          "p99_ms": 7.99145100017995,
+          "max_ms": 7.99145100017995
+        },
+        "input_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 21.265818000301806,
+          "p95_ms": 38.49931100012327,
+          "p99_ms": 38.49931100012327,
+          "max_ms": 38.49931100012327
+        },
+        "state_to_KMS_completion_ms": {
+          "samples": 16,
+          "p50_ms": 14.403514000150608,
+          "p95_ms": 21.27630999984831,
+          "p99_ms": 21.27630999984831,
+          "max_ms": 21.27630999984831
+        }
+      }
+    },
+    "actions": {
+      "{'wheel_clockwise': 1}": 1,
+      "select": 1,
+      "play_pause": 32
+    },
+    "idle": [],
+    "frames": [],
+    "ui": [],
+    "wheel_invariants": {
+      "injected_steps": 0,
+      "routed_steps": 0,
+      "selection_mismatches": 0,
+      "non_single_steps": 0
+    },
+    "database": [],
+    "artwork": [],
+    "allocations": null,
+    "large_collections": null,
+    "metrics": {
+      "artwork_upload_ms": 0.0,
+      "artwork_uploads": 0.0,
+      "audio_buffer_frames": 28672.0,
+      "audio_buffer_ms": 597.3333333333334,
+      "audio_crossfade_errors": 0.0,
+      "audio_crossfades": 0.0,
+      "audio_filter_rebuilds": 16.0,
+      "audio_recoveries": 0.0,
+      "audio_resamples": 0.0,
+      "audio_sink_fallbacks": 16.0,
+      "audio_xruns": 0.0,
+      "bluetooth_connects": 0.0,
+      "bluetooth_disconnects": 0.0,
+      "bluetooth_errors": 0.0,
+      "database_query_latency_ms": 1.220529,
+      "decoder_stalls": 70.0,
+      "ffmpeg_corrupt_packets": 0.0,
+      "ffmpeg_decode_errors": 0.0,
+      "ffmpeg_filter_errors": 0.0,
+      "ffmpeg_frames_decoded": 938256.0,
+      "ffmpeg_packets_decoded": 230.0,
+      "gapless_transition_ms": 0.0,
+      "gapless_transitions": 0.0,
+      "graphics_context_losses": 0.0,
+      "graphics_cpu_ms": 2.1853069999999697,
+      "graphics_draw_calls": 18.0,
+      "graphics_frame_time_ms": 17.251647,
+      "graphics_frames": 67.0,
+      "graphics_missed_frames": 0.0,
+      "graphics_present_ms": 15.752196999999999,
+      "graphics_submit_ms": 1.4789889999999999,
+      "library_scan_errors": 0.0,
+      "library_scan_files_per_sec": 24.09354308465199,
+      "library_tracks": 3.0,
+      "log_write_errors": 0.0,
+      "logs_dropped": 13.0,
+      "playback_errors": 0.0,
+      "playback_tracks_completed": 0.0,
+      "playback_tracks_started": 16.0,
+      "reborn_uptime_seconds": 15.0,
+      "sd_insertions": 0.0,
+      "sd_removals": 0.0,
+      "wifi_connects": 1.0,
+      "wifi_disconnects": 0.0,
+      "wifi_errors": 0.0
+    },
+    "playing_status": null,
+    "audio_during_playback": null,
+    "metrics_before_audio_profile": null,
+    "audio_controls": null,
+    "audio_control_metrics": null,
+    "active_shutdown_ms": null,
+    "background_observation": {
+      "samples": 7,
+      "p50_ms": 24.733747,
+      "p95_ms": 28.538413,
+      "p99_ms": 28.538413,
+      "max_ms": 28.538413
+    },
+    "live_frames": {
+      "layout_ms": {
+        "samples": 67,
+        "p50_ms": 0.12338400000000001,
+        "p95_ms": 0.239153,
+        "p99_ms": 0.272306,
+        "max_ms": 0.272306
+      },
+      "frame_ms": {
+        "samples": 67,
+        "p50_ms": 11.370842000000001,
+        "p95_ms": 18.584791,
+        "p99_ms": 19.484246,
+        "max_ms": 19.484246
+      }
+    },
+    "screens": {
+      "home": 11,
+      "now_playing": 56
+    }
+  },
+  "pixel_comparison": [],
+  "limits": [
+    "Synthetic evdev timing excludes mechanical, wheel IRQ and GPIO debounce latency.",
+    "KMS completion is not a photodiode measurement.",
+    "Application restart is not a new cold-boot qualification.",
+    "Context switches include I/O waits and scheduling; they are not exact timer wake counts.",
+    "No electrical power or human audible-response measurement."
+  ]
+}

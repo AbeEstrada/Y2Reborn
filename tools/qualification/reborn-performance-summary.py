@@ -19,7 +19,8 @@ def stats(values):
 def summarize(directory):
     receipt = json.loads((directory/'receipt.json').read_text())
     trace = json.loads((directory/'trace.json').read_text())
-    library = json.loads((directory/'library-10000.json').read_text())
+    library_path = directory/'library-10000.json'
+    library = json.loads(library_path.read_text()) if library_path.exists() else {'frames':[],'ui':[],'database':{'measurements':[]}}
     samples = trace['samples']
     injected = receipt['injected']
     groups = collections.defaultdict(lambda:collections.defaultdict(list))
@@ -45,7 +46,8 @@ def summarize(directory):
         label = origin['label']
         action = data['action']
         expected = ('select' if label.startswith(('select_', 'open_')) else
-                    'back' if label.startswith('back_') else label)
+                    'back' if label.startswith('back_') else
+                    'play_pause' if label.startswith('play_pause_') else label)
         if label.startswith('wheel'):
             if not isinstance(action, dict) or not any(k.startswith('wheel_') for k in action): continue
         elif action != expected: continue
