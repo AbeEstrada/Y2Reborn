@@ -1,5 +1,9 @@
 # Current Reborn state on the Y2
 
+## Sealed Platform 1.0 software integration — 2026-10-04
+
+**READY_FOR_PLATFORM_V1_PHYSICAL_QUALIFICATION**. Compiled Reborn `dd73dcc3243045cd33e319dda2f76918ed37ea31`/Linux `4c72466f2f27ddf9f0ca18ba8ddc4d89c52599d2`; actual package/application0.2.0.324tests/fmt/strict Clippy, fresh pinned ARM/QEMU/software/package gates PASS. One candidate `/home/luca/Dokumente/Code/worktrees/platform-v1-integration/Y2Linux/out/y2linux-platform-v1-integration-candidate`. Integrated physical/endurance NOT_RUN and public distribution blocked; current installed stock remains Baseline02/b71 after temporary source-bound benchmarks. See [master](../../Y2Linux/docs/release/Y2-PLATFORM-V1-MASTER.md) and [software receipt](../../Y2Linux/docs/validation/Y2-PLATFORM-V1-INTEGRATION.md). Dated progress/physical sections below remain history.
+
 ## Platform 1.0 integration — 2026-10-04
 
 Selected source from all eleven finished handoffs is composed on `codex/platform-v1-integration`. All 324 workspace tests, formatting and strict Clippy pass. Fresh production ARM and one integrated physical campaign remain pending. Canonical source/card claims, bounded TEMP scanner, source-aware zero-FD cover cache, one observation worker, sleep quiescence and durable USB refresh share one runtime. Native wired hardware remains S16/44.1/48; wider AFE admission and Bluetooth peer/codecs require evidence.

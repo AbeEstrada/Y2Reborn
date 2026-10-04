@@ -11,3 +11,7 @@ govern semantic source selection and per-step tests. Branch-local device evidenc
 stays bound to its exact binary/conditions; no integrated physical acceptance yet.
 No main merge, push, flash or owner-tree mutation. Broad software/ARM/package
 qualification and one source-bound RC follow coherent subsystem integration.
+
+## Sealed software exit — 2026-10-04
+
+Compiled Reborn dd73dcc3243045cd33e319dda2f76918ed37ea31 / Linux 4c72466f2f27ddf9f0ca18ba8ddc4d89c52599d2. All selected subsystem source is composed.324workspace tests/fmt/strict Clippy, fresh ARM/QEMU/exact9.0.2/media/ELF/package checks PASS. One software-qualified owner-local image pair, physical/endurance NOT_RUN. Later documentation-only HEAD does not identify compiled binaries. See paired Linux software receipt and final master16-item report. No main merge/push/flash/owner-tree mutation.
