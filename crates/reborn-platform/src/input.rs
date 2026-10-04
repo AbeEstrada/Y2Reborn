@@ -153,6 +153,8 @@ struct Record {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputEvent {
+    /// Kernel evdev timestamp; CLOCK_MONOTONIC is requested when opening.
+    pub evdev_us: Option<u64>,
     pub device: String,
     pub input: NormalizedInput,
 }
@@ -211,6 +213,18 @@ impl InputManager {
 
     pub fn poll(&mut self) -> Vec<InputEvent> {
         self.poll_at(Instant::now())
+    }
+    pub fn wait(&self, timeout: Duration) -> std::io::Result<()> {
+        use std::os::fd::AsFd;
+        // Preserve the existing repeat and long-press cadence while a button
+        // is held; an idle wheel/Select/Back/Power wakes the poll immediately.
+        let timeout = if self.pressed.is_empty() {
+            timeout
+        } else {
+            timeout.min(Duration::from_millis(15))
+        };
+        crate::native::wait_readable(self.files.iter().map(|(_, file, _)| file.as_fd()), timeout)
+            .map(|_| ())
     }
 
     #[cfg(test)]
@@ -295,7 +309,11 @@ impl InputManager {
             }
         }
         for (device, identity, record) in raw {
-            events.extend(self.ingest(&device, &identity, record, now));
+            let mut normalized = self.ingest(&device, &identity, record, now);
+            for event in &mut normalized {
+                event.evdev_us = record.stamp_us;
+            }
+            events.extend(normalized);
         }
         if !reopen.is_empty() {
             let candidates = devices();
@@ -355,6 +373,7 @@ impl InputManager {
         controls
             .into_iter()
             .map(|(_, control)| InputEvent {
+                evdev_us: None,
                 device: "input-recovery".into(),
                 input: NormalizedInput::Cancel(control),
             })
@@ -418,6 +437,7 @@ impl InputManager {
                 }
             };
             return vec![InputEvent {
+                evdev_us: None,
                 device: device.to_owned(),
                 input: if clockwise {
                     NormalizedInput::WheelClockwise(steps)
@@ -441,6 +461,7 @@ impl InputManager {
                     },
                 );
                 vec![InputEvent {
+                    evdev_us: None,
                     device: device.to_owned(),
                     input: NormalizedInput::Press(control),
                 }]
@@ -456,6 +477,7 @@ impl InputManager {
                     NormalizedInput::Cancel(control)
                 };
                 vec![InputEvent {
+                    evdev_us: None,
                     device: device.to_owned(),
                     input,
                 }]
@@ -464,11 +486,13 @@ impl InputManager {
                 if self.pressed.contains_key(&(identity.to_owned(), control)) =>
             {
                 vec![InputEvent {
+                    evdev_us: None,
                     device: device.to_owned(),
                     input: NormalizedInput::Repeat(control),
                 }]
             }
             NormalizedInput::Repeat(control) => vec![InputEvent {
+                evdev_us: None,
                 device: device.to_owned(),
                 input: NormalizedInput::Cancel(control),
             }],
@@ -484,6 +508,7 @@ impl InputManager {
             if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
                 state.long_emitted = true;
                 events.push(InputEvent {
+                    evdev_us: None,
                     device: "timing".into(),
                     input: NormalizedInput::LongPress(control),
                 });
@@ -494,6 +519,7 @@ impl InputManager {
             {
                 state.last_repeat = now;
                 events.push(InputEvent {
+                    evdev_us: None,
                     device: "timing".into(),
                     input: NormalizedInput::Repeat(control),
                 });
@@ -734,6 +760,7 @@ mod tests {
         );
         let mut router = ActionRouter::default();
         let event = InputEvent {
+            evdev_us: None,
             device: CLICK_WHEEL.into(),
             input: NormalizedInput::WheelClockwise(1),
         };
@@ -924,6 +951,7 @@ mod tests {
     fn screen_off_drops_wheel_actions() {
         let mut router = ActionRouter::default();
         let event = InputEvent {
+            evdev_us: None,
             device: CLICK_WHEEL.into(),
             input: NormalizedInput::WheelClockwise(1),
         };
@@ -1071,6 +1099,7 @@ mod tests {
         assert!(router.route(&canceled[0], true).is_empty());
 
         let repeat = InputEvent {
+            evdev_us: None,
             device: "timing".into(),
             input: NormalizedInput::Repeat(PhysicalControl::Next),
         };

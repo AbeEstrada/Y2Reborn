@@ -12,7 +12,10 @@ use std::{
     ffi::{c_char, c_double, c_int, c_void, CStr, CString},
     path::{Path, PathBuf},
     ptr::NonNull,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
 };
 
 #[repr(C)]
@@ -406,6 +409,7 @@ fn error(api: &MediaApi, code: c_int) -> String {
 struct CancelInner {
     raw: NonNull<c_void>,
     api: &'static MediaApi,
+    cancelled: AtomicBool,
 }
 // SAFETY: the allocation contains only C11 atomics and is reference counted.
 unsafe impl Send for CancelInner {}
@@ -425,10 +429,20 @@ impl Cancel {
         // SAFETY: constructor returns a new allocation or null.
         let p = unsafe { (api.cancel_new)() };
         NonNull::new(p)
-            .map(|raw| Self(Arc::new(CancelInner { raw, api })))
+            .map(|raw| {
+                Self(Arc::new(CancelInner {
+                    raw,
+                    api,
+                    cancelled: AtomicBool::new(false),
+                }))
+            })
             .ok_or_else(|| "cancellation allocation failed".into())
     }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
     pub fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Release);
         // SAFETY: Arc keeps the atomic allocation alive for this call.
         unsafe { (self.0.api.cancel_set)(self.0.raw.as_ptr()) }
     }

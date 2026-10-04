@@ -146,12 +146,53 @@ fn bluetooth_pcm_lease(device: &str) -> Result<Option<std::fs::File>, String> {
     // Y2 coordination with codec switching is platform policy.
     reborn_platform::bluetooth::playback_pcm_lease()
 }
+struct WritePacing {
+    partial: bool,
+    waiting: bool,
+}
+impl WritePacing {
+    fn write(
+        &mut self,
+        requested: usize,
+        mut wait: impl FnMut() -> c_int,
+        mut write: impl FnMut() -> c_int,
+    ) -> Result<usize, c_int> {
+        let waited = self.waiting;
+        if waited {
+            let ready = wait();
+            if ready == 0 {
+                return Ok(0);
+            }
+            if ready < 0 {
+                return Err(ready);
+            }
+            self.waiting = false;
+        }
+        let n = write();
+        if n >= 0 {
+            self.waiting = self.partial && (n as usize) < requested;
+            return Ok(n as usize);
+        }
+        if n == -11 {
+            // A ready notification can race the write. Keep one bounded wait
+            // per call so the audio loop polls controls at least every 20 ms.
+            if waited {
+                self.waiting = true;
+                return Ok(0);
+            }
+            let ready = wait();
+            return if ready < 0 { Err(ready) } else { Ok(0) };
+        }
+        Err(n)
+    }
+}
 pub struct AlsaSink {
     _pcm_lease: Option<std::fs::File>,
     raw: NonNull<c_void>,
     params: Parameters,
     log: Observer,
     correlation: u64,
+    pacing: WritePacing,
 }
 impl AlsaSink {
     pub fn plan(
@@ -414,32 +455,15 @@ impl AlsaSink {
             params,
             log,
             correlation: id,
+            pacing: WritePacing {
+                partial: wired,
+                waiting: false,
+            },
         })
     }
-}
-impl AudioSink for AlsaSink {
-    fn parameters(&self) -> Parameters {
-        self.params.clone()
-    }
-    fn write(&mut self, pcm: &[u8]) -> Result<usize, String> {
-        let frame_bytes = self.params.format.bytes_per_frame();
-        if pcm.is_empty() || !pcm.len().is_multiple_of(frame_bytes) || pcm.len() > 524_288 {
-            return Err("PCM block bounds or format mismatch".into());
-        }
-        // SAFETY: unique initialized PCM handle; bytes remain live during the write.
-        let n = unsafe {
-            rb_sink_write(
-                self.raw.as_ptr(),
-                pcm.as_ptr(),
-                (pcm.len() / frame_bytes) as c_int,
-            )
-        };
-        if n >= 0 {
-            return Ok(n as usize);
-        }
-        if n == -11 {
-            // SAFETY: wait is bounded and the handle remains owned by this sink.
-            unsafe { rb_sink_wait(self.raw.as_ptr(), 20) };
+    fn write_error(&mut self, n: c_int) -> Result<usize, String> {
+        // A signal consumes no PCM. The audio loop can poll controls again.
+        if n == -4 {
             return Ok(0);
         }
         if n == -32 || n == -86 {
@@ -455,12 +479,40 @@ impl AudioSink for AlsaSink {
             // SAFETY: recovery mutates only this uniquely borrowed PCM context.
             let r = unsafe { rb_sink_recover(self.raw.as_ptr(), n) };
             if r >= 0 {
+                self.pacing.waiting = false;
                 self.log.add("audio_recoveries", 1.);
                 return Ok(0);
             }
             return Err(error(r));
         }
         Err(error(n))
+    }
+}
+impl AudioSink for AlsaSink {
+    fn parameters(&self) -> Parameters {
+        self.params.clone()
+    }
+    fn write(&mut self, pcm: &[u8]) -> Result<usize, String> {
+        let frame_bytes = self.params.format.bytes_per_frame();
+        if pcm.is_empty() || !pcm.len().is_multiple_of(frame_bytes) || pcm.len() > 524_288 {
+            return Err("PCM block bounds or format mismatch".into());
+        }
+        // A short wired write fills available space. Repeatedly rendering
+        // 512 frames for the few frames consumed during gain work can spin
+        // without EAGAIN. Return accepted frames now; wait on the next call,
+        // after the audio loop polls controls. Bluetooth keeps its old pacing.
+        let requested = pcm.len() / frame_bytes;
+        let raw = self.raw.as_ptr();
+        match self.pacing.write(
+            requested,
+            // SAFETY: bounded wait on the handle uniquely owned by this sink.
+            || unsafe { rb_sink_wait(raw, 20) },
+            // SAFETY: live bytes and handle; requested count uses their frame stride.
+            || unsafe { rb_sink_write(raw, pcm.as_ptr(), requested as c_int) },
+        ) {
+            Ok(n) => Ok(n),
+            Err(n) => self.write_error(n),
+        }
     }
     fn discard(&mut self) -> Result<(), String> {
         // SAFETY: caller uniquely owns the PCM context.
@@ -476,6 +528,7 @@ impl AudioSink for AlsaSink {
         if r < 0 {
             Err(error(r))
         } else {
+            self.pacing.waiting = false;
             Ok(())
         }
     }
@@ -520,6 +573,80 @@ pub fn initialize_logging(log: Observer) {
 #[cfg(test)]
 mod format_tests {
     use super::*;
+
+    #[test]
+    fn partial_write_pacing_bounds_waits_and_never_consumes_unwritten_frames() {
+        use std::{cell::RefCell, collections::VecDeque};
+        let waits = RefCell::new(VecDeque::from([0, -4, 1, 1, 0, -32, -19]));
+        let writes = RefCell::new(VecDeque::from([73, -11, 512, 9]));
+        let wait = || {
+            waits
+                .borrow_mut()
+                .pop_front()
+                .expect("unexpected extra wait")
+        };
+        let write = || {
+            writes
+                .borrow_mut()
+                .pop_front()
+                .expect("unexpected extra write")
+        };
+        let mut pacing = WritePacing {
+            partial: true,
+            waiting: false,
+        };
+        assert_eq!(pacing.write(512, wait, write), Ok(73));
+        assert!(pacing.waiting);
+        assert_eq!(pacing.write(512, wait, write), Ok(0)); // timeout: no write
+        assert_eq!(pacing.write(512, wait, write), Err(-4)); // interrupted wait
+        assert!(pacing.waiting);
+        assert_eq!(pacing.write(512, wait, write), Ok(0)); // ready -> EAGAIN: one wait
+        assert!(pacing.waiting);
+        assert_eq!(pacing.write(512, wait, write), Ok(512));
+        assert!(!pacing.waiting);
+        assert_eq!(pacing.write(512, wait, write), Ok(9));
+        assert_eq!(pacing.write(512, wait, write), Ok(0)); // timeout: still no write
+        assert_eq!(pacing.write(512, wait, write), Err(-32));
+        assert_eq!(pacing.write(512, wait, write), Err(-19));
+        assert!(writes.borrow().is_empty());
+        assert!(waits.borrow().is_empty());
+
+        let mut bluetooth = WritePacing {
+            partial: false,
+            waiting: false,
+        };
+        assert_eq!(
+            bluetooth.write(512, || panic!("BT short write must not wait"), || 73),
+            Ok(73)
+        );
+        assert!(!bluetooth.waiting);
+        assert_eq!(bluetooth.write(512, || 1, || -11), Ok(0));
+    }
+
+    #[test]
+    fn readiness_and_recovery_preserve_pcm_frame_accounting() {
+        let directory = std::env::temp_dir().join(format!("reborn-ready-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let log = Observer::new(&directory).unwrap();
+        for format in [PcmFormat::S16LE, PcmFormat::S24LE, PcmFormat::S32LE] {
+            let mut sink =
+                AlsaSink::open_named("null", 48_000, format, false, None, log.clone(), 1).unwrap();
+            let pcm = vec![0; 73 * format.bytes_per_frame()];
+            sink.pacing.waiting = true;
+            assert_eq!(sink.write(&pcm).unwrap(), 73);
+            assert!(!sink.pacing.waiting);
+            assert_eq!(sink.write_error(-4).unwrap(), 0);
+            assert_eq!(sink.write_error(-32).unwrap(), 0);
+            assert_eq!(sink.write(&pcm).unwrap(), 73);
+            assert!(sink.write_error(-19).is_err());
+            sink.pacing.waiting = true;
+            sink.discard().unwrap();
+            assert!(!sink.pacing.waiting);
+            assert_eq!(sink.write(&pcm).unwrap(), 73);
+        }
+        drop(log);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn opened_pcm_preserves_the_planned_device_contract() {

@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 mod artwork;
+mod background;
 mod diagnostics;
+mod performance;
 mod playback;
 mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
@@ -13,7 +15,7 @@ use reborn_graphics::Renderer;
 use reborn_library::{Database, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
 use reborn_platform::client;
-use reborn_platform::{avrcp, bluetooth, input, power, storage, wifi};
+use reborn_platform::{avrcp, bluetooth, input, kernel_events, power, storage, wifi};
 use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus, WifiView};
 use serde_json::{json, Value};
 use std::{
@@ -37,6 +39,7 @@ struct Runtime {
     platform: Option<client::Client>,
     /// A refresh (not a user operation) is in flight.
     platform_refresh_pending: bool,
+    platform_observed: bool,
     /// Remaining frames of the first-frame fade from the boot mark into the UI.
     boot_fade: u8,
     collection_art: Option<artwork::Worker>,
@@ -50,6 +53,9 @@ struct Runtime {
     bt_state: bluetooth::Status,
     graphics: Option<Renderer>,
     power: Value,
+    kernel_events: Arc<Mutex<Vec<String>>>,
+    background: background::Gate,
+    sleep_prepared: bool,
     art: bool,
     dirty: DirtyState,
     root: PathBuf,
@@ -64,6 +70,15 @@ struct Runtime {
     sink_release_started: bool,
     transition_generation: Option<u64>,
     active_transport_generation: Option<u64>,
+}
+
+/// Read-only periodic I/O runs on the existing watchdog. The UI remains the
+/// owner of battery presentation, media transitions and scanner requests.
+struct Observation {
+    request: background::Request,
+    power: Value,
+    media: Option<(bool, Vec<Source>)>,
+    elapsed_ms: f64,
 }
 
 struct PendingReconfiguration {
@@ -1372,6 +1387,7 @@ impl Runtime {
                 }
             }
             client::Reply::Snapshot(snapshot) => {
+                self.platform_observed = true;
                 self.platform_refresh_pending = false;
                 let health = p.snapshot.health;
                 let health_section = p.snapshot.section("health").cloned();
@@ -1480,7 +1496,7 @@ impl Runtime {
         json!({"version":reborn_core::BUILD_LABEL,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
     }
     fn snapshot(&self) -> Value {
-        json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
+        json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":self.kernel_events.lock().map(|v|v.clone()).unwrap_or_default()})
     }
     fn play_control(&mut self, a: PlaybackAction) -> Result<(), String> {
         self.with_model_action(|runtime| runtime.play_control_inner(a))
@@ -1539,45 +1555,15 @@ impl Runtime {
         }
     }
 }
-fn kernel_events() -> Vec<String> {
-    use std::{io::Read, os::unix::fs::OpenOptionsExt};
-    let Ok(mut f) = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(0o4000)
-        .open("/dev/kmsg")
-    else {
-        return vec![];
-    };
-    let mut events = std::collections::VecDeque::new();
-    for _ in 0..2048 {
-        let mut buf = [0; 4096];
-        let Ok(n) = f.read(&mut buf) else { break };
-        let line = String::from_utf8_lossy(&buf[..n]);
-        let l = line.to_lowercase();
-        if [
-            "lima", "drm", "gpu", "alsa", "snd_", "mmc", "ext4", "suspend",
-        ]
-        .iter()
-        .any(|s| l.contains(s))
-            && ["error", "fault", "hang", "timeout", "corrupt"]
-                .iter()
-                .any(|s| l.contains(s))
-            && !l.contains("calibration")
-        {
-            events.push_back(line.chars().take(512).collect());
-            if events.len() > 32 {
-                events.pop_front();
-            }
-        }
+/// Input readiness wakes immediately; the bounded timeout services asynchronous
+/// workers. Dirty frames use a start-to-start budget rather than adding the
+/// entire GPU/presentation cost to a fresh 34-ms delay.
+fn main_loop_interval(screen_off: bool, dirty: bool, since_frame: Duration) -> Duration {
+    if dirty && !screen_off {
+        Duration::from_millis(34).saturating_sub(since_frame)
+    } else {
+        Duration::from_millis(50)
     }
-    events.into()
-}
-
-/// Screen-off wakes are background cost: nothing renders, and audio, decode,
-/// control and platform workers run on their own threads. A 50-ms loop still
-/// answers a wake press promptly and removes ~45 of 66 idle wake-ups/s.
-fn main_loop_interval(screen_off: bool) -> Duration {
-    Duration::from_millis(if screen_off { 50 } else { 15 })
 }
 
 /// Present one Wi-Fi observation in product terms.
@@ -1902,6 +1888,7 @@ fn startup_phase(log: &Observer, started: Instant, phase: &str) {
 fn run() -> Result<(), String> {
     let process_started = Instant::now();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut performance = performance::Trace::new(option(&args, "--performance-trace"));
     if args.iter().any(|s| s == "--default-settings") {
         let value = json!({"session_schema":reborn_core::SESSION_SCHEMA_VERSION,
             "settings":reborn_core::Settings::default()});
@@ -1915,7 +1902,7 @@ fn run() -> Result<(), String> {
     if args.iter().any(|s| s == "--help") {
         let _ = writeln!(
             std::io::stdout(),
-            "reborn [--headless --data-dir DIR --socket PATH --music-dir DIR --fixtures DIR]"
+            "reborn [--headless --data-dir DIR --socket PATH --music-dir DIR --fixtures DIR] [--performance-trace PATH]"
         );
         return Ok(());
     }
@@ -2009,6 +1996,9 @@ fn run() -> Result<(), String> {
     // the first complete UI frame below is ready. That frame is the hand-off:
     // it is presented under a full boot-screen cover that dissolves at once.
     let mut first_frame_presented = false;
+    let mut first_interactive_presented = false;
+    let mut initial_library_ready = false;
+    let mut initial_platform_ready = false;
     if let Some(m) = option(&args, "--music-dir") {
         model.settings.music_directory = m.into();
     }
@@ -2033,6 +2023,14 @@ fn run() -> Result<(), String> {
     };
     startup_phase(&log, process_started, "storage_ready");
     let db = Database::spawn(root.join("library.db"), log.clone())?;
+    log.emit(
+        Level::Info,
+        "startup",
+        "database_ready",
+        "Database open completed",
+        None,
+        json!({"elapsed_ms":process_started.elapsed().as_millis()}),
+    );
     db.sources(model.sources.clone())?;
     let initial_catalog = db.catalog()?;
     let scanner = Scanner::spawn(db.clone(), log.clone())?;
@@ -2088,6 +2086,7 @@ fn run() -> Result<(), String> {
         root.join("diagnostics"),
     )
     .map_err(|e| e.to_string())?;
+    let background = background::Gate::new(&model.settings.music_directory, &model.sources);
     let mut rt = Runtime {
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
@@ -2099,6 +2098,7 @@ fn run() -> Result<(), String> {
             Some(client::Client::spawn().map_err(|e| e.to_string())?)
         },
         platform_refresh_pending: false,
+        platform_observed: false,
         boot_fade: reborn_ui::BOOT_FADE_FRAMES,
         collection_art: if headless {
             None
@@ -2115,6 +2115,9 @@ fn run() -> Result<(), String> {
         bt_state: Default::default(),
         graphics,
         power: power::status(),
+        kernel_events: Arc::new(Mutex::new(Vec::new())),
+        background,
+        sleep_prepared: false,
         art: false,
         dirty: DirtyState {
             render: true,
@@ -2136,14 +2139,45 @@ fn run() -> Result<(), String> {
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
     let watcher = last_snapshot.clone();
+    let kernel_history = rt.kernel_events.clone();
+    let observation_authority = rt.background.authority();
+    let (observation_requests, observation_rx) =
+        std::sync::mpsc::sync_channel::<background::Request>(1);
+    let (observation_tx, observations) = std::sync::mpsc::sync_channel::<Observation>(1);
     let wl = log.clone();
     let diagnostic_root = root.join("diagnostics");
     thread::Builder::new()
         .name("watchdog".into())
         .spawn(move || {
             let mut last_failed = false;
+            let mut kernel_reader = kernel_events::KernelEvents::default();
             loop {
-                thread::sleep(Duration::from_secs(1));
+                let events = kernel_reader.poll();
+                if let Ok(mut history) = kernel_history.lock() {
+                    *history = events;
+                }
+                match observation_rx.recv_timeout(Duration::from_secs(1)) {
+                    Ok(request) => {
+                        let started = Instant::now();
+                        if let Some((power, media)) = observation_authority.run(&request, || {
+                            (
+                                power::status(),
+                                (!headless).then(|| {
+                                    (storage::sd_present(), storage::sources(&request.music))
+                                }),
+                            )
+                        }) {
+                            let _ = observation_tx.try_send(Observation {
+                                request,
+                                power,
+                                media,
+                                elapsed_ms: started.elapsed().as_secs_f64() * 1000.,
+                            });
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
                 let health = wl.health();
                 let failed = health["overall"] == "failed";
                 if failed && !last_failed {
@@ -2177,6 +2211,7 @@ fn run() -> Result<(), String> {
     let mut action_router = input::ActionRouter::default();
     let mut last_sd = storage::sd_present();
     let mut usb_refresh = storage::TransferRefresh::default();
+    let mut observation_pending = false;
     let mut xrun_bundle = 0.;
     let mut shutdown_intent = None;
     let mut power_poll = Instant::now() - Duration::from_secs(1);
@@ -2190,6 +2225,13 @@ fn run() -> Result<(), String> {
     let mut last_platform_screen = rt.model.screen;
     let mut codec_reconnect = CodecReconnect::default();
     while !reborn_platform::stop_requested() {
+        if rt.background.update(
+            &rt.model.settings.music_directory,
+            &rt.model.sources,
+            rt.sleep_prepared,
+        ) {
+            observation_pending = false;
+        }
         if let Some(worker) = &mut rt.collection_art {
             let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
                 && !rt.model.screen_off
@@ -2204,6 +2246,7 @@ fn run() -> Result<(), String> {
                                 .iter()
                                 .find(|s| s.id == track.source_id)
                                 .and_then(|s| s.mount_id),
+                            &rt.model.settings.music_directory,
                         )
                     })
             } else {
@@ -2212,7 +2255,12 @@ fn run() -> Result<(), String> {
             // Drain replies before scheduling: stale completions cannot fill the
             // bounded channel and hide the new route's completion.
             while let Ok(reply) = worker.replies.try_recv() {
-                if desired.as_ref() == Some(&reply.key) {
+                if performance.enabled() {
+                    performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.pixels.as_ref().map(Vec::len),"current":desired.as_ref()==Some(&reply.key)}));
+                }
+                if desired.as_ref() == Some(&reply.key)
+                    && reply.source.as_ref().is_some_and(|s| s.is_current())
+                {
                     if let (Some(pixels), Some(renderer)) = (reply.pixels, rt.graphics.as_mut()) {
                         if renderer.collection_artwork(&pixels).is_ok() {
                             rt.ui.collection_art = Some((reply.key.source, reply.key.id));
@@ -2227,6 +2275,17 @@ fn run() -> Result<(), String> {
             }
         }
         rt.poll_platform();
+        if rt.platform_observed && !initial_platform_ready {
+            initial_platform_ready = true;
+            log.emit(
+                Level::Info,
+                "startup",
+                "platform_ready",
+                "First platform snapshot published",
+                None,
+                json!({"elapsed_ms":process_started.elapsed().as_millis()}),
+            );
+        }
         if !rt.model.screen_off
             && !rt.platform_refresh_pending
             && rt.model.platform.busy.is_none()
@@ -2303,6 +2362,10 @@ fn run() -> Result<(), String> {
                 );
                 let actions = action_router.route(&event, !rt.model.screen_off);
                 for action in actions {
+                    let action_started = Instant::now();
+                    if performance.enabled() {
+                        performance.record("input", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"evdev_us":event.evdev_us}));
+                    }
                     log.emit(
                         Level::Debug,
                         "input",
@@ -2317,6 +2380,9 @@ fn run() -> Result<(), String> {
                     let effect = rt.ui.model_action(&mut rt.model, action);
                     if let Err(e) = rt.effect(effect) {
                         rt.fail("ui", e)
+                    }
+                    if performance.enabled() {
+                        performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
                     }
                 }
             }
@@ -2466,6 +2532,10 @@ fn run() -> Result<(), String> {
                             }
                         }
                         rt.model.library.tracks = t;
+                        if !initial_library_ready {
+                            initial_library_ready = true;
+                            log.emit(Level::Info, "startup", "library_ready", "Initial library published", None, json!({"elapsed_ms":process_started.elapsed().as_millis(),"tracks":rt.model.library.tracks.len()}));
+                        }
                         rt.ui.invalidate_catalog();
                     }
                     Err(e) => rt.fail("database", e),
@@ -2476,9 +2546,12 @@ fn run() -> Result<(), String> {
         }
         if let Some(service) = &rt.wifi {
             while let Ok(s) = service.events.try_recv() {
-                rt.ui.wifi = wifi_view(&s);
+                let view = wifi_view(&s);
+                if view != rt.ui.wifi {
+                    rt.ui.wifi = view;
+                    rt.dirty.mark_render();
+                }
                 rt.wifi_state = s;
-                rt.dirty.mark_render();
             }
         }
         let mut bt_lost = false;
@@ -2511,8 +2584,13 @@ fn run() -> Result<(), String> {
                             .iter()
                             .any(|d| &d.address == address && d.connected);
                 }
-                rt.ui.bluetooth = bluetooth_view(&s);
-                rt.model.platform.bluetooth_facts = s.diagnostic_facts();
+                let view = bluetooth_view(&s);
+                let facts = s.diagnostic_facts();
+                if view != rt.ui.bluetooth || facts != rt.model.platform.bluetooth_facts {
+                    rt.ui.bluetooth = view;
+                    rt.model.platform.bluetooth_facts = facts;
+                    rt.dirty.mark_render();
+                }
                 let pairing = s.pending.as_ref().map(|p| {
                     let name = s
                         .devices
@@ -2527,9 +2605,9 @@ fn run() -> Result<(), String> {
                 });
                 if pairing != rt.ui.pairing {
                     rt.ui.pairing_focus = 1;
+                    rt.dirty.mark_render();
                 }
                 rt.ui.pairing = pairing;
-                rt.dirty.mark_render();
                 rt.bt_state = s;
             }
         }
@@ -2747,9 +2825,28 @@ fn run() -> Result<(), String> {
                     false, // The scanner owns its independent scoped lease.
                 ));
         }
-        if periodic.elapsed() > Duration::from_secs(2) {
-            periodic = Instant::now();
-            let next_power = power::status();
+        if rt.background.update(
+            &rt.model.settings.music_directory,
+            &rt.model.sources,
+            rt.sleep_prepared,
+        ) {
+            observation_pending = false;
+        }
+        if let Ok(observation) = observations.try_recv().and_then(|o| {
+            if rt.background.accepts(&o.request) {
+                Ok(o)
+            } else {
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            }
+        }) {
+            observation_pending = false;
+            if performance.enabled() {
+                performance.record(
+                    "background_observation",
+                    json!({"elapsed_ms":observation.elapsed_ms}),
+                );
+            }
+            let next_power = observation.power;
             if next_power["supplies"] != rt.power["supplies"] {
                 log.emit(
                     Level::Debug,
@@ -2762,8 +2859,10 @@ fn run() -> Result<(), String> {
             }
             rt.present_battery(power::battery(&next_power));
             rt.power = next_power;
-            if !headless {
-                let sd = storage::sd_present();
+            if let Some((sd, sources)) = observation
+                .media
+                .filter(|_| observation.request.music == rt.model.settings.music_directory)
+            {
                 if sd && !last_sd && !storage::platform_manages_media() {
                     let _ = storage::mount_sd();
                 }
@@ -2774,7 +2873,6 @@ fn run() -> Result<(), String> {
                     }
                 }
                 last_sd = sd;
-                let sources = storage::sources(&rt.model.settings.music_directory);
                 if sources != rt.model.sources {
                     rt.abandon_pending_reconfiguration();
                     let old = rt.model.sources.clone();
@@ -2833,6 +2931,24 @@ fn run() -> Result<(), String> {
                     rt.dirty.mark_render();
                 }
             }
+        }
+        if periodic.elapsed() > Duration::from_secs(2) {
+            periodic = Instant::now();
+            if rt.background.update(
+                &rt.model.settings.music_directory,
+                &rt.model.sources,
+                rt.sleep_prepared,
+            ) {
+                observation_pending = false;
+            }
+            if !observation_pending
+                && rt
+                    .background
+                    .request()
+                    .is_some_and(|request| observation_requests.try_send(request).is_ok())
+            {
+                observation_pending = true;
+            }
             if !headless
                 && !rt.model.screen_off
                 && !matches!(
@@ -2866,8 +2982,10 @@ fn run() -> Result<(), String> {
         }
         if rt.dirty.render
             && !rt.model.screen_off
-            && render_time.elapsed() > Duration::from_millis(34)
+            && render_time.elapsed() >= Duration::from_millis(34)
         {
+            render_time = Instant::now();
+            let frame_started = Instant::now();
             let tracks = std::mem::take(&mut rt.model.library.tracks);
             rt.ui.normalize(&mut rt.model, &tracks);
             rt.model.library.tracks = tracks;
@@ -2876,6 +2994,7 @@ fn run() -> Result<(), String> {
                 rt.model.platform.audio_facts = audio_facts(&rt.playback.audio_state(), &rt.model);
             }
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
+            let layout_ms = frame_started.elapsed().as_secs_f64() * 1000.;
             if !first_frame_presented {
                 // The splash's bar completes while this first frame renders.
                 reborn_platform::contract::boot_milestone("ready");
@@ -2913,8 +3032,22 @@ fn run() -> Result<(), String> {
                     }
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                 } else {
+                    if performance.enabled() {
+                        performance.record("frame", json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,"quads":draw.len(),"layout_ms":layout_ms,"frame_ms":frame_started.elapsed().as_secs_f64()*1000.,"render":g.timings}));
+                    }
                     if fading {
                         rt.boot_fade -= 1;
+                    }
+                    if rt.boot_fade == 0 && !first_interactive_presented {
+                        first_interactive_presented = true;
+                        log.emit(
+                            Level::Info,
+                            "startup",
+                            "interactive",
+                            "Boot cover fully revealed; input enabled",
+                            None,
+                            json!({"elapsed_ms":process_started.elapsed().as_millis()}),
+                        );
                     }
                     if !first_frame_presented {
                         first_frame_presented = true;
@@ -2953,9 +3086,16 @@ fn run() -> Result<(), String> {
             if rt.boot_fade == 0 {
                 rt.dirty.rendered();
             }
-            render_time = Instant::now();
         }
-        thread::sleep(main_loop_interval(rt.model.screen_off));
+        let interval =
+            main_loop_interval(rt.model.screen_off, rt.dirty.render, render_time.elapsed());
+        if let Some(input) = &inputs {
+            if input.wait(interval).is_err() {
+                thread::sleep(interval);
+            }
+        } else {
+            thread::sleep(interval);
+        }
     }
     // Platform shutdown contract: present the transition, save state, close
     // audio and the database, end on a dark frame with the backlight off,
@@ -3602,9 +3742,22 @@ mod loop_interval_tests {
 
     #[test]
     fn screen_off_wakes_less_but_stays_responsive() {
-        assert_eq!(main_loop_interval(false), Duration::from_millis(15));
-        assert_eq!(main_loop_interval(true), Duration::from_millis(50));
-        assert!(main_loop_interval(true) < Duration::from_millis(100));
+        assert_eq!(
+            main_loop_interval(false, false, Duration::ZERO),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            main_loop_interval(true, true, Duration::ZERO),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            main_loop_interval(false, true, Duration::from_millis(16)),
+            Duration::from_millis(18)
+        );
+        assert_eq!(
+            main_loop_interval(false, true, Duration::from_millis(40)),
+            Duration::ZERO
+        );
     }
 }
 

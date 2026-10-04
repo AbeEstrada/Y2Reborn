@@ -14,6 +14,9 @@ pub struct PinnedTrack {
     _file: fs::File,
     _parent: fs::File,
     path: PathBuf,
+    source: Source,
+    logical_path: PathBuf,
+    revision: fs::Metadata,
 }
 pub struct PinnedSidecar {
     _file: fs::File,
@@ -32,6 +35,87 @@ impl PinnedTrack {
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    pub fn mount_id(&self) -> Option<u64> {
+        self.source.mount_id
+    }
+    pub fn matches_revision(&self, size: u64, mtime: i64) -> bool {
+        self._file.metadata().is_ok_and(|m| {
+            m.len() == size
+                && m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .is_some_and(|t| t.as_nanos().min(i64::MAX as u128) as i64 == mtime)
+        })
+    }
+    /// Fast freshness check for a previously admitted source. No blkid probe,
+    /// helper, mutation or cached claim can qualify a replacement mount/card.
+    pub fn is_current(&self) -> bool {
+        let (Ok(pinned), Ok(live)) = (
+            self._file.metadata(),
+            fs::symlink_metadata(&self.logical_path),
+        ) else {
+            return false;
+        };
+        if pinned.len() != self.revision.len()
+            || pinned.mtime() != self.revision.mtime()
+            || pinned.mtime_nsec() != self.revision.mtime_nsec()
+            || pinned.ctime() != self.revision.ctime()
+            || pinned.ctime_nsec() != self.revision.ctime_nsec()
+        {
+            return false;
+        }
+        if !live.is_file()
+            || pinned.dev() != live.dev()
+            || pinned.ino() != live.ino()
+            || pinned.len() != live.len()
+            || pinned.mtime() != live.mtime()
+            || pinned.mtime_nsec() != live.mtime_nsec()
+            || pinned.ctime() != live.ctime()
+            || pinned.ctime_nsec() != live.ctime_nsec()
+        {
+            return false;
+        }
+        let mountinfo =
+            parse_mountinfo(&fs::read_to_string("/proc/self/mountinfo").unwrap_or_default());
+        if self.source.mount_id.is_some_and(|id| {
+            !mountinfo
+                .iter()
+                .any(|(current, root)| *current == id && self.source.root.starts_with(root))
+        }) {
+            return false;
+        }
+        if let MediaSource::SdCard(uuid) = &self.source.kind {
+            if Path::new("/etc/y2linux/capabilities.json").exists() {
+                let claim = fs::read_to_string("/run/y2/media-mount.json")
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                let boot =
+                    fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+                let identity = claim.as_ref().and_then(media_claim_identity);
+                let instance = claim.as_ref().and_then(|c| {
+                    let device = c["device_id"].as_str()?;
+                    if device.len() > 24 || !device.bytes().all(|b| b.is_ascii_digit() || b == b':')
+                    {
+                        return None;
+                    }
+                    block_instance(&PathBuf::from(format!("/sys/dev/block/{device}")))
+                });
+                if identity.is_none()
+                    || sd_source_id(uuid, identity.as_deref()) != self.source.id
+                    || !sd_claim_matches(
+                        claim.as_ref(),
+                        uuid,
+                        self.source.mount_id,
+                        boot.trim(),
+                        instance.as_deref(),
+                    )
+                {
+                    return false;
+                }
+            }
+        }
+        true
     }
     pub fn open_sidecar(&self, name: &str) -> Result<PinnedSidecar, String> {
         let mut components = Path::new(name).components();
@@ -117,9 +201,12 @@ fn pin_source_path(track: &Track, source: &Source) -> Result<PinnedTrack, String
     }
     let file = source_file(&root, components.last().unwrap().as_os_str())?;
     Ok(PinnedTrack {
+        revision: file.metadata().map_err(|e| e.to_string())?,
         path: PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd())),
         _file: file,
         _parent: root,
+        source: source.clone(),
+        logical_path: track.path.clone(),
     })
 }
 /// Validate the live card claim and pin a regular file before decoder admission.
