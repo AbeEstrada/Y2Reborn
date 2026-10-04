@@ -1064,6 +1064,41 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
   return 0;
 }
 
+/* Ask FFmpeg to read JPEG parameters without allocating a decoded picture.
+ * Use its supported reduced IDCT only while both edges still cover the output.
+ * Small covers and decoders without lowres retain their original resolution. */
+static int artwork_lowres(const AVCodec *codec, const AVPacket *packet, int side) {
+  if (codec->id != AV_CODEC_ID_MJPEG || !codec->max_lowres)
+    return 0;
+  AVCodecContext *probe = avcodec_alloc_context3(codec);
+  AVFrame *frame = av_frame_alloc();
+  int lowres = 0;
+  if (!probe || !frame)
+    goto done;
+  probe->max_pixels = 16 * 1024 * 1024;
+  probe->thread_count = 1;
+  probe->skip_frame = AVDISCARD_ALL;
+  if (avcodec_open2(probe, codec, NULL) < 0 ||
+      avcodec_send_packet(probe, packet) < 0)
+    goto done;
+  /* A header-only decode normally returns EAGAIN, with dimensions filled. */
+  int r = avcodec_receive_frame(probe, frame);
+  if (r < 0 && r != AVERROR(EAGAIN) && r != AVERROR_EOF)
+    goto done;
+  if (probe->profile != AV_PROFILE_MJPEG_HUFFMAN_BASELINE_DCT &&
+      probe->profile != AV_PROFILE_MJPEG_HUFFMAN_EXTENDED_SEQUENTIAL_DCT &&
+      probe->profile != AV_PROFILE_MJPEG_HUFFMAN_PROGRESSIVE_DCT)
+    goto done;
+  while (lowres < codec->max_lowres &&
+         (probe->width >> (lowres + 1)) >= side &&
+         (probe->height >> (lowres + 1)) >= side)
+    lowres++;
+done:
+  av_frame_free(&frame);
+  avcodec_free_context(&probe);
+  return lowres;
+}
+
 int rb_media_art(RbMedia *m, uint8_t *out, int side) {
   if (!m || !out || side < 1 || side > 256)
     return AVERROR(EINVAL);
@@ -1084,6 +1119,7 @@ int rb_media_art(RbMedia *m, uint8_t *out, int side) {
     ctx->max_pixels = 16 * 1024 * 1024;
     ctx->thread_count = 1;
     int r = avcodec_parameters_to_context(ctx, s->codecpar);
+    ctx->lowres = artwork_lowres(c, &s->attached_pic, side);
     if (r >= 0)
       r = avcodec_open2(ctx, c, NULL);
     if (r >= 0)
@@ -1153,6 +1189,11 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
   if (r >= 0 && fread(packet->data, 1, (size_t)length, file) != (size_t)length)
     r = AVERROR(EIO);
   fclose(file);
+  if (r >= 0) {
+    ctx->max_pixels = 16 * 1024 * 1024;
+    ctx->thread_count = 1;
+    ctx->lowres = artwork_lowres(codec, packet, side);
+  }
   if (r >= 0)
     r = avcodec_open2(ctx, codec, NULL);
   if (r >= 0)
