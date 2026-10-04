@@ -333,6 +333,10 @@ fn storage_cid_qualified_ids_keep_uuid_and_mount_identity_guards() {
     let hash = "a".repeat(64);
     assert!(sd_id_matches_uuid("uuid:volume", "volume"));
     assert!(sd_id_matches_uuid(
+        &format!("uuid:cid:{hash}"),
+        &format!("cid:{hash}")
+    ));
+    assert!(sd_id_matches_uuid(
         &format!("uuid:volume:cid:{hash}"),
         "volume"
     ));
@@ -354,5 +358,14 @@ fn storage_cid_qualified_ids_keep_uuid_and_mount_identity_guards() {
     assert!(!source_identity_matches_at(
         &source,
         "58 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n"
+    ));
+    let uuidless = Source {
+        id: format!("uuid:cid:{hash}"),
+        kind: MediaSource::SdCard(format!("cid:{hash}")),
+        ..source
+    };
+    assert!(source_identity_matches_at(
+        &uuidless,
+        "40 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n"
     ));
 }
