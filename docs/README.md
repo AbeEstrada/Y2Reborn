@@ -12,6 +12,7 @@ tests real workloads and playback but fails overall CPU-platform acceptance.
 | Media / live volume | [FFmpeg stack](architecture/reborn-audio-stack-ffmpeg9.md), [volume](architecture/live-volume.md) |
 | UI source and software candidate | [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md), [navigation v2](ui/REBORN-PRODUCT-NAVIGATION-V2.md), [pass v2](review/REBORN-PRODUCT-PASS-V2.md); historical [UI v1](ui/REBORN-UI-V1.md), [candidate report](ui/REBORN-UI-V1-REPORT.md) |
 | Boot progress and display hand-off | [Boot hand-off](architecture/boot-handoff.md) |
+| SQLite / large-library performance | [Platform 1.0 database pass](validation/REBORN-PLATFORM-V1-LIBRARY-DB.md) (host and bounded native Y2 through 50k; ARM build) |
 | Platform data/ownership | [Linux API](../../Y2Linux/docs/architecture/platform-api-v1.md) |
 | Earlier correctness closure | [Luna closure](validation/LUNA-CORRECTNESS-CLOSURE-01.md) |
 | Earlier system/codec audits | [Audit entry](audit/current-system/00_SCOPE_AND_EVIDENCE.md), [codec design](architecture/bluetooth-codecs.md) |
