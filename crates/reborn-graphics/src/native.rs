@@ -7,6 +7,9 @@ use std::{
     time::Instant,
 };
 unsafe extern "C" {
+    fn rb_graphics_thread_cpu_seconds() -> f64;
+    fn rb_graphics_draw_calls(p: *mut c_void) -> u32;
+    fn rb_graphics_submit(p: *mut c_void);
     fn rb_graphics_error() -> *const c_char;
     fn rb_graphics_open(
         out: *mut *mut c_void,
@@ -33,6 +36,7 @@ unsafe extern "C" {
     );
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
+    fn rb_graphics_readback(p: *mut c_void, pixels: *mut u8) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
     fn rb_graphics_sleep(p: *mut c_void, off: c_int) -> c_int;
 }
@@ -42,6 +46,19 @@ pub struct Renderer {
     pub width: u32,
     pub height: u32,
     log: Observer,
+    pub timings: FrameTimings,
+}
+#[derive(Default, serde::Serialize)]
+pub struct FrameTimings {
+    pub submit_ms: f64,
+    pub present_ms: f64,
+    pub cpu_ms: Option<f64>,
+    pub draw_calls: u32,
+}
+fn thread_cpu_seconds() -> Option<f64> {
+    // SAFETY: no arguments or retained pointers; C reads this thread's clock.
+    let value = unsafe { rb_graphics_thread_cpu_seconds() };
+    (value >= 0.).then_some(value)
 }
 impl Renderer {
     pub fn sleep(&mut self, off: bool) -> Result<(), String> {
@@ -108,9 +125,20 @@ impl Renderer {
             width,
             height,
             log,
+            timings: FrameTimings::default(),
         })
     }
     pub fn render(&mut self, quads: &[Quad]) -> Result<(), String> {
+        self.render_inner(quads, None)
+    }
+    /// Qualification-only readback before swapping; normal frames never read
+    /// pixels back or synchronize the GPU for screenshots.
+    pub fn capture(&mut self, quads: &[Quad]) -> Result<Vec<u8>, String> {
+        let mut pixels = vec![0; self.width as usize * self.height as usize * 4];
+        self.render_inner(quads, Some(&mut pixels))?;
+        Ok(pixels)
+    }
+    fn render_inner(&mut self, quads: &[Quad], pixels: Option<&mut [u8]>) -> Result<(), String> {
         if quads
             .iter()
             .any(|q| q.glyph.is_some_and(|g| g >= 1001) || q.icon.is_some_and(|i| i >= 26))
@@ -121,6 +149,7 @@ impl Renderer {
             return Err("draw list exceeds limit".into());
         }
         let start = Instant::now();
+        let cpu_start = thread_cpu_seconds();
         // SAFETY: live EGL context is current on this thread; uniquely borrowed renderer prevents concurrent calls.
         unsafe {
             rb_graphics_begin(self.raw.as_ptr());
@@ -142,9 +171,35 @@ impl Renderer {
                     },
                 );
             }
+            rb_graphics_submit(self.raw.as_ptr());
+        }
+        let submitted = Instant::now();
+        if let Some(pixels) = pixels {
+            // SAFETY: buffer allocated above to the actual context dimensions;
+            // qualification readback completes before swapping the framebuffer.
+            if unsafe { rb_graphics_readback(self.raw.as_ptr(), pixels.as_mut_ptr()) } < 0 {
+                return Err("graphics readback failed".into());
+            }
         }
         // SAFETY: presentation retains buffers until page-flip completion; timeout disables scanout before releasing uncertain buffer.
         let r = unsafe { rb_graphics_present(self.raw.as_ptr()) };
+        self.timings = FrameTimings {
+            submit_ms: submitted.duration_since(start).as_secs_f64() * 1000.,
+            present_ms: submitted.elapsed().as_secs_f64() * 1000.,
+            cpu_ms: cpu_start
+                .zip(thread_cpu_seconds())
+                .map(|(a, b)| (b - a) * 1000.),
+            // SAFETY: live renderer owned by this thread; reads its frame counter.
+            draw_calls: unsafe { rb_graphics_draw_calls(self.raw.as_ptr()) },
+        };
+        self.log.gauge("graphics_submit_ms", self.timings.submit_ms);
+        self.log
+            .gauge("graphics_present_ms", self.timings.present_ms);
+        if let Some(ms) = self.timings.cpu_ms {
+            self.log.gauge("graphics_cpu_ms", ms);
+        }
+        self.log
+            .gauge("graphics_draw_calls", f64::from(self.timings.draw_calls));
         self.log.gauge(
             "graphics_frame_time_ms",
             start.elapsed().as_secs_f64() * 1000.,
@@ -171,8 +226,12 @@ impl Renderer {
         if rgba.len() != 160 * 160 * 4 {
             return Err("artwork dimensions".into());
         }
+        let started = Instant::now();
         // SAFETY: exact RGBA dimensions validated; GL synchronously copies slice into owned texture.
         let r = unsafe { rb_graphics_art(self.raw.as_ptr(), rgba.as_ptr(), i32::from(collection)) };
+        self.log
+            .gauge("artwork_upload_ms", started.elapsed().as_secs_f64() * 1000.);
+        self.log.add("artwork_uploads", 1.);
         if r < 0 {
             Err(format!("texture upload {r}"))
         } else {

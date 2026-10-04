@@ -39,6 +39,73 @@ pub fn evdev_monotonic_clock(file: &std::fs::File) -> bool {
     // SAFETY: valid open evdev descriptor and a pointer to a live c_int.
     unsafe { libc::ioctl(file.as_raw_fd(), EVIOCSCLOCKID as _, &clock) == 0 }
 }
+/// Wait on the existing evdev handles without a polling thread or allocations.
+/// Readiness includes HUP/ERR so the normal input recovery path can cancel held
+/// controls and rediscover a lost device. Signals interrupt shutdown promptly.
+pub(crate) fn wait_readable<'a>(
+    files: impl Iterator<Item = std::os::fd::BorrowedFd<'a>>,
+    timeout: std::time::Duration,
+) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    let mut fds = [libc::pollfd {
+        fd: -1,
+        events: libc::POLLIN,
+        revents: 0,
+    }; 16];
+    let mut count = 0;
+    for file in files {
+        if count == fds.len() {
+            return Err(std::io::Error::other("too many input handles"));
+        }
+        fds[count].fd = file.as_raw_fd();
+        count += 1;
+    }
+    let ms = timeout
+        .as_millis()
+        .saturating_add(u128::from(
+            !timeout.subsec_nanos().is_multiple_of(1_000_000),
+        ))
+        .min(i32::MAX as u128) as i32;
+    // SAFETY: initialized pollfd array covers count; descriptors remain borrowed
+    // throughout this synchronous call. No ownership or event bytes are consumed.
+    let result = unsafe { libc::poll(fds.as_mut_ptr(), count as libc::nfds_t, ms) };
+    if result >= 0 {
+        return Ok(result > 0);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::Interrupted {
+        Ok(false)
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(test)]
+mod input_wait_tests {
+    use super::wait_readable;
+    use std::{
+        io::{Read, Write},
+        os::{fd::AsFd, unix::net::UnixStream},
+        time::Duration,
+    };
+    #[test]
+    fn wait_preserves_event_bytes_and_wakes_for_data_and_device_loss() {
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        assert!(!wait_readable(std::iter::once(reader.as_fd()), Duration::from_millis(2)).unwrap());
+        let task = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            writer.write_all(b"event").unwrap();
+            writer
+        });
+        assert!(wait_readable(std::iter::once(reader.as_fd()), Duration::from_secs(1)).unwrap());
+        let writer = task.join().unwrap();
+        let mut bytes = [0; 5];
+        reader.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"event");
+        drop(writer);
+        assert!(wait_readable(std::iter::once(reader.as_fd()), Duration::from_secs(1)).unwrap());
+    }
+}
 /// Bytes and total bytes of the filesystem holding `path`.
 pub fn space(path: &Path) -> Result<(u64, u64), String> {
     use std::os::unix::ffi::OsStrExt;

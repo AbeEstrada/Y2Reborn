@@ -24,6 +24,11 @@ static double now(void) {
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
 }
+double rb_graphics_thread_cpu_seconds(void) {
+  struct timespec t;
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)) return -1;
+  return t.tv_sec + t.tv_nsec / 1e9;
+}
 #include "splash-handoff.h"
 struct fb {
   uint32_t id;
@@ -109,6 +114,10 @@ typedef struct {
   EGLContext context;
   GLuint program, vbo, white, font, display_font, icons, art, collection_art;
   struct flip flip;
+  /* Bounded adjacent-texture batching, preserving the original draw order. */
+  GLfloat vertices[256 * 6 * 8];
+  unsigned vertices_used, draw_calls;
+  GLuint batch_texture;
   char info[1024];
 } RbGraphics;
 /* Normal DRM master operation: stop the CRTC/bridge before idle; retain GBM,
@@ -341,13 +350,13 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
            eglQueryString(g->display, EGL_VERSION), renderer,
            glGetString(GL_VERSION));
   eglSwapInterval(g->display, 0);
-  const char *vs = "attribute vec2 p;attribute vec2 uv;uniform vec4 "
-                   "box;uniform vec4 texbox;varying vec2 t;void "
-                   "main(){gl_Position=vec4(p*box.zw+box.xy,0.,1.);t=uv*texbox."
-                   "zw+texbox.xy;}";
+  const char *vs =
+      "attribute vec2 p;attribute vec2 uv;attribute vec4 color;"
+      "varying vec2 t;varying vec4 tint;void main(){"
+      "gl_Position=vec4(p,0.,1.);t=uv;tint=color;}";
   const char *fs =
-      "precision mediump float;varying vec2 t;uniform sampler2D tex;uniform "
-      "vec4 tint;void main(){gl_FragColor=texture2D(tex,t)*tint;}";
+      "precision mediump float;varying vec2 t;varying vec4 tint;"
+      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t)*tint;}";
   GLuint v = make_shader(GL_VERTEX_SHADER, vs),
          f = make_shader(GL_FRAGMENT_SHADER, fs);
   if (!v || !f) {
@@ -362,6 +371,7 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
   glAttachShader(g->program, f);
   glBindAttribLocation(g->program, 0, "p");
   glBindAttribLocation(g->program, 1, "uv");
+  glBindAttribLocation(g->program, 2, "color");
   glLinkProgram(g->program);
   glDeleteShader(v);
   glDeleteShader(f);
@@ -371,16 +381,16 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
     goto fail;
   glUseProgram(g->program);
   glUniform1i(glGetUniformLocation(g->program, "tex"), 0);
-  const GLfloat verts[] = {-1, -1, 0, 1, 1, -1, 1, 1, -1, 1, 0, 0, 1, 1, 1, 0};
   glGenBuffers(1, &g->vbo);
   glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
-                        (void *)0);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void *)0);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
                         (void *)(2 * sizeof(GLfloat)));
+  glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
+                        (void *)(4 * sizeof(GLfloat)));
   glEnableVertexAttribArray(0);
   glEnableVertexAttribArray(1);
+  glEnableVertexAttribArray(2);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glViewport(0, 0, g->width, g->height);
@@ -423,34 +433,60 @@ fail:
 const char *rb_graphics_info(RbGraphics *g) { return g->info; }
 int rb_graphics_width(RbGraphics *g) { return g->width; }
 int rb_graphics_height(RbGraphics *g) { return g->height; }
+static void flush_batch(RbGraphics *g) {
+  if (!g->vertices_used) return;
+  glBindTexture(GL_TEXTURE_2D, g->batch_texture);
+  glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
+  glBufferData(GL_ARRAY_BUFFER, g->vertices_used * 8 * sizeof(GLfloat),
+               g->vertices, GL_STREAM_DRAW);
+  glDrawArrays(GL_TRIANGLES, 0, g->vertices_used);
+  g->draw_calls++;
+  g->vertices_used = 0;
+}
+unsigned rb_graphics_draw_calls(RbGraphics *g) { return g->draw_calls; }
+void rb_graphics_submit(RbGraphics *g) { flush_batch(g); }
 void rb_graphics_begin(RbGraphics *g) {
-  (void)g;
+  g->vertices_used = 0;
+  g->draw_calls = 0;
   glClearColor(.035, .047, .07, 1);
   glClear(GL_COLOR_BUFFER_BIT);
 }
 void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
                       uint32_t color, int glyph, int icon, int display_font,
                       int art) {
-  glBindTexture(GL_TEXTURE_2D,
-                art == 2 ? g->collection_art : art ? g->art
-                    : icon >= 0 ? g->icons
-                    : glyph >= 0 ? display_font ? g->display_font : g->font
-                                 : g->white);
-  glUniform4f(glGetUniformLocation(g->program, "box"),
-              (2 * x + w) / g->width - 1, 1 - (2 * y + h) / g->height,
-              w / g->width, h / g->height);
-  if (icon >= 0 && !art)
-    glUniform4f(glGetUniformLocation(g->program, "texbox"), (icon % 6) / 6.f,
-                (icon / 6) / 5.f, 1 / 6.f, 1 / 5.f);
-  else if (glyph >= 0 && !art)
-    glUniform4f(glGetUniformLocation(g->program, "texbox"), (glyph % 32) / 32.f,
-                (glyph / 32) / 32.f, 1 / 32.f, 1 / 32.f);
-  else
-    glUniform4f(glGetUniformLocation(g->program, "texbox"), 0, 0, 1, 1);
-  glUniform4f(glGetUniformLocation(g->program, "tint"),
-              ((color >> 24) & 255) / 255.f, ((color >> 16) & 255) / 255.f,
-              ((color >> 8) & 255) / 255.f, (color & 255) / 255.f);
-  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  GLuint tex = art == 2 ? g->collection_art : art ? g->art
+                  : icon >= 0 ? g->icons
+                  : glyph >= 0 ? display_font ? g->display_font : g->font
+                               : g->white;
+  if (g->vertices_used && (g->batch_texture != tex ||
+                           g->vertices_used + 6 > 256 * 6))
+    flush_batch(g);
+  g->batch_texture = tex;
+  float u = 0, v = 0, uw = 1, vh = 1;
+  if (icon >= 0 && !art) {
+    u = (icon % 6) / 6.f; v = (icon / 6) / 5.f;
+    uw = 1 / 6.f; vh = 1 / 5.f;
+  } else if (glyph >= 0 && !art) {
+    u = (glyph % 32) / 32.f; v = (glyph / 32) / 32.f;
+    uw = 1 / 32.f; vh = 1 / 32.f;
+  }
+  /* Same box transform and triangle order as the original strip renderer. */
+  float cx = (2 * x + w) / g->width - 1;
+  float cy = 1 - (2 * y + h) / g->height;
+  float hw = w / g->width, hh = h / g->height;
+  const float corners[4][4] = {{cx-hw, cy-hh, u, v+vh},
+                               {cx+hw, cy-hh, u+uw, v+vh},
+                               {cx-hw, cy+hh, u, v},
+                               {cx+hw, cy+hh, u+uw, v}};
+  const unsigned order[6] = {0, 1, 2, 2, 1, 3};
+  const float tint[4] = {((color >> 24) & 255) / 255.f,
+                         ((color >> 16) & 255) / 255.f,
+                         ((color >> 8) & 255) / 255.f, (color & 255) / 255.f};
+  for (unsigned i = 0; i < 6; i++) {
+    GLfloat *dst = g->vertices + g->vertices_used++ * 8;
+    memcpy(dst, corners[order[i]], 4 * sizeof(GLfloat));
+    memcpy(dst + 4, tint, 4 * sizeof(GLfloat));
+  }
 }
 int rb_graphics_art(RbGraphics *g, const uint8_t *p, int collection) {
   glBindTexture(GL_TEXTURE_2D, collection ? g->collection_art : g->art);
@@ -478,7 +514,13 @@ int rb_graphics_test(RbGraphics *g) {
   glViewport(0, 0, g->width, g->height);
   return ok ? 0 : -EIO;
 }
+int rb_graphics_readback(RbGraphics *g, uint8_t *pixels) {
+  flush_batch(g);
+  glReadPixels(0, 0, g->width, g->height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  return glGetError() == GL_NO_ERROR ? 0 : -EIO;
+}
 int rb_graphics_present(RbGraphics *g) {
+  flush_batch(g);
   if (g->sleeping) return -EHOSTDOWN;
   if (glGetError() != GL_NO_ERROR || !eglSwapBuffers(g->display, g->window))
     return -EIO;

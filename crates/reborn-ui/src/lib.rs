@@ -89,7 +89,7 @@ pub struct NetworkView {
     pub visible: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WifiView {
     pub available: bool,
     pub powered: bool,
@@ -100,7 +100,7 @@ pub struct WifiView {
     pub networks: Vec<NetworkView>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BluetoothDeviceView {
     pub path: String,
     pub address: String,
@@ -156,7 +156,7 @@ impl BluetoothDeviceView {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BluetoothView {
     pub available: bool,
     pub powered: bool,

@@ -21,7 +21,7 @@ const PLATFORM_LITERALS: [&str; 9] = [
 ];
 
 /// Justified exceptions outside the platform crate: (file, literal, reason).
-const ALLOWED: [(&str, &str, &str); 10] = [
+const ALLOWED: [(&str, &str, &str); 9] = [
     (
         "crates/reborn-observability/src/lib.rs",
         "\"/proc/",
@@ -56,11 +56,6 @@ const ALLOWED: [(&str, &str, &str); 10] = [
         "app/reborn/src/main.rs",
         "\"/proc/",
         "own process status in the control-socket snapshot",
-    ),
-    (
-        "app/reborn/src/main.rs",
-        "\"/dev/",
-        "bounded kernel error excerpt (/dev/kmsg) in diagnostic bundles",
     ),
     (
         "crates/reborn-library/src/benchmark.rs",

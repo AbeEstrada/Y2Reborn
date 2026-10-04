@@ -1178,7 +1178,11 @@ impl Bluetooth {
                     let mut discovery: Option<Discovery> = None;
                     let mut operation_error = None;
                     loop {
-                        if c.process(Duration::from_millis(20)).is_err() {
+                        // D-Bus traffic wakes this wait immediately. Keep the
+                        // existing active-radio cadence; an off adapter needs
+                        // no 50-Hz timer. Queued power-on starts within 100 ms.
+                        let wait_ms = if current.powered || current.pending.is_some() || current.scan.active() { 20 } else { 100 };
+                        if c.process(Duration::from_millis(wait_ms)).is_err() {
                             cancel_operations(&c, &operations);
                             current.available = false;
                             current.error = Some("Bluetooth service disconnected".into());

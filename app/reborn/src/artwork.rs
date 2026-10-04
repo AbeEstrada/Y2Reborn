@@ -31,6 +31,8 @@ impl Key {
 pub struct Reply {
     pub key: Key,
     pub pixels: Option<Vec<u8>>,
+    pub decode_ms: f64,
+    pub cache_hit: bool,
 }
 pub struct Worker {
     requests: SyncSender<(Key, Cancel)>,
@@ -47,6 +49,8 @@ impl Worker {
             .spawn(move || {
                 let mut cache: VecDeque<(Key, Option<Vec<u8>>)> = VecDeque::new();
                 while let Ok((key, cancel)) = rx.recv() {
+                    let started = std::time::Instant::now();
+                    let cache_hit = cache.iter().any(|(k, _)| k == &key);
                     let pixels = if let Some(i) = cache.iter().position(|(k, _)| k == &key) {
                         let entry = cache.remove(i).expect("known cache position");
                         let pixels = entry.1.clone();
@@ -54,16 +58,24 @@ impl Worker {
                         pixels
                     } else {
                         let pixels = load(&key, cancel).filter(|v| v.len() == 160 * 160 * 4);
-                        if cache.len() == 4 {
-                            cache.pop_front();
-                        }
                         if pixels.is_some() {
+                            if cache.len() == 4 {
+                                cache.pop_front();
+                            }
                             cache.push_back((key.clone(), pixels.clone()));
                         }
                         pixels
                     };
                     // One latest route result; a slow UI cannot grow a result queue.
-                    if tx.send(Reply { key, pixels }).is_err() {
+                    if tx
+                        .send(Reply {
+                            key,
+                            pixels,
+                            decode_ms: started.elapsed().as_secs_f64() * 1000.,
+                            cache_hit,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
