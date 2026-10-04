@@ -1,5 +1,18 @@
 # Current Reborn state on the Y2
 
+## Independent Platform 1.0 baseline — 2026-10-04
+
+Compiled Reborn `9cd12baeeb70b204e08299bd4c91c8c35604c304` (runtime bytes unchanged from master dd73dcc)
+with Linux `98daf3f0220f4a1580bb4893094ee9f0e02362a5`. Fresh 324 workspace tests, fmt, strict Clippy,
+ARM/QEMU/installed helper/dependency validation PASS. Build `Y2LINUX-PLATFORM-V1-BASELINE-01`,
+root `2025.02.18-platform-v1.24`, release `1.0.0-platform-v1-baseline-candidate.1`. Final branch
+`codex/platform-v1-baseline-final`; canonical owner package `/home/luca/Dokumente/Code/Y2Linux/out/y2linux-platform-v1-baseline-candidate`.
+SOFTWARE_VALIDATED / INTEGRATED_PHYSICAL_NOT_RUN. UART01 CPU and temporary
+subsystem measurements keep their historical identities; Baseline02 RTC FAIL
+and public firmware/codec/source/collector blockers stay open. Main unchanged.
+No flash, push or device qualification by the verifier. Later report-only HEAD
+is separate from compiled source. Earlier current/next labels are historical.
+
 ## Sealed Platform 1.0 software integration — 2026-10-04
 
 **READY_FOR_PLATFORM_V1_PHYSICAL_QUALIFICATION**. Compiled Reborn `dd73dcc3243045cd33e319dda2f76918ed37ea31`/Linux `4c72466f2f27ddf9f0ca18ba8ddc4d89c52599d2`; actual package/application0.2.0.324tests/fmt/strict Clippy, fresh pinned ARM/QEMU/software/package gates PASS. One candidate `/home/luca/Dokumente/Code/worktrees/platform-v1-integration/Y2Linux/out/y2linux-platform-v1-integration-candidate`. Integrated physical/endurance NOT_RUN and public distribution blocked; current installed stock remains Baseline02/b71 after temporary source-bound benchmarks. See [master](../../Y2Linux/docs/release/Y2-PLATFORM-V1-MASTER.md) and [software receipt](../../Y2Linux/docs/validation/Y2-PLATFORM-V1-INTEGRATION.md). Dated progress/physical sections below remain history.
