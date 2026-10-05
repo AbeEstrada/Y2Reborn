@@ -646,7 +646,7 @@ fn sleep(m: &AppModel) -> Page {
         }),
         SleepPhase::RestoreFailed => ("Wake Needs Attention", "Save your place and restart the player. Diagnostics has the last sleep result."),
         SleepPhase::SleepRefused => ("Player Stayed Awake", match s.problem {
-            Some(SleepProblem::ChargerActive) => "Disconnect the charger before putting the player to sleep.",
+            Some(SleepProblem::ChargerActive) => "Sleep needs the charger disconnected, so Power turned off the screen instead.",
             Some(SleepProblem::PlaybackActive) => "Pause music before putting the player to sleep. Power can turn off the screen while music plays.",
             Some(SleepProblem::QualificationPending) => "Sleep is not available yet, so Power turned off the screen instead. You can also power off.",
             Some(SleepProblem::Busy) => "The player is finishing another task. Try again when it finishes.",

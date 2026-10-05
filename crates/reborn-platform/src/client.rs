@@ -25,7 +25,7 @@ use std::{
 };
 
 const LIMIT: u64 = 1024 * 1024;
-const PROGRAM: &str = "/usr/bin/y2-platform";
+const PROGRAM: &str = "/usr/sbin/y2-platform";
 pub const STATUS_SCHEMA: &str = "org.y2linux.status/v1";
 pub const CAPABILITIES_SCHEMA: &str = "org.y2linux.capabilities/v1";
 pub const HEALTH_SCHEMA: &str = "org.y2linux.health/v1";

@@ -59,12 +59,16 @@ pub struct SleepState {
 }
 
 impl SleepState {
-    /// Full sleep is refused only because it is not yet physically qualified.
-    /// Power should then blank the screen instead of doing nothing, without
-    /// claiming the player slept. Charger/busy/other refusals are unaffected.
-    pub fn refused_pending_qualification(&self) -> bool {
+    /// Full sleep was refused for a reason the person cannot act on at this
+    /// moment: it is not yet qualified, or the charger is active. Power should
+    /// then blank the screen instead of leaving it lit, without claiming the
+    /// player slept. Playback, busy and other refusals are unaffected.
+    pub fn refused_but_screen_can_blank(&self) -> bool {
         self.phase == SleepPhase::SleepRefused
-            && self.problem == Some(SleepProblem::QualificationPending)
+            && matches!(
+                self.problem,
+                Some(SleepProblem::QualificationPending | SleepProblem::ChargerActive)
+            )
     }
 }
 
@@ -367,27 +371,27 @@ mod tests {
     }
 
     #[test]
-    fn only_the_qualification_refusal_falls_back_to_screen_off() {
+    fn only_non_actionable_refusals_fall_back_to_screen_off() {
         let refused = |problem| SleepState {
             phase: SleepPhase::SleepRefused,
             problem,
             ..SleepState::default()
         };
-        assert!(refused(Some(SleepProblem::QualificationPending)).refused_pending_qualification());
+        assert!(refused(Some(SleepProblem::QualificationPending)).refused_but_screen_can_blank());
+        assert!(refused(Some(SleepProblem::ChargerActive)).refused_but_screen_can_blank());
         for problem in [
             None,
-            Some(SleepProblem::ChargerActive),
             Some(SleepProblem::PlaybackActive),
             Some(SleepProblem::Busy),
             Some(SleepProblem::Other),
         ] {
-            assert!(!refused(problem).refused_pending_qualification());
+            assert!(!refused(problem).refused_but_screen_can_blank());
         }
         let sleeping = SleepState {
             phase: SleepPhase::Sleeping,
             problem: Some(SleepProblem::QualificationPending),
             ..SleepState::default()
         };
-        assert!(!sleeping.refused_pending_qualification());
+        assert!(!sleeping.refused_but_screen_can_blank());
     }
 }

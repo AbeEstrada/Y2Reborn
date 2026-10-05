@@ -1487,10 +1487,10 @@ impl Runtime {
                 p.busy = None;
                 match result {
                     Ok(state) => {
-                        // Full sleep is gated until physically qualified. Power must
-                        // still save display power; the page keeps saying the player
+                        // Full sleep is gated (not yet qualified) or refused while
+                        // charging. Power must still save display power; the page keeps saying the player
                         // stayed awake, so this never implies deep sleep.
-                        blank_screen = state.refused_pending_qualification();
+                        blank_screen = state.refused_but_screen_can_blank();
                         p.snapshot.sleep = state;
                         p.failure = None;
                     }

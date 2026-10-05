@@ -978,7 +978,7 @@ fn sleep_and_screen_off_are_distinct_product_actions_with_recoverable_refusal() 
     m.platform.snapshot.sleep.phase = SleepPhase::SleepRefused;
     for (problem, wording) in [
         (SleepProblem::QualificationPending, "turned off the screen"),
-        (SleepProblem::ChargerActive, "Disconnect the charger"),
+        (SleepProblem::ChargerActive, "charger disconnected"),
         (SleepProblem::PlaybackActive, "Pause music"),
     ] {
         m.platform.snapshot.sleep.problem = Some(problem);
