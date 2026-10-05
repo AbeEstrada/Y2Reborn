@@ -58,6 +58,16 @@ pub struct SleepState {
     pub same_boot: Option<bool>,
 }
 
+impl SleepState {
+    /// Full sleep is refused only because it is not yet physically qualified.
+    /// Power should then blank the screen instead of doing nothing, without
+    /// claiming the player slept. Charger/busy/other refusals are unaffected.
+    pub fn refused_pending_qualification(&self) -> bool {
+        self.phase == SleepPhase::SleepRefused
+            && self.problem == Some(SleepProblem::QualificationPending)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LdacQuality {
     Mobile,
@@ -354,5 +364,30 @@ mod tests {
         assert_eq!(human_bytes(128_000_000_000), "128 GB");
         assert_eq!(human_bytes(42_000_000), "42 MB");
         assert_eq!(human_bytes(900), "0 KB");
+    }
+
+    #[test]
+    fn only_the_qualification_refusal_falls_back_to_screen_off() {
+        let refused = |problem| SleepState {
+            phase: SleepPhase::SleepRefused,
+            problem,
+            ..SleepState::default()
+        };
+        assert!(refused(Some(SleepProblem::QualificationPending)).refused_pending_qualification());
+        for problem in [
+            None,
+            Some(SleepProblem::ChargerActive),
+            Some(SleepProblem::PlaybackActive),
+            Some(SleepProblem::Busy),
+            Some(SleepProblem::Other),
+        ] {
+            assert!(!refused(problem).refused_pending_qualification());
+        }
+        let sleeping = SleepState {
+            phase: SleepPhase::Sleeping,
+            problem: Some(SleepProblem::QualificationPending),
+            ..SleepState::default()
+        };
+        assert!(!sleeping.refused_pending_qualification());
     }
 }

@@ -1480,12 +1480,17 @@ impl Runtime {
             return;
         };
         let mut refresh = false;
+        let mut blank_screen = false;
         let p = &mut self.model.platform;
         match reply {
             client::Reply::Sleep(result) => {
                 p.busy = None;
                 match result {
                     Ok(state) => {
+                        // Full sleep is gated until physically qualified. Power must
+                        // still save display power; the page keeps saying the player
+                        // stayed awake, so this never implies deep sleep.
+                        blank_screen = state.refused_pending_qualification();
                         p.snapshot.sleep = state;
                         p.failure = None;
                     }
@@ -1567,6 +1572,11 @@ impl Runtime {
                     p.busy = None;
                 }
                 p.failure = Some(error);
+            }
+        }
+        if blank_screen && !self.model.screen_off {
+            if let Err(error) = self.effect(Effect::ScreenSleep) {
+                self.ui.flash(error);
             }
         }
         // Operations change platform state; observe it again.
