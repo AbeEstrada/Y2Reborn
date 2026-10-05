@@ -1669,11 +1669,20 @@ impl Runtime {
 /// Input readiness wakes immediately; the bounded timeout services asynchronous
 /// workers. Dirty frames use a start-to-start budget rather than adding the
 /// entire GPU/presentation cost to a fresh 34-ms delay.
-fn main_loop_interval(screen_off: bool, dirty: bool, since_frame: Duration) -> Duration {
+fn main_loop_interval(
+    screen_off: bool,
+    dirty: bool,
+    playing: bool,
+    since_frame: Duration,
+) -> Duration {
     if dirty && !screen_off {
         Duration::from_millis(34).saturating_sub(since_frame)
-    } else {
+    } else if playing {
         Duration::from_millis(50)
+    } else if screen_off {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_millis(250)
     }
 }
 
@@ -2331,13 +2340,21 @@ fn run() -> Result<(), String> {
     let player = if headless {
         None
     } else {
-        avrcp::Player::spawn(log.clone()).ok()
+        let wake = server.notifier().map_err(|e| e.to_string())?;
+        avrcp::Player::spawn_notified(log.clone(), move || {
+            use std::io::Write;
+            let _ = (&wake).write(&[1]);
+        })
+        .ok()
     };
     let mut player_publish = Instant::now() - Duration::from_secs(1);
     let mut platform_refresh = Instant::now() - Duration::from_secs(30);
     let mut last_platform_screen = rt.model.screen;
     let mut codec_reconnect = CodecReconnect::default();
     while !reborn_platform::stop_requested() {
+        // Drain before inspecting any producer queue: a later event keeps the
+        // descriptor readable until the next loop and cannot be lost in wait.
+        server.drain_wake();
         if rt.background.update(
             &rt.model.settings.music_directory,
             &rt.model.sources,
@@ -3247,10 +3264,17 @@ fn run() -> Result<(), String> {
                 rt.dirty.rendered();
             }
         }
-        let interval =
-            main_loop_interval(rt.model.screen_off, rt.dirty.render, render_time.elapsed());
+        let interval = main_loop_interval(
+            rt.model.screen_off,
+            rt.dirty.render,
+            matches!(
+                rt.model.playback,
+                PlaybackState::Playing | PlaybackState::Buffering
+            ),
+            render_time.elapsed(),
+        );
         if let Some(input) = &inputs {
-            if input.wait(interval).is_err() {
+            if input.wait_with(interval, Some(server.wake_fd())).is_err() {
                 thread::sleep(interval);
             }
         } else {
@@ -3903,19 +3927,19 @@ mod loop_interval_tests {
     #[test]
     fn screen_off_wakes_less_but_stays_responsive() {
         assert_eq!(
-            main_loop_interval(false, false, Duration::ZERO),
-            Duration::from_millis(50)
+            main_loop_interval(false, false, false, Duration::ZERO),
+            Duration::from_millis(250)
         );
         assert_eq!(
-            main_loop_interval(true, true, Duration::ZERO),
-            Duration::from_millis(50)
+            main_loop_interval(true, true, false, Duration::ZERO),
+            Duration::from_secs(1)
         );
         assert_eq!(
-            main_loop_interval(false, true, Duration::from_millis(16)),
+            main_loop_interval(false, true, false, Duration::from_millis(16)),
             Duration::from_millis(18)
         );
         assert_eq!(
-            main_loop_interval(false, true, Duration::from_millis(40)),
+            main_loop_interval(false, true, false, Duration::from_millis(40)),
             Duration::ZERO
         );
     }

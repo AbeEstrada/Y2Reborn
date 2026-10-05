@@ -210,9 +210,29 @@ struct Client {
 }
 pub struct Server {
     pub requests: Receiver<Envelope>,
+    wake: UnixStream,
+    notify: UnixStream,
     _path: PathBuf,
 }
 impl Server {
+    /// Share the bounded nonblocking wake channel with event producers.
+    pub fn notifier(&self) -> std::io::Result<UnixStream> {
+        self.notify.try_clone()
+    }
+    /// Wake the input wait when a command is queued, including sleep/shutdown.
+    pub fn wake_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+        self.wake.as_fd()
+    }
+    pub fn drain_wake(&self) {
+        let mut stream = &self.wake;
+        let mut bytes = [0; 64];
+        while let Ok(n) = stream.read(&mut bytes) {
+            if n == 0 {
+                break;
+            }
+        }
+    }
     pub fn spawn(path: &Path, log: Observer) -> std::io::Result<Self> {
         let parent = path
             .parent()
@@ -232,6 +252,10 @@ impl Server {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         listener.set_nonblocking(true)?;
         let (tx, rx) = sync_channel(8);
+        let (wake, mut notify) = UnixStream::pair()?;
+        wake.set_nonblocking(true)?;
+        notify.set_nonblocking(true)?;
+        let external_notify = notify.try_clone()?;
         let path = path.to_owned();
         thread::Builder::new()
             .name("control".into())
@@ -318,6 +342,8 @@ impl Server {
                                     if tx.try_send(Envelope { request, reply: rt }).is_err() {
                                         Some(Response::error(id, "control queue busy"))
                                     } else {
+                                        // A full notification socket is already readable.
+                                        let _ = notify.write(&[1]);
                                         client.pending = Some(rr);
                                         client.deadline = Instant::now() + Duration::from_secs(90);
                                         None
@@ -337,6 +363,8 @@ impl Server {
             })?;
         Ok(Self {
             requests: rx,
+            wake,
+            notify: external_notify,
             _path: path,
         })
     }
@@ -420,6 +448,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let path = root.join("control.sock");
         let server = Server::spawn(&path, Observer::new(&root.join("logs")).unwrap()).unwrap();
+        let mut external = server.notifier().unwrap();
+        external.write_all(&[1]).unwrap();
+        let mut initial = &server.wake;
+        let mut byte = [0];
+        assert_eq!(initial.read(&mut byte).unwrap(), 1);
         // The listener has been idle before its first client arrives.
         thread::sleep(Duration::from_millis(50));
         let mut partial = UnixStream::connect(&path).unwrap();
@@ -435,6 +468,14 @@ mod tests {
                 },
             )
         });
+        // The UI can block in input readiness instead of checking this queue
+        // every 50ms. A partial client must not prevent a complete command wake.
+        let mut wake = server.wake.try_clone().unwrap();
+        wake.set_nonblocking(false).unwrap();
+        wake.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let mut byte = [0];
+        assert_eq!(wake.read(&mut byte).unwrap(), 1);
+        wake.set_nonblocking(true).unwrap();
         let envelope = server
             .requests
             .recv_timeout(Duration::from_secs(2))

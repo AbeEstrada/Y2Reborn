@@ -3,7 +3,7 @@
 use dbus::{
     arg::{PropMap, Variant},
     blocking::{stdintf::org_freedesktop_dbus::ObjectManager, Connection},
-    channel::{MatchingReceiver, Sender},
+    channel::{BusType, Channel, MatchingReceiver, Sender},
     message::MatchRule,
     Message, Path,
 };
@@ -11,6 +11,8 @@ use reborn_core::{Action, AppModel, PlaybackState};
 use reborn_observability::{HealthState, Observer};
 use std::{
     collections::HashMap,
+    io::{Read, Write},
+    os::{fd::AsRawFd, unix::net::UnixStream},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{sync_channel, Receiver},
@@ -133,15 +135,36 @@ pub struct Player {
     pub actions: Receiver<RemoteAction>,
     view: Arc<Mutex<View>>,
     stop: Arc<AtomicBool>,
+    wake: UnixStream,
 }
 impl Player {
     pub fn spawn(log: Observer) -> std::io::Result<Self> {
-        Self::spawn_with(log, Connection::new_system)
+        Self::spawn_with(log, || Channel::get_private(BusType::System))
+    }
+    pub fn spawn_notified(
+        log: Observer,
+        notify: impl Fn() + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
+        Self::spawn_inner(
+            log,
+            || Channel::get_private(BusType::System),
+            Arc::new(notify),
+        )
     }
     fn spawn_with(
         log: Observer,
-        connect: impl Fn() -> Result<Connection, dbus::Error> + Send + 'static,
+        connect: impl Fn() -> Result<Channel, dbus::Error> + Send + 'static,
     ) -> std::io::Result<Self> {
+        Self::spawn_inner(log, connect, Arc::new(|| {}))
+    }
+    fn spawn_inner(
+        log: Observer,
+        connect: impl Fn() -> Result<Channel, dbus::Error> + Send + 'static,
+        notify: Arc<dyn Fn() + Send + Sync>,
+    ) -> std::io::Result<Self> {
+        let (mut wake_reader, wake) = UnixStream::pair()?;
+        wake_reader.set_nonblocking(true)?;
+        wake.set_nonblocking(true)?;
         let (sender, actions) = sync_channel(8);
         let view = Arc::new(Mutex::new(View::default()));
         let shared = view.clone();
@@ -149,17 +172,20 @@ impl Player {
         let ending = stop.clone();
         thread::Builder::new().name("avrcp".into()).spawn(move || {
             while !ending.load(Ordering::Relaxed) {
-                let c = match connect() {
+                let mut channel = match connect() {
                     Ok(c) => c,
                     Err(_) => {
                         thread::sleep(Duration::from_secs(1));
                         continue;
                     }
                 };
+                channel.set_watch_enabled(true);
+                let c: Connection = channel.into();
                 let authorized = Arc::new(Mutex::new(String::new()));
                 let auth = authorized.clone();
                 let current = shared.clone();
                 let commands = sender.clone();
+                let notify = notify.clone();
                 let mut rule = MatchRule::new_method_call();
                 rule.path = Some(PLAYER.into());
                 c.start_receive(
@@ -193,6 +219,7 @@ impl Player {
                             };
                             if let Some(action) = action {
                                 if commands.try_send(action).is_ok() {
+                                    notify();
                                     response = Some(msg.method_return());
                                 }
                             }
@@ -281,7 +308,38 @@ impl Player {
                             },
                         );
                     }
-                    if c.process(Duration::from_millis(200)).is_err() {
+                    let watch = c.channel().watch();
+                    // Bus commands, projection changes and shutdown wake immediately.
+                    // The existing bounded registration retry/health deadline remains.
+                    if crate::native::bluetooth_wait(
+                        watch.fd,
+                        watch.read,
+                        watch.write,
+                        wake_reader.as_raw_fd(),
+                        Duration::from_secs(1),
+                    )
+                    .is_err()
+                    {
+                        break;
+                    }
+                    let mut bytes = [0; 64];
+                    while let Ok(n) = wake_reader.read(&mut bytes) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    let mut failed = false;
+                    for _ in 0..64 {
+                        match c.process(Duration::ZERO) {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(_) => {
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if failed {
                         break;
                     }
                     let value = shared.lock().map(|v| v.clone()).unwrap_or_default();
@@ -306,17 +364,23 @@ impl Player {
             actions,
             view,
             stop,
+            wake,
         })
     }
     pub fn publish(&self, model: &AppModel) {
         if let Ok(mut view) = self.view.lock() {
-            *view = View::model(model);
+            let value = View::model(model);
+            if *view != value {
+                *view = value;
+                let _ = (&self.wake).write(&[1]);
+            }
         }
     }
 }
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        let _ = (&self.wake).write(&[1]);
     }
 }
 
@@ -432,7 +496,19 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let log = Observer::new(&root).unwrap();
         let copy = address.clone();
-        let player = Player::spawn_with(log, move || connect(&copy)).unwrap();
+        let (wake_tx, wake_rx) = sync_channel(8);
+        let player = Player::spawn_inner(
+            log,
+            move || {
+                let mut channel = Channel::open_private(copy.trim())?;
+                channel.register()?;
+                Ok(channel)
+            },
+            Arc::new(move || {
+                let _ = wake_tx.try_send(());
+            }),
+        )
+        .unwrap();
         let mut model = AppModel {
             playback: PlaybackState::Playing,
             ..Default::default()
@@ -448,6 +524,7 @@ mod tests {
             player.actions.recv_timeout(Duration::from_secs(1)).unwrap(),
             RemoteAction::Pause
         );
+        wake_rx.recv_timeout(Duration::from_millis(100)).unwrap();
         requests.send((owner.clone(), "GetAll".into())).unwrap();
         assert_eq!(
             answers

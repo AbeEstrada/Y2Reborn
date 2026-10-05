@@ -10,6 +10,14 @@ use std::{
     time::Duration,
 };
 pub fn status() -> Value {
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    let platform = fs::read("/run/y2/power.json")
+        .ok()
+        .filter(|b| b.len() <= 8192)
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .filter(|v| {
+            crate::native::monotonic_seconds().is_some_and(|now| fresh_record(v, boot.trim(), now))
+        });
     let mut supplies = vec![];
     for entry in fs::read_dir("/sys/class/power_supply")
         .into_iter()
@@ -27,21 +35,24 @@ pub fn status() -> Value {
             "current_now",
             "temp",
         ] {
+            // The safety owner already samples BAT0. A fresh same-boot value
+            // avoids a redundant hardware ADC conversion for each UI poll.
+            if name == "voltage_now" && item["type"].as_str() == Some("Battery") {
+                if let Some(uv) = platform.as_ref().and_then(recorded_voltage) {
+                    item[name] = json!(uv.to_string());
+                    continue;
+                }
+            }
             if let Ok(v) = fs::read_to_string(entry.path().join(name)) {
                 item[name] = json!(v.trim());
             }
         }
         supplies.push(item);
     }
-    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-    let platform = fs::read("/run/y2/power.json")
-        .ok()
-        .filter(|b| b.len() <= 8192)
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .filter(|v| {
-            crate::native::monotonic_seconds().is_some_and(|now| fresh_record(v, boot.trim(), now))
-        });
     json!({"supplies":supplies,"backlight":backlight().map(|p|p.to_string_lossy().into_owned()),"platform":platform})
+}
+fn recorded_voltage(value: &Value) -> Option<u64> {
+    value["battery"]["voltage_uv"].as_u64().filter(|v| *v > 0)
 }
 fn fresh_record(value: &Value, boot: &str, now: f64) -> bool {
     value["boot_id"].as_str() == Some(boot)
@@ -216,6 +227,21 @@ pub fn acknowledge_shutdown(id: &str, ready: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn voltage_reuse_requires_fresh_same_boot_valid_observation() {
+        let value = json!({"boot_id":"one","monotonic_ns":1_000_000_000u64,
+                           "battery":{"voltage_uv":3_900_000}});
+        assert!(fresh_record(&value, "one", 2.0));
+        assert!(!fresh_record(&value, "two", 2.0));
+        assert!(!fresh_record(&value, "one", 6.0));
+        assert!(!fresh_record(&value, "one", 0.0));
+        assert_eq!(recorded_voltage(&value), Some(3_900_000));
+        assert_eq!(recorded_voltage(&json!({"battery":{"voltage_uv":0}})), None);
+        assert_eq!(
+            recorded_voltage(&json!({"battery":{"voltage_uv":-1}})),
+            None
+        );
+    }
     #[test]
     fn shutdown_intent_requires_current_boot_and_pending_state() {
         let mut value = json!({"schema":1,"state":"ShutdownPending","boot_id":"one",

@@ -6,6 +6,7 @@ use std::{
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -294,6 +295,58 @@ pub fn parse_mountinfo(s: &str) -> Vec<(u64, PathBuf)> {
 pub fn mounts() -> Vec<Mount> {
     parse_mounts(&fs::read_to_string("/proc/mounts").unwrap_or_default())
 }
+#[derive(Clone, PartialEq, Eq)]
+struct MountUuidKey {
+    device: String,
+    mount: u64,
+    instance: String,
+}
+
+#[derive(Default)]
+struct MountUuidCache(Vec<(MountUuidKey, String)>);
+impl MountUuidCache {
+    fn probe(
+        &mut self,
+        key: MountUuidKey,
+        probe: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
+        if let Some((_, uuid)) = self.0.iter().find(|(old, _)| old == &key) {
+            return Some(uuid.clone());
+        }
+        self.0.retain(|(old, _)| old.device != key.device);
+        let uuid = probe()?;
+        if self.0.len() >= 4 {
+            self.0.remove(0);
+        }
+        self.0.push((key, uuid.clone()));
+        Some(uuid)
+    }
+}
+
+fn mounted_uuid(device: &str, mount: Option<u64>) -> Option<String> {
+    // Mount ID and the kernel's diskseq/CID-qualified block lifetime are checked
+    // on every observation. Only the immutable UUID probe can be reused; cached
+    // evidence never admits a replacement mount/card or overrides live claims.
+    let instance = block_instance(&PathBuf::from(format!(
+        "/sys/class/block/{}",
+        Path::new(device).file_name()?.to_str()?
+    )));
+    let (Some(mount), Some(instance)) = (mount, instance) else {
+        return super::filesystem_uuid(device);
+    };
+    static CACHE: OnceLock<Mutex<MountUuidCache>> = OnceLock::new();
+    let key = MountUuidKey {
+        device: device.into(),
+        mount,
+        instance,
+    };
+    CACHE
+        .get_or_init(|| Mutex::new(MountUuidCache::default()))
+        .lock()
+        .ok()?
+        .probe(key, || super::filesystem_uuid(device))
+}
+
 pub fn sources(music: &Path) -> Vec<Source> {
     let m = mounts();
     let mountinfo =
@@ -304,11 +357,11 @@ pub fn sources(music: &Path) -> Vec<Source> {
             if !internal && !Path::new(&m.device).exists() {
                 continue;
             }
-            let mut uuid =
-                super::filesystem_uuid(&m.device).unwrap_or_else(|| format!("device:{}", m.device));
             let observed_mount = mountinfo
                 .iter()
                 .find_map(|(id, path)| (path == Path::new(mount_path)).then_some(*id));
+            let mut uuid = mounted_uuid(&m.device, observed_mount)
+                .unwrap_or_else(|| format!("device:{}", m.device));
             let mut sd_identity = None;
             if !internal && Path::new("/etc/y2linux/capabilities.json").exists() {
                 let claim = fs::read_to_string("/run/y2/media-mount.json")
@@ -572,6 +625,59 @@ impl TransferRefresh {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn uuid_probe_reused_only_for_same_mount_and_block_lifetime() {
+        use super::{MountUuidCache, MountUuidKey};
+        let mut cache = MountUuidCache::default();
+        let mut calls = 0;
+        let mut key = MountUuidKey {
+            device: "/dev/mmcblk1p1".into(),
+            mount: 35,
+            instance: "block:179:9:diskseq:4".into(),
+        };
+        assert_eq!(
+            cache.probe(key.clone(), || {
+                calls += 1;
+                Some("old".into())
+            }),
+            Some("old".into())
+        );
+        assert_eq!(
+            cache.probe(key.clone(), || {
+                calls += 1;
+                Some("ignored".into())
+            }),
+            Some("old".into())
+        );
+        assert_eq!(calls, 1);
+        key.mount = 36;
+        assert_eq!(
+            cache.probe(key.clone(), || {
+                calls += 1;
+                Some("remount".into())
+            }),
+            Some("remount".into())
+        );
+        key.instance = "block:179:9:diskseq:5".into();
+        assert_eq!(
+            cache.probe(key.clone(), || {
+                calls += 1;
+                Some("replacement".into())
+            }),
+            Some("replacement".into())
+        );
+        key.mount = 37;
+        assert_eq!(cache.probe(key.clone(), || None), None);
+        assert_eq!(
+            cache.probe(key, || {
+                calls += 1;
+                Some("recovered".into())
+            }),
+            Some("recovered".into())
+        );
+        assert_eq!(calls, 4);
+        assert_eq!(cache.0.len(), 1);
+    }
     use super::*;
     #[test]
     fn transfer_refresh_coalesces_and_retries_after_busy_or_unstable_media() {

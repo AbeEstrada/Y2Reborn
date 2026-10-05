@@ -314,6 +314,13 @@ impl InputManager {
         self.poll_at(Instant::now())
     }
     pub fn wait(&self, timeout: Duration) -> std::io::Result<()> {
+        self.wait_with(timeout, None)
+    }
+    pub fn wait_with(
+        &self,
+        timeout: Duration,
+        control: Option<std::os::fd::BorrowedFd<'_>>,
+    ) -> std::io::Result<()> {
         use std::os::fd::AsFd;
         // Preserve the existing repeat and long-press cadence while a button
         // is held; an idle wheel/Select/Back/Power wakes the poll immediately.
@@ -323,7 +330,10 @@ impl InputManager {
             timeout.min(Duration::from_millis(15))
         };
         crate::native::wait_readable(
-            self.files.iter().map(|(_, file, _, _)| file.as_fd()),
+            self.files
+                .iter()
+                .map(|(_, file, _, _)| file.as_fd())
+                .chain(control),
             timeout,
         )
         .map(|_| ())
