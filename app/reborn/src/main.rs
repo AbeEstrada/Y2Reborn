@@ -2635,6 +2635,22 @@ fn run() -> Result<(), String> {
                     input.reset_wheel();
                     input_screen_off = rt.model.screen_off;
                 }
+                if let Some((_, _, _, events)) = &mut monitor {
+                    if events.len() < 512 {
+                        events.push(json!({"device":event.device,"normalized":event.input,
+                            "kernel_mono_us":event.kernel_mono_us,"actions":actions,
+                            "state_applied_mono_us":input::monotonic_us(),
+                            "screen":rt.model.screen,"screen_off":rt.model.screen_off,
+                            "focus":rt.model.navigation.focus,"scroll":rt.model.navigation.scroll,
+                            "modal_focus":rt.model.navigation.modal_focus,"volume":rt.model.settings.volume,
+                            "pending_frame":!actions.is_empty() && !rt.model.screen_off && rt.dirty.render,
+                            "present_return_mono_us":null}));
+                    }
+                }
+                if input_screen_off != rt.model.screen_off {
+                    input.reset_wheel();
+                    input_screen_off = rt.model.screen_off;
+                }
             }
         }
         if monitor.as_ref().is_some_and(|m| Instant::now() > m.0) {
