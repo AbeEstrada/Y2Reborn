@@ -72,6 +72,23 @@ impl SleepState {
     }
 }
 
+/// Seconds the screen must stay dark before Wi-Fi is powered down at runtime.
+pub const WIFI_IDLE_OFF_SECS: u64 = 300;
+
+/// A running Wi-Fi radio owns the APDMA and BTIF clocks, which keeps CPU0 out of
+/// C2/C3 (measured on battery: no deep entry with Wi-Fi associated, 74% C3 with
+/// the radio off). Power it down at runtime, never touching the saved
+/// preference, only when the player is genuinely idle on battery.
+pub fn wifi_idle_power_down(
+    dark_secs: u64,
+    wifi_on: bool,
+    playing: bool,
+    on_battery: bool,
+    busy: bool,
+) -> bool {
+    wifi_on && on_battery && !playing && !busy && dark_secs >= WIFI_IDLE_OFF_SECS
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LdacQuality {
     Mobile,
@@ -368,6 +385,17 @@ mod tests {
         assert_eq!(human_bytes(128_000_000_000), "128 GB");
         assert_eq!(human_bytes(42_000_000), "42 MB");
         assert_eq!(human_bytes(900), "0 KB");
+    }
+
+    #[test]
+    fn wifi_powers_down_only_when_dark_idle_on_battery_and_unoccupied() {
+        let long = WIFI_IDLE_OFF_SECS;
+        assert!(wifi_idle_power_down(long, true, false, true, false));
+        assert!(!wifi_idle_power_down(long - 1, true, false, true, false));
+        assert!(!wifi_idle_power_down(long, false, false, true, false));
+        assert!(!wifi_idle_power_down(long, true, true, true, false));
+        assert!(!wifi_idle_power_down(long, true, false, false, false));
+        assert!(!wifi_idle_power_down(long, true, false, true, true));
     }
 
     #[test]

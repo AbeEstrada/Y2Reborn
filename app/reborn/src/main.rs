@@ -71,6 +71,10 @@ struct Runtime {
     active_transport_generation: Option<u64>,
     input_resume: bool,
     sleep_prepared: bool,
+    /// When the screen last went dark, for the idle radio policy.
+    dark_since: Option<Instant>,
+    /// Wi-Fi was blocked at runtime by that policy and must be restored on wake.
+    wifi_idle_off: bool,
 }
 
 fn sleep_control_allowed(command: &Command) -> bool {
@@ -1193,6 +1197,7 @@ impl Runtime {
                     }
                 }
                 self.model.apply(Event::ScreenSleep);
+                self.dark_since = Some(Instant::now());
                 self.log.emit(
                     Level::Info,
                     "power",
@@ -1219,6 +1224,8 @@ impl Runtime {
                 }
                 self.model.apply(Event::ScreenWake);
                 self.last_activity = Instant::now();
+                self.dark_since = None;
+                self.wifi_idle_restore();
                 self.log.emit(
                     Level::Info,
                     "power",
@@ -1592,6 +1599,75 @@ impl Runtime {
             }
         }
         self.dirty.mark_render();
+    }
+
+    /// Block Wi-Fi at runtime once the player has been dark and idle on battery
+    /// long enough. The saved preference is untouched; wake restores the radio.
+    fn wifi_idle_tick(&mut self) {
+        let Some(since) = self.dark_since else {
+            return;
+        };
+        if self.headless || self.wifi_idle_off {
+            return;
+        }
+        let playing = matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
+        let busy = self.model.platform.busy.is_some() || self.ui.wifi.scan.active();
+        let on_battery =
+            self.model.platform.battery.charging == reborn_core::platform::ChargingState::OnBattery;
+        if !reborn_core::platform::wifi_idle_power_down(
+            since.elapsed().as_secs(),
+            self.wifi_state.enabled,
+            playing,
+            on_battery,
+            busy,
+        ) {
+            return;
+        }
+        match wifi::radio(false, false) {
+            Ok(()) => {
+                self.wifi_idle_off = true;
+                self.log.emit(
+                    Level::Info,
+                    "wifi",
+                    "idle_power_down",
+                    "Wi-Fi blocked while the player is dark and idle",
+                    None,
+                    json!({"dark_seconds":since.elapsed().as_secs()}),
+                );
+            }
+            Err(error) => {
+                // Do not retry every tick; the next screen-off tries again.
+                self.dark_since = None;
+                self.log.emit(
+                    Level::Warn,
+                    "wifi",
+                    "idle_power_down_failed",
+                    "Wi-Fi idle power-down failed",
+                    None,
+                    json!({"error":error}),
+                );
+            }
+        }
+    }
+
+    fn wifi_idle_restore(&mut self) {
+        if !self.wifi_idle_off {
+            return;
+        }
+        self.wifi_idle_off = false;
+        if let Err(error) = wifi::radio(true, false) {
+            self.log.emit(
+                Level::Warn,
+                "wifi",
+                "idle_restore_failed",
+                "Wi-Fi restore after idle failed",
+                None,
+                json!({"error":error}),
+            );
+        }
     }
 
     /// Present the battery and announce a worsening low-battery level once.
@@ -2266,6 +2342,8 @@ fn run() -> Result<(), String> {
         active_transport_generation: None,
         input_resume: false,
         sleep_prepared: false,
+        dark_since: None,
+        wifi_idle_off: false,
     };
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
@@ -2468,6 +2546,7 @@ fn run() -> Result<(), String> {
                 break;
             }
         }
+        rt.wifi_idle_tick();
         log.heartbeat("ui", 10);
         if rt.ui.expire_notice() {
             rt.dirty.mark_render();
