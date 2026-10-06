@@ -100,15 +100,6 @@ struct Observation {
     elapsed_ms: f64,
 }
 
-/// Read-only periodic I/O runs on the existing watchdog. The UI remains the
-/// owner of battery presentation, media transitions and scanner requests.
-struct Observation {
-    music: PathBuf,
-    power: Value,
-    media: Option<(bool, Vec<Source>)>,
-    elapsed_ms: f64,
-}
-
 struct PendingReconfiguration {
     previous: AppModel,
     dirty_before: DirtyState,
@@ -2635,22 +2626,6 @@ fn run() -> Result<(), String> {
                     input.reset_wheel();
                     input_screen_off = rt.model.screen_off;
                 }
-                if let Some((_, _, _, events)) = &mut monitor {
-                    if events.len() < 512 {
-                        events.push(json!({"device":event.device,"normalized":event.input,
-                            "kernel_mono_us":event.kernel_mono_us,"actions":actions,
-                            "state_applied_mono_us":input::monotonic_us(),
-                            "screen":rt.model.screen,"screen_off":rt.model.screen_off,
-                            "focus":rt.model.navigation.focus,"scroll":rt.model.navigation.scroll,
-                            "modal_focus":rt.model.navigation.modal_focus,"volume":rt.model.settings.volume,
-                            "pending_frame":!actions.is_empty() && !rt.model.screen_off && rt.dirty.render,
-                            "present_return_mono_us":null}));
-                    }
-                }
-                if input_screen_off != rt.model.screen_off {
-                    input.reset_wheel();
-                    input_screen_off = rt.model.screen_off;
-                }
             }
         }
         if monitor.as_ref().is_some_and(|m| Instant::now() > m.0) {
@@ -3227,16 +3202,6 @@ fn run() -> Result<(), String> {
                     .background
                     .request()
                     .is_some_and(|request| observation_requests.try_send(request).is_ok())
-            {
-                observation_pending = true;
-            }
-        }
-        if periodic.elapsed() > Duration::from_secs(2) {
-            periodic = Instant::now();
-            if !observation_pending
-                && observation_requests
-                    .try_send(rt.model.settings.music_directory.clone())
-                    .is_ok()
             {
                 observation_pending = true;
             }

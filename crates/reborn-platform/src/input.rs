@@ -172,8 +172,6 @@ struct Record {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputEvent {
-    /// Kernel evdev timestamp; CLOCK_MONOTONIC is requested when opening.
-    pub evdev_us: Option<u64>,
     pub device: String,
     pub input: NormalizedInput,
     pub kernel_mono_us: Option<u64>,
@@ -505,7 +503,6 @@ impl InputManager {
         controls
             .into_iter()
             .map(|(_, control)| InputEvent {
-                evdev_us: None,
                 device: "input-recovery".into(),
                 kernel_mono_us: None,
                 input: NormalizedInput::Cancel(control),
@@ -627,7 +624,6 @@ impl InputManager {
                 }
             };
             return vec![InputEvent {
-                evdev_us: None,
                 device: device.to_owned(),
                 kernel_mono_us: None,
                 input: if clockwise {
@@ -653,7 +649,6 @@ impl InputManager {
                     },
                 );
                 vec![InputEvent {
-                    evdev_us: None,
                     device: device.to_owned(),
                     kernel_mono_us: None,
                     input: NormalizedInput::Press(control),
@@ -695,7 +690,6 @@ impl InputManager {
                 vec![]
             }
             NormalizedInput::Repeat(control) => vec![InputEvent {
-                evdev_us: None,
                 device: device.to_owned(),
                 kernel_mono_us: None,
                 input: NormalizedInput::Cancel(control),
@@ -721,7 +715,6 @@ impl InputManager {
                 state.long_emitted = true;
                 state.last_repeat = now;
                 events.push(InputEvent {
-                    evdev_us: None,
                     device: "timing".into(),
                     kernel_mono_us: None,
                     input: NormalizedInput::LongPress(control),
@@ -733,7 +726,6 @@ impl InputManager {
             {
                 state.last_repeat = now;
                 events.push(InputEvent {
-                    evdev_us: None,
                     device: "timing".into(),
                     kernel_mono_us: None,
                     input: NormalizedInput::Repeat(control),
@@ -1042,7 +1034,6 @@ mod tests {
         );
         let mut router = ActionRouter::default();
         let event = InputEvent {
-            evdev_us: None,
             device: CLICK_WHEEL.into(),
             kernel_mono_us: None,
             input: NormalizedInput::WheelClockwise(1),
@@ -1234,7 +1225,6 @@ mod tests {
     fn screen_off_drops_wheel_actions() {
         let mut router = ActionRouter::default();
         let event = InputEvent {
-            evdev_us: None,
             device: CLICK_WHEEL.into(),
             kernel_mono_us: None,
             input: NormalizedInput::WheelClockwise(1),
@@ -1394,7 +1384,6 @@ mod tests {
         assert!(router.route(&canceled[0], true).is_empty());
 
         let repeat = InputEvent {
-            evdev_us: None,
             device: "timing".into(),
             kernel_mono_us: None,
             input: NormalizedInput::Repeat(PhysicalControl::Next),

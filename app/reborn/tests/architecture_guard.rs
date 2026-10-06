@@ -21,7 +21,7 @@ const PLATFORM_LITERALS: [&str; 9] = [
 ];
 
 /// Justified exceptions outside the platform crate: (file, literal, reason).
-const ALLOWED: [(&str, &str, &str); 9] = [
+const ALLOWED: [(&str, &str, &str); 10] = [
     (
         "app/reborn/src/artwork.rs",
         "\"/proc/",
