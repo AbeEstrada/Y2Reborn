@@ -1,6 +1,6 @@
 # Y2Reborn complete document catalog
 
-Updated 2026-10-02. Every project-owned Markdown page in this repository
+Updated 2026-10-04. Every project-owned Markdown page in this repository
 is listed once; vendored upstream package documentation is excluded.
 Start with the current-state page; a historical
 report records its own build/session, not the presently installed image.
@@ -10,6 +10,7 @@ document links, rather than relocating or deleting proof. See the
 and the other repository's catalog for product-wide context.
 
 Indexed pages: **63**. Explicit historical/contract scope notices:
+Indexed pages: **59**. Explicit historical/contract scope notices:
 **40**.
 
 ## Entry
@@ -42,6 +43,7 @@ Indexed pages: **63**. Explicit historical/contract scope notices:
 | [Luna correctness closure 01](validation/LUNA-CORRECTNESS-CLOSURE-01.md) | Scoped validation record |
 | [LUNA Software Modernization 01](validation/LUNA-SOFTWARE-MODERNIZATION-01.md) | Scoped validation record |
 | [Platform v1 application integration](validation/PLATFORM-V1-INTEGRATION.md) | Scoped validation record |
+| [Platform 1.0 FFmpeg, metadata and library ingest](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) | Scoped validation record |
 | [REBORN-BASELINE-01 — first implementation handoff](validation/REBORN-BASELINE-01.md) | Scoped validation record |
 | [REBORN-RADIO-UI-01 — scan feedback correction](validation/REBORN-RADIO-UI-01.md) | Scoped validation record |
 | [REBORN-SPLASH-01](validation/REBORN-SPLASH-01.md) | Scoped validation record |

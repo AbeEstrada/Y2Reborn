@@ -57,7 +57,21 @@ pub struct Filter {
     pub offset: usize,
     pub limit: usize,
 }
+#[derive(Clone, Copy)]
+struct FileStamp {
+    id: i64,
+    size: u64,
+    mtime: i64,
+    metadata_revision: i64,
+}
+struct Candidate {
+    path: PathBuf,
+    logical_path: PathBuf,
+    meta: fs::Metadata,
+    mtime: i64,
+}
 enum DbCommand {
+    BeginScan(SyncSender<Result<i64, String>>),
     Sources(Vec<Source>),
     List(Filter, SyncSender<Result<Vec<Track>, String>>),
     Catalog(SyncSender<Result<Vec<Track>, String>>),
@@ -459,6 +473,14 @@ fn batch_tracked(
             }
         }
     }
+    {
+        let mut q = tx
+            .prepare_cached("UPDATE tracks SET seen=?1,deleted=0 WHERE id=?2")
+            .map_err(err)?;
+        for id in reused {
+            q.execute(params![seen, id]).map_err(err)?;
+        }
+    }
     tx.commit().map_err(err)
 }
 fn validate(c: &Connection) -> Result<serde_json::Value, String> {
@@ -706,6 +728,14 @@ impl Database {
                 json!({"error":error,"quarantined":quarantined}),
             );
         }
+        // Allocate strictly increasing scan markers in the single DB owner.
+        // Millisecond wall timestamps collide on fast consecutive rescans.
+        let mut scan_generation: i64 = c
+            .query_row("SELECT coalesce(max(seen),0) FROM tracks", [], |row| {
+                row.get(0)
+            })
+            .map_err(err)?;
+        scan_generation = scan_generation.max(reborn_observability::wall_ms() as i64);
         let (tx, rx) = sync_channel(32);
         thread::Builder::new()
             .name("database".into())
@@ -1198,6 +1228,141 @@ fn scan_sources_with_identity(
 ) -> Result<ScanMetrics, String> {
     scan_sources_with_identity_and_reuse(db, sources, log, stop, identity_is_current, true)
 }
+fn file_mtime(meta: &fs::Metadata) -> Option<i64> {
+    meta.modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|t| t.as_nanos().min(i64::MAX as u128) as i64)
+}
+fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+        && before.ctime() == after.ctime()
+        && before.ctime_nsec() == after.ctime_nsec()
+}
+#[allow(clippy::too_many_arguments)]
+fn ingest_candidates(
+    db: &Database,
+    source: &Source,
+    candidates: Vec<Candidate>,
+    seen: i64,
+    reuse: bool,
+    log: &Observer,
+    stats: &mut ScanMetrics,
+    stop: &AtomicBool,
+    identity_is_current: &impl Fn(&Source) -> bool,
+) -> Result<bool, String> {
+    let start = Instant::now();
+    let existing = if reuse {
+        db.existing(
+            source.id.clone(),
+            candidates.iter().map(|c| c.logical_path.clone()).collect(),
+        )?
+    } else {
+        vec![None; candidates.len()]
+    };
+    stats.db_us += start.elapsed().as_micros() as u64;
+    let mut tracks = Vec::with_capacity(64);
+    let mut reused = Vec::with_capacity(64);
+    let mut complete = true;
+    for (candidate, old) in candidates.into_iter().zip(existing) {
+        log.heartbeat("scanner", 30);
+        if stop.load(Ordering::Relaxed) {
+            return Err("scan cancelled".into());
+        }
+        if let Some(old) = old.filter(|old| {
+            old.size == candidate.meta.len()
+                && old.mtime == candidate.mtime
+                && old.metadata_revision == METADATA_REVISION
+        }) {
+            stats.reused += 1;
+            reused.push(old.id);
+            continue;
+        }
+        let start = Instant::now();
+        let parsed = MediaFile::open(&candidate.path, Cancel::new()?);
+        stats.metadata_us += start.elapsed().as_micros() as u64;
+        let mut media = match parsed {
+            Ok(media) => media,
+            Err(error) => {
+                complete = false;
+                stats.failures += 1;
+                log.add("library_scan_errors", 1.);
+                log.emit(
+                    Level::Warn,
+                    "scanner",
+                    "file_failed",
+                    &error,
+                    None,
+                    json!({"path":candidate.logical_path,"recovery":"retain_source_rows"}),
+                );
+                continue;
+            }
+        };
+        let m = std::mem::take(&mut media.metadata);
+        stats.ffmpeg_open_us += m.open_us;
+        stats.ffmpeg_probe_us += m.probe_us;
+        stats.ffmpeg_info_runs += m.info_runs as u64;
+        stats.ffmpeg_io_bytes += m.io_bytes;
+        // Reject mixed revisions when a transfer edits/replaces a file during parsing.
+        if !fs::metadata(&candidate.path).is_ok_and(|after| same_file(&candidate.meta, &after)) {
+            complete = false;
+            stats.failures += 1;
+            continue;
+        }
+        stats.rescanned += 1;
+        let filename = candidate
+            .logical_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        tracks.push(Track {
+            id: 0,
+            source_id: source.id.clone(),
+            path: candidate.logical_path,
+            filename: filename.clone(),
+            size: candidate.meta.len(),
+            mtime: candidate.mtime,
+            title: if m.title.is_empty() {
+                filename
+            } else {
+                m.title
+            },
+            artist: m.artist,
+            album: m.album,
+            album_artist: m.album_artist,
+            track: m.track,
+            disc: m.disc,
+            duration_ms: m.duration_ms,
+            codec: m.codec,
+            sample_rate: m.sample_rate,
+            channels: m.channels,
+            bitrate: m.bitrate,
+            artwork: m.artwork,
+            online: true,
+        });
+    }
+    let start = Instant::now();
+    // Check again after FFmpeg work and before any indexed data is published.
+    if !identity_is_current(source) {
+        stats.failures += 1;
+        return Ok(false);
+    }
+    let (reply, result) = sync_channel(1);
+    db.tx
+        .send(DbCommand::ScanBatch(tracks, reused, seen, reply))
+        .map_err(|e| e.to_string())?;
+    result
+        .recv_timeout(Duration::from_secs(15))
+        .map_err(|e| e.to_string())??;
+    stats.db_us += start.elapsed().as_micros() as u64;
+    Ok(complete)
+}
 fn scan_sources_with_identity_and_reuse(
     db: &Database,
     sources: &[Source],
@@ -1361,7 +1526,7 @@ fn scan_sources_with_identity_and_reuse(
                 .process(std::mem::take(&mut batch_items))?;
             }
         }
-        if !batch_items.is_empty() {
+        if !candidates.is_empty() {
             if identity_is_current(source) {
                 ScanBatch {
                     db,
