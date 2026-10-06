@@ -44,6 +44,7 @@ Indexed pages: **59**. Explicit historical/contract scope notices:
 | [LUNA Software Modernization 01](validation/LUNA-SOFTWARE-MODERNIZATION-01.md) | Scoped validation record |
 | [Platform v1 application integration](validation/PLATFORM-V1-INTEGRATION.md) | Scoped validation record |
 | [Platform 1.0 FFmpeg, metadata and library ingest](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) | Scoped validation record |
+| [Reborn Platform 1.0 performance and responsiveness](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) | Scoped validation record |
 | [REBORN-BASELINE-01 — first implementation handoff](validation/REBORN-BASELINE-01.md) | Scoped validation record |
 | [REBORN-RADIO-UI-01 — scan feedback correction](validation/REBORN-RADIO-UI-01.md) | Scoped validation record |
 | [REBORN-SPLASH-01](validation/REBORN-SPLASH-01.md) | Scoped validation record |

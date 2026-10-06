@@ -100,6 +100,15 @@ struct Observation {
     elapsed_ms: f64,
 }
 
+/// Read-only periodic I/O runs on the existing watchdog. The UI remains the
+/// owner of battery presentation, media transitions and scanner requests.
+struct Observation {
+    music: PathBuf,
+    power: Value,
+    media: Option<(bool, Vec<Source>)>,
+    elapsed_ms: f64,
+}
+
 struct PendingReconfiguration {
     previous: AppModel,
     dirty_before: DirtyState,
@@ -3202,6 +3211,16 @@ fn run() -> Result<(), String> {
                     .background
                     .request()
                     .is_some_and(|request| observation_requests.try_send(request).is_ok())
+            {
+                observation_pending = true;
+            }
+        }
+        if periodic.elapsed() > Duration::from_secs(2) {
+            periodic = Instant::now();
+            if !observation_pending
+                && observation_requests
+                    .try_send(rt.model.settings.music_directory.clone())
+                    .is_ok()
             {
                 observation_pending = true;
             }
