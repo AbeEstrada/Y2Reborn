@@ -2,6 +2,7 @@
 mod artwork;
 mod background;
 mod diagnostics;
+mod graphics_recovery;
 mod performance;
 mod playback;
 mod volume;
@@ -52,6 +53,7 @@ struct Runtime {
     wifi_state: wifi::Status,
     bt_state: bluetooth::Status,
     graphics: Option<Renderer>,
+    graphics_recovery: graphics_recovery::Recovery,
     power: Value,
     kernel_events: Arc<Mutex<Vec<String>>>,
     background: background::Gate,
@@ -519,6 +521,7 @@ impl Runtime {
                     .ui
                     .draw(&self.model, &self.model.library.tracks, self.art),
             )?;
+            self.graphics_recovery.presented();
         } else if !self.headless {
             return Err("display_restoration_failed".into());
         }
@@ -526,6 +529,22 @@ impl Runtime {
         self.last_activity = Instant::now();
         self.dirty.mark_render();
         Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
+    }
+
+    fn recreate_graphics(&mut self) -> Result<(), String> {
+        self.art = false;
+        self.ui.collection_art = None;
+        if let Some(worker) = &mut self.collection_art {
+            worker.selected = None;
+        }
+        self.graphics = Some(Renderer::open(
+            reborn_ui::font_atlas(),
+            reborn_ui::display_font_atlas(),
+            &reborn_ui::icons_atlas(),
+            self.log.clone(),
+        )?);
+        self.dirty.mark_render();
+        Ok(())
     }
 
     fn checkpoint(&mut self) {
@@ -1217,10 +1236,14 @@ impl Runtime {
                 );
             }
             Effect::ScreenWake => {
-                if !self.model.screen_off {
+                if !self.model.screen_off && (self.headless || self.graphics.is_some()) {
                     return Ok(());
                 }
                 if !self.headless {
+                    self.graphics_recovery.wake();
+                    if self.graphics.is_none() {
+                        self.recreate_graphics()?;
+                    }
                     if let Some(graphics) = self.graphics.as_mut() {
                         graphics.sleep(false)?;
                     }
@@ -2383,6 +2406,7 @@ fn run() -> Result<(), String> {
         wifi_state: Default::default(),
         bt_state: Default::default(),
         graphics,
+        graphics_recovery: graphics_recovery::Recovery::default(),
         power: power::status(),
         kernel_events: Arc::new(Mutex::new(Vec::new())),
         background,
@@ -3335,26 +3359,21 @@ fn run() -> Result<(), String> {
             if rt.graphics.is_none() && fading {
                 rt.boot_fade -= 1;
             }
+            let mut presentation_failed = false;
             if let Some(g) = &mut rt.graphics {
                 if let Err(e) = g.render(&draw) {
+                    presentation_failed = true;
                     rt.fail("graphics", e);
                     rt.graphics = None;
                     // One bounded recreation attempt. Further attempts wait for an explicit wake.
-                    rt.art = false;
-                    rt.ui.collection_art = None;
-                    if let Some(worker) = &mut rt.collection_art {
-                        worker.selected = None;
-                    }
-                    if let Ok(g) = Renderer::open(
-                        reborn_ui::font_atlas(),
-                        reborn_ui::display_font_atlas(),
-                        &reborn_ui::icons_atlas(),
-                        log.clone(),
-                    ) {
-                        rt.graphics = Some(g);
+                    if rt.graphics_recovery.failed() {
+                        if let Err(error) = rt.recreate_graphics() {
+                            rt.fail("graphics", error);
+                        }
                     }
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                 } else {
+                    rt.graphics_recovery.presented();
                     if performance.enabled() {
                         performance.record("frame", json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,"quads":draw.len(),"layout_ms":layout_ms,"frame_ms":frame_started.elapsed().as_secs_f64()*1000.,"render":g.timings}));
                     }
@@ -3416,7 +3435,7 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            if rt.boot_fade == 0 {
+            if rt.boot_fade == 0 && !presentation_failed {
                 rt.dirty.rendered();
             }
         }

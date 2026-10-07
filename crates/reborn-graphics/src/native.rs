@@ -46,6 +46,7 @@ pub struct Renderer {
     pub width: u32,
     pub height: u32,
     log: Observer,
+    presented: bool,
     pub timings: FrameTimings,
 }
 #[derive(Default, serde::Serialize)]
@@ -118,13 +119,19 @@ impl Renderer {
             None,
             json!({"width":width,"height":height,"format":"XRGB8888","scanout":"GBM linear KMS"}),
         );
-        log.health_set("graphics", HealthState::Ok, true, &info);
+        log.health_set(
+            "graphics",
+            HealthState::Degraded,
+            true,
+            "context created; waiting for frame completion",
+        );
         Ok(Self {
             raw,
             info,
             width,
             height,
             log,
+            presented: false,
             timings: FrameTimings::default(),
         })
     }
@@ -205,6 +212,7 @@ impl Renderer {
             start.elapsed().as_secs_f64() * 1000.,
         );
         if r < 0 {
+            self.presented = false;
             self.log.add("graphics_context_losses", 1.);
             self.log
                 .health_set("graphics", HealthState::Failed, true, "presentation failed");
@@ -214,6 +222,11 @@ impl Renderer {
             self.log.add("graphics_missed_frames", 1.)
         }
         self.log.add("graphics_frames", 1.);
+        if !self.presented {
+            self.log
+                .health_set("graphics", HealthState::Ok, true, &self.info);
+            self.presented = true;
+        }
         Ok(())
     }
     pub fn artwork(&mut self, rgba: &[u8]) -> Result<(), String> {

@@ -102,13 +102,14 @@ static _Thread_local char last_error[256];
 const char *rb_graphics_error(void) { return last_error; }
 typedef struct {
   int fd, width, height, modeset;
-  bool sleeping;
+  bool sleeping, failed;
   uint32_t crtc, connector;
   drmModeCrtc *old;
   drmModeModeInfo mode;
   struct gbm_device *gbm;
   struct gbm_surface *surface;
   struct gbm_bo *current;
+  struct gbm_bo *pending;
   EGLDisplay display;
   EGLSurface window;
   EGLContext context;
@@ -146,7 +147,10 @@ int rb_graphics_sleep(RbGraphics *g, int off) {
 void rb_graphics_close(RbGraphics *g) {
   if (!g)
     return;
-  if (g->modeset && g->old) {
+  if (g->modeset && g->failed) {
+    /* A missing frame completion must not restart a stale scanout on close. */
+    drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
+  } else if (g->modeset && g->old) {
     int r = g->old->mode_valid
                 ? drmModeSetCrtc(g->fd, g->old->crtc_id, g->old->buffer_id,
                                  g->old->x, g->old->y, &g->connector, 1,
@@ -177,6 +181,8 @@ void rb_graphics_close(RbGraphics *g) {
   }
   if (g->current)
     gbm_surface_release_buffer(g->surface, g->current);
+  if (g->pending)
+    gbm_surface_release_buffer(g->surface, g->pending);
   if (g->display != EGL_NO_DISPLAY) {
     eglMakeCurrent(g->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (g->window != EGL_NO_SURFACE)
@@ -521,6 +527,7 @@ int rb_graphics_readback(RbGraphics *g, uint8_t *pixels) {
 }
 int rb_graphics_present(RbGraphics *g) {
   flush_batch(g);
+  if (g->failed) return -EIO;
   if (g->sleeping) return -EHOSTDOWN;
   if (glGetError() != GL_NO_ERROR || !eglSwapBuffers(g->display, g->window))
     return -EIO;
@@ -532,8 +539,9 @@ int rb_graphics_present(RbGraphics *g) {
     gbm_surface_release_buffer(g->surface, bo);
     return -EIO;
   }
+  int handoff = -1, error;
   if (!g->modeset) {
-    int handoff = rb_splash_begin("/run/reborn-splash/control.sock");
+    handoff = rb_splash_begin("/run/reborn-splash/control.sock");
     if (handoff < -1) {
       gbm_surface_release_buffer(g->surface, bo);
       return handoff + 1;
@@ -546,27 +554,34 @@ int rb_graphics_present(RbGraphics *g) {
       return -error;
     }
     g->modeset = 1;
-    if (handoff >= 0) {
-      /* The old splash FB is destroyed after our acknowledgement. Never try
-       * restoring that retired buffer on shutdown or context recreation. */
-      drmModeFreeCrtc(g->old); g->old = NULL;
-      rb_splash_presented(handoff);
-    }
-  } else {
-    g->flip.waiting = true;
-    if (drmModePageFlip(g->fd, g->crtc, f->id, DRM_MODE_PAGE_FLIP_EVENT,
-                        &g->flip)) {
-      gbm_surface_release_buffer(g->surface, bo);
-      return -errno;
-    }
-    if (wait_flip(g->fd, &g->flip)) {
-      drmModeSetCrtc(g->fd, g->crtc, 0, 0, 0, NULL, 0, NULL);
-      gbm_surface_release_buffer(g->surface, bo);
-      return -ETIMEDOUT;
-    }
+  }
+  /* SetCrtc can return success after a kernel vblank timeout. Require an
+   * actual page-flip completion even for the first frame, before readiness
+   * or releasing the splash. Retain both buffers until stopped on failure. */
+  g->pending = bo;
+  g->flip.waiting = true;
+  if (drmModePageFlip(g->fd, g->crtc, f->id, DRM_MODE_PAGE_FLIP_EVENT,
+                      &g->flip)) {
+    error = -errno;
+    g->flip.waiting = false;
+    goto failed;
+  }
+  if (wait_flip(g->fd, &g->flip)) {
+    error = -ETIMEDOUT;
+    goto failed;
+  }
+  if (handoff >= 0) {
+    /* The old splash FB is destroyed after our acknowledgement. */
+    drmModeFreeCrtc(g->old); g->old = NULL;
+    rb_splash_presented(handoff);
   }
   if (g->current)
     gbm_surface_release_buffer(g->surface, g->current);
   g->current = bo;
+  g->pending = NULL;
   return 0;
+failed:
+  if (handoff >= 0) close(handoff);
+  g->failed = true;
+  return error;
 }

@@ -23,7 +23,7 @@ sequence is:
    already full and the status is "Starting Reborn" (milestone `ready`).
 3. Reborn sends `READY 1`. The splash completes bar and status if they are not
    already there, drops DRM master and replies `RELEASED 1`. There is no timer.
-4. Reborn takes master, presents that frame, and sends `PRESENTED 1`; the splash
+4. Reborn takes master, waits for the frame's page-flip completion, and sends `PRESENTED 1`; the splash
    destroys its buffer and exits. The first presented frame is pixel-identical
    to the splash's last frame.
 5. Reborn reveals the UI over `BOOT_FADE_FRAMES` (10) frames, ≈0.34 s: the bar
@@ -31,6 +31,21 @@ sequence is:
    dissolves with the cover on an ease-in-out curve. Input is ignored until the
    UI is fully visible. `application_ready` is announced after the first frame
    is presented, not before.
+
+`drmModeSetCrtc` returning zero is insufficient: physical deep-sleep validation
+found a boot where it returned after a kernel vblank timeout. The native path
+therefore requests and waits for a page-flip event even on its first frame.
+Missing completion or a rejected flip fails readiness, retains scanout buffers
+until teardown, and reports failed graphics health. Context creation alone is
+reported as waiting for presentation. The native regression executes the actual
+implementation with missing/failed/completed events and fails on the old code.
+
+Repeated presentation failure allows one automatic renderer recreation, then
+waits for an explicit screen wake. A completed frame restores that budget.
+This prevents the observed repeated context creation/logging during a display
+fault; it does not repair the underlying kernel or hardware fault. A splash
+handoff retry must complete a fresh READY/RELEASED handshake even if the splash
+could not reclaim DRM master after the previous client timed out.
 
 ## Why the logo used to stay up
 
