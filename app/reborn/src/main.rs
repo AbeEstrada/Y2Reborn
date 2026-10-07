@@ -71,10 +71,14 @@ struct Runtime {
     active_transport_generation: Option<u64>,
     input_resume: bool,
     sleep_prepared: bool,
+    sleep_prepared_since: Option<Instant>,
     /// When the screen last went dark, for the idle radio policy.
     dark_since: Option<Instant>,
+    /// Last request or active work; bounds retries and the pause-to-sleep delay.
+    sleep_attempt: Option<Instant>,
     /// Wi-Fi was blocked at runtime by that policy and must be restored on wake.
     wifi_idle_off: bool,
+    wifi_idle_failed: bool,
 }
 
 fn sleep_control_allowed(command: &Command) -> bool {
@@ -471,6 +475,7 @@ impl Runtime {
             return Err("sleep_preparation_busy".into());
         }
         let prepared = (|| {
+            self.db.prepare_sleep(Duration::from_secs(2))?;
             self.model.platform.snapshot.sleep.phase =
                 reborn_core::platform::SleepPhase::SleepPreparing;
             self.model
@@ -490,6 +495,7 @@ impl Runtime {
             return Err(error);
         }
         self.sleep_prepared = true;
+        self.sleep_prepared_since = Some(Instant::now());
         Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
     }
 
@@ -498,6 +504,7 @@ impl Runtime {
         // input is accepted again, so its release cannot request another sleep.
         self.input_resume = true;
         self.sleep_prepared = false;
+        self.sleep_prepared_since = None;
         self.scanner.resume();
         self.background.update(
             &self.model.settings.music_directory,
@@ -832,6 +839,7 @@ impl Runtime {
                     return Ok(());
                 }
                 if task == reborn_core::PlatformTask::SleepRequest {
+                    self.sleep_attempt = Some(Instant::now());
                     use reborn_core::platform::{SleepPhase, SleepProblem, SleepState};
                     if matches!(
                         self.model.playback,
@@ -1198,6 +1206,7 @@ impl Runtime {
                 }
                 self.model.apply(Event::ScreenSleep);
                 self.dark_since = Some(Instant::now());
+                self.wifi_idle_failed = false;
                 self.log.emit(
                     Level::Info,
                     "power",
@@ -1607,7 +1616,7 @@ impl Runtime {
         let Some(since) = self.dark_since else {
             return;
         };
-        if self.headless || self.wifi_idle_off {
+        if self.headless || self.wifi_idle_off || self.wifi_idle_failed {
             return;
         }
         let playing = matches!(
@@ -1640,7 +1649,7 @@ impl Runtime {
             }
             Err(error) => {
                 // Do not retry every tick; the next screen-off tries again.
-                self.dark_since = None;
+                self.wifi_idle_failed = true;
                 self.log.emit(
                     Level::Warn,
                     "wifi",
@@ -1650,6 +1659,60 @@ impl Runtime {
                     json!({"error":error}),
                 );
             }
+        }
+    }
+
+    fn automatic_sleep_tick(&mut self) {
+        // A crashed helper must not leave a stale preparation flag swallowing
+        // input forever. Time asleep does not advance Instant. The actual flock
+        // (not a PID file) distinguishes a live owner from an abandoned request.
+        if self.sleep_prepared
+            && self
+                .sleep_prepared_since
+                .is_some_and(|since| since.elapsed().as_secs() >= 15)
+            && matches!(power::sleep_owner_present(), Ok(false))
+        {
+            let result = self.restore_sleep();
+            self.model.platform.snapshot.sleep.phase =
+                reborn_core::platform::SleepPhase::RestoreFailed;
+            self.model.platform.snapshot.sleep.problem =
+                Some(reborn_core::platform::SleepProblem::RestorationFailed);
+            self.log.emit(
+                Level::Error,
+                "power",
+                "sleep_owner_lost",
+                "Sleep owner stopped before restoration",
+                None,
+                json!({"application_restore":result}),
+            );
+        }
+        if self.headless || self.sleep_prepared {
+            return;
+        }
+        let playing = matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
+        let busy = self.model.platform.busy.is_some()
+            || self.playback.has_pending_start()
+            || self.pending_reconfiguration.is_some()
+            || self.model.library.scanning
+            || self.query.is_some();
+        if playing || busy || !self.model.screen_off {
+            self.sleep_attempt = Some(Instant::now());
+            return;
+        }
+        if reborn_core::platform::automatic_sleep_due(
+            self.model.screen_off,
+            self.dark_since.map(|since| since.elapsed().as_secs()),
+            self.last_activity.elapsed().as_secs(),
+            self.sleep_attempt.map(|since| since.elapsed().as_secs()),
+            playing,
+            busy,
+        ) {
+            // Platform owns fresh USB/battery/workload checks and the operation
+            // locks. Preparation drains the DB and closes PCM before entry.
+            let _ = self.effect(Effect::Platform(reborn_core::PlatformTask::SleepRequest));
         }
     }
 
@@ -2342,8 +2405,11 @@ fn run() -> Result<(), String> {
         active_transport_generation: None,
         input_resume: false,
         sleep_prepared: false,
+        sleep_prepared_since: None,
         dark_since: None,
+        sleep_attempt: None,
         wifi_idle_off: false,
+        wifi_idle_failed: false,
     };
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
@@ -2421,7 +2487,7 @@ fn run() -> Result<(), String> {
     let mut input_screen_off = rt.model.screen_off;
     let mut last_sd = storage::sd_present();
     let mut usb_refresh = storage::TransferRefresh::default();
-    let mut observation_pending = false;
+    let mut observation_pending = None;
     let mut xrun_bundle = 0.;
     let mut shutdown_intent = None;
     let mut power_poll = Instant::now() - Duration::from_secs(1);
@@ -2448,7 +2514,7 @@ fn run() -> Result<(), String> {
             &rt.model.sources,
             rt.sleep_prepared,
         ) {
-            observation_pending = false;
+            observation_pending = None;
         }
         if let Some(worker) = &mut rt.collection_art {
             let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
@@ -3082,7 +3148,7 @@ fn run() -> Result<(), String> {
             &rt.model.sources,
             rt.sleep_prepared,
         ) {
-            observation_pending = false;
+            observation_pending = None;
         }
         if let Ok(observation) = observations.try_recv().and_then(|o| {
             if rt.background.accepts(&o.request) {
@@ -3091,7 +3157,7 @@ fn run() -> Result<(), String> {
                 Err(std::sync::mpsc::TryRecvError::Empty)
             }
         }) {
-            observation_pending = false;
+            observation_pending = None;
             if performance.enabled() {
                 performance.record(
                     "background_observation",
@@ -3190,20 +3256,21 @@ fn run() -> Result<(), String> {
         }
         if periodic.elapsed() > Duration::from_secs(2) {
             periodic = Instant::now();
+            rt.automatic_sleep_tick();
             if rt.background.update(
                 &rt.model.settings.music_directory,
                 &rt.model.sources,
                 rt.sleep_prepared,
             ) {
-                observation_pending = false;
+                observation_pending = None;
             }
-            if !observation_pending
-                && rt
-                    .background
-                    .request()
-                    .is_some_and(|request| observation_requests.try_send(request).is_ok())
-            {
-                observation_pending = true;
+            rt.background.refresh_pending(&mut observation_pending);
+            if observation_pending.is_none() {
+                if let Some(request) = rt.background.request() {
+                    if observation_requests.try_send(request.clone()).is_ok() {
+                        observation_pending = Some(request);
+                    }
+                }
             }
             if !headless
                 && !rt.model.screen_off

@@ -75,6 +75,24 @@ impl SleepState {
 /// Seconds the screen must stay dark before Wi-Fi is powered down at runtime.
 pub const WIFI_IDLE_OFF_SECS: u64 = 300;
 
+/// Recently paused stays in runtime idle; a dark, untouched player eventually
+/// asks the platform for full suspend. A refusal retries at most once a minute.
+pub fn automatic_sleep_due(
+    screen_off: bool,
+    dark_seconds: Option<u64>,
+    inactive_seconds: u64,
+    since_attempt_seconds: Option<u64>,
+    playing: bool,
+    busy: bool,
+) -> bool {
+    screen_off
+        && !playing
+        && !busy
+        && dark_seconds.is_some_and(|seconds| seconds >= 60)
+        && inactive_seconds >= 60
+        && since_attempt_seconds.is_none_or(|seconds| seconds >= 60)
+}
+
 /// A running Wi-Fi radio owns the APDMA and BTIF clocks, which keeps CPU0 out of
 /// C2/C3 (measured on battery: no deep entry with Wi-Fi associated, 74% C3 with
 /// the radio off). Power it down at runtime, never touching the saved
@@ -421,5 +439,53 @@ mod tests {
             ..SleepState::default()
         };
         assert!(!sleeping.refused_but_screen_can_blank());
+    }
+
+    #[test]
+    fn automatic_sleep_waits_for_dark_inactivity_and_retries_after_ownership_ends() {
+        assert!(!automatic_sleep_due(true, Some(59), 60, None, false, false));
+        assert!(!automatic_sleep_due(true, Some(60), 59, None, false, false));
+        assert!(!automatic_sleep_due(
+            false,
+            Some(600),
+            600,
+            None,
+            false,
+            false
+        ));
+        assert!(!automatic_sleep_due(true, None, 600, None, false, false));
+        assert!(!automatic_sleep_due(
+            true,
+            Some(600),
+            600,
+            None,
+            true,
+            false
+        ));
+        assert!(!automatic_sleep_due(
+            true,
+            Some(600),
+            600,
+            None,
+            false,
+            true
+        ));
+        assert!(!automatic_sleep_due(
+            true,
+            Some(600),
+            600,
+            Some(59),
+            false,
+            false
+        ));
+        assert!(automatic_sleep_due(
+            true,
+            Some(600),
+            600,
+            Some(60),
+            false,
+            false
+        ));
+        assert!(automatic_sleep_due(true, Some(60), 60, None, false, false));
     }
 }

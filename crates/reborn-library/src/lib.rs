@@ -75,6 +75,7 @@ enum DbCommand {
     #[cfg(test)]
     TestSql(String, SyncSender<Result<(), String>>),
     Stop,
+    PrepareSleep(SyncSender<Result<(), String>>),
     Shutdown(SyncSender<Result<(), String>>),
 }
 #[derive(Clone)]
@@ -723,6 +724,18 @@ impl Database {
                     let now = Instant::now();
                     let result: Result<(), String> = match msg {
                         DbCommand::Stop => break,
+                        DbCommand::PrepareSleep(reply) => {
+                            // FIFO delivery drains earlier commands. The caller
+                            // already quiesced producers; a scan/transaction
+                            // must explicitly finish before whole-system sleep.
+                            let ready = if active_scan.is_none() && c.is_autocommit() {
+                                Ok(())
+                            } else {
+                                Err("database_operation_active".into())
+                            };
+                            let _ = reply.try_send(ready);
+                            Ok(())
+                        }
                         DbCommand::Shutdown(reply) => {
                             let checkpoint = c
                                 .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
@@ -892,6 +905,17 @@ impl Database {
     }
     pub fn stop(&self) {
         let _ = self.tx.try_send(DbCommand::Stop);
+    }
+    /// Drain earlier work after producers have stopped submitting mutations.
+    /// The normal filesystem sync preserves SQLite's committed WAL; no extra
+    /// checkpoint or recurring disk write is introduced merely to sleep.
+    pub fn prepare_sleep(&self, timeout: Duration) -> Result<(), String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .try_send(DbCommand::PrepareSleep(tx))
+            .map_err(|e| format!("database sleep queue: {e}"))?;
+        rx.recv_timeout(timeout)
+            .map_err(|e| format!("database sleep barrier: {e}"))?
     }
     pub fn shutdown(&self, timeout: Duration) -> Result<(), String> {
         let (tx, rx) = sync_channel(1);

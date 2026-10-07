@@ -62,6 +62,16 @@ impl Gate {
     pub fn accepts(&self, request: &Request) -> bool {
         !self.prepared && self.authority.current(request)
     }
+    /// Quiesce can happen inside a control callback, before the main loop sees
+    /// the state change. A discarded old request will never send a completion.
+    pub fn refresh_pending(&self, pending: &mut Option<Request>) {
+        if pending
+            .as_ref()
+            .is_some_and(|request| !self.accepts(request))
+        {
+            *pending = None;
+        }
+    }
     /// Invalidate queued and in-flight results before acknowledging sleep.
     /// An active read must finish before the caller can acknowledge preparation.
     pub fn quiesce(&mut self) -> bool {
@@ -148,5 +158,24 @@ mod tests {
         release.send(()).unwrap();
         assert_eq!(worker.join().unwrap(), None);
         assert!(gate.quiesce());
+    }
+
+    #[test]
+    fn quiesce_and_resume_between_main_ticks_cannot_strand_battery_observation() {
+        let mut gate = Gate::new(Path::new("/music"), &[]);
+        let request = gate.request().unwrap();
+        let mut pending = Some(request.clone());
+        assert!(gate.quiesce());
+        assert!(gate.authority().run(&request, || 42).is_none());
+        gate.update(Path::new("/music"), &[], false);
+        // The control callback already consumed the state transition.
+        assert!(!gate.update(Path::new("/music"), &[], false));
+        gate.refresh_pending(&mut pending);
+        assert!(pending.is_none());
+        let fresh = gate.request().unwrap();
+        assert_eq!(gate.authority().run(&fresh, || 43), Some(43));
+        pending = Some(fresh);
+        gate.refresh_pending(&mut pending);
+        assert!(pending.is_some());
     }
 }

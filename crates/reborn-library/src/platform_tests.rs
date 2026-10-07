@@ -47,6 +47,42 @@ fn count(c: &Connection) -> i64 {
     .unwrap()
 }
 #[test]
+fn sleep_barrier_drains_fifo_work_and_refuses_an_open_transaction() {
+    let root = scratch("sleep-barrier");
+    let db = Database::spawn(
+        root.join("library.db"),
+        Observer::new(&root.join("logs")).unwrap(),
+    )
+    .unwrap();
+    db.sources(vec![source("sleep-source")]).unwrap();
+    db.prepare_sleep(Duration::from_secs(2)).unwrap();
+    let c = Connection::open(root.join("library.db")).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM sources WHERE id='sleep-source'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    db.execute_test_sql("BEGIN IMMEDIATE".into()).unwrap();
+    assert_eq!(
+        db.prepare_sleep(Duration::from_secs(2)).unwrap_err(),
+        "database_operation_active"
+    );
+    db.execute_test_sql("ROLLBACK".into()).unwrap();
+    db.prepare_sleep(Duration::from_secs(2)).unwrap();
+    db.begin_scan("sleep-source".into()).unwrap();
+    assert_eq!(
+        db.prepare_sleep(Duration::from_secs(2)).unwrap_err(),
+        "database_operation_active"
+    );
+    db.shutdown(Duration::from_secs(2)).unwrap();
+    drop(c);
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
 fn fifty_thousand_catalog_has_no_cap_or_duplicate_boundary_rows() {
     let root = scratch("large");
     let mut c = seeded(&root);

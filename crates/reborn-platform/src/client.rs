@@ -569,7 +569,13 @@ pub fn sleep(value: &Value) -> SleepState {
                 SleepProblem::ChargerActive
             } else if s.contains("playback") || s.contains("audio_active") {
                 SleepProblem::PlaybackActive
-            } else if s.contains("busy") || s.contains("maintenance") || s.contains("in_progress") {
+            } else if s.contains("busy")
+                || s.contains("maintenance")
+                || s.contains("in_progress")
+                || s.contains("workload")
+                || s.contains("firmware_update")
+                || s.contains("activity_operation")
+            {
                 SleepProblem::Busy
             } else if s.contains("boot") {
                 SleepProblem::DifferentBoot

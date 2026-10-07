@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{Read, Write},
     os::unix::net::UnixStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     time::Duration,
 };
@@ -275,5 +275,38 @@ mod tests {
         assert_eq!(brightness_value(255, 0), 26);
         assert_eq!(brightness_value(4, 20), 1);
         assert_eq!(brightness_value(1023, 60), 614);
+    }
+}
+
+/// A real process-owned PM lock, not a stale PID or marker file.
+pub fn sleep_owner_present() -> std::io::Result<bool> {
+    sleep_owner_at(Path::new("/run/y2/suspend.lock"))
+}
+fn sleep_owner_at(path: &Path) -> std::io::Result<bool> {
+    let lock = match fs::File::open(path) {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    match lock.try_lock_shared() {
+        Ok(()) => Ok(false),
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(error)) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod sleep_owner_tests {
+    use super::*;
+    #[test]
+    fn sleep_owner_is_the_live_lock_not_a_leftover_file() {
+        let path = std::env::temp_dir().join(format!("reborn-sleep-owner-{}", std::process::id()));
+        let owner = fs::File::create(&path).unwrap();
+        assert!(!sleep_owner_at(&path).unwrap());
+        owner.lock().unwrap();
+        assert!(sleep_owner_at(&path).unwrap());
+        drop(owner);
+        assert!(!sleep_owner_at(&path).unwrap());
+        fs::remove_file(path).unwrap();
     }
 }
