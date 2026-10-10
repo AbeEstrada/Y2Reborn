@@ -41,7 +41,7 @@ impl CodecPreference {
 /// The product version shown to people.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The build identity used by logs, the control socket and Diagnostics.
-pub const BUILD_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), "-product-ui-v2");
+pub const BUILD_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), "-product-ui-v3");
 
 /// A platform release string reduced to its version number, e.g.
 /// `1.0.0-cpu-final-fix03-candidate.1` → `1.0.0`.
@@ -283,9 +283,11 @@ pub enum Action {
     WheelCounterClockwise(u8),
     ScreenWake,
     ScreenSleep,
-    PowerMenu,
     PowerShort,
+    /// The Power button has been held long enough to start the turn-off hold.
     PowerHold,
+    /// Power was released (or the press cancelled) after `PowerHold`.
+    PowerHoldCancel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -330,7 +332,6 @@ pub enum Screen {
     Folders,
     Album,
     Artist,
-    LibraryIndex,
     NowPlaying,
     Queue,
     TrackInfo,
@@ -341,6 +342,10 @@ pub enum Screen {
     SettingsAudio,
     Equalizer,
     SettingsPlayback,
+    /// Crossfade length picker.
+    Crossfade,
+    /// Screen-off delay picker.
+    ScreenTimeout,
     SettingsLibrary,
     SettingsDisplay,
     SettingsSystem,
@@ -384,8 +389,6 @@ pub struct NavigationFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
     ContextMenu,
-    /// Long Power: radios, output, brightness, restart and power off.
-    QuickSettings,
     OutputPicker,
     CodecPicker,
     EqBand(usize),
@@ -603,6 +606,8 @@ pub enum Effect {
         gain_db: i8,
     },
     ResetEq,
+    /// Gains in dB for the five equalizer bands; all zero turns the equalizer off.
+    SetEqPreset([i8; 5]),
     SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),

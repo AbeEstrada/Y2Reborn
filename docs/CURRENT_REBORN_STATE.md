@@ -1,5 +1,9 @@
 # Current Reborn state on the Y2
 
+## Product UI v3 — 2026-10-10
+
+Reborn 0.3.0 redesigns the UI (see [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md)): Open Sans exact-size type, cover-driven accent, cover thumbnails with a disk cache, a bare volume line, option icons on Now Playing, a flatter Settings tree, hold-to-turn-off without menus, a hidden service menu and new startup/shutdown screens. Host tests, fmt and strict Clippy pass; it is **not yet observed on hardware**. Dated sections below describe earlier applications.
+
 ## Independent Platform 1.0 baseline — 2026-10-04
 
 Compiled Reborn `9cd12baeeb70b204e08299bd4c91c8c35604c304` (runtime bytes unchanged from master dd73dcc)

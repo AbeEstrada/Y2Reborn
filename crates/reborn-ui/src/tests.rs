@@ -146,6 +146,44 @@ fn select_key(ui: &mut Ui, m: &mut AppModel, key: &str) -> Effect {
     ui.model_action(m, Action::Select)
 }
 
+/// The characters a frame draws, recovered from the glyph cells it samples.
+fn drawn_text(quads: &[reborn_graphics::Quad]) -> String {
+    use reborn_graphics::Tex;
+    let faces = [
+        text::Face::R11,
+        text::Face::R13,
+        text::Face::R15,
+        text::Face::R17,
+        text::Face::L23,
+        text::Face::L44,
+        text::Face::S10,
+        text::Face::S13,
+        text::Face::S15,
+        text::Face::S17,
+        text::Face::S20,
+        text::Face::S25,
+        text::Face::S28,
+        text::Face::S36,
+    ];
+    let mut cells = std::collections::HashMap::new();
+    for face in faces {
+        let set = face.set();
+        for (ch, x, y, _) in set.glyphs {
+            cells.insert((set.page, *x, *y), char::from_u32(*ch).unwrap());
+        }
+    }
+    for (ch, x, y, _) in fontdata::FALLBACK {
+        cells.insert((2, *x, *y), char::from_u32(*ch).unwrap());
+    }
+    quads
+        .iter()
+        .filter_map(|q| match q.tex {
+            Tex::Font(page) => cells.get(&(page, q.src[0], q.src[1])).copied(),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Every word a normal user could read on a screen, modal included.
 fn visible_text(ui: &Ui, m: &AppModel) -> String {
     let tracks = &m.library.tracks;
@@ -173,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 24] = [
+const NORMAL_SCREENS: [Screen; 26] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -190,6 +228,8 @@ const NORMAL_SCREENS: [Screen; 24] = [
     Screen::SettingsAudio,
     Screen::Equalizer,
     Screen::SettingsPlayback,
+    Screen::Crossfade,
+    Screen::ScreenTimeout,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
     Screen::SettingsSystem,
@@ -242,7 +282,22 @@ fn root_is_a_small_music_player_menu() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(labels, ["Music", "Now Playing", "Queue", "Settings"]);
+    assert_eq!(
+        labels,
+        [
+            "Now Playing",
+            "Artists",
+            "Albums",
+            "Songs",
+            "Folders",
+            "Settings"
+        ]
+    );
+    // Power, Quick Settings and diagnostics have no place on Home.
+    assert!(!ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key.contains("power")));
 }
 
 #[test]
@@ -269,22 +324,29 @@ fn normal_screens_never_show_engineering_terms_or_generic_unavailable() {
     let mut problem = app(Screen::Update);
     problem.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NoUpdateSource);
     cases.push((Screen::Update, radios(), problem));
-    let mut quick = app(Screen::Home);
-    quick.navigation.modal = Some(Modal::QuickSettings);
-    cases.push((Screen::Home, radios(), quick));
+    let mut confirm = app(Screen::Home);
+    confirm.navigation.modal = Some(Modal::Confirm(reborn_core::ConfirmAction::PowerOff));
+    cases.push((Screen::Home, radios(), confirm));
     let mut missing_song = app(Screen::TrackInfo);
     missing_song.navigation.filter = "999".into();
     missing_song.queue.clear();
     cases.push((Screen::TrackInfo, radios(), missing_song));
     for (screen, ui, m) in cases {
         let mut text = visible_text(&ui, &m);
-        if super::screens::is_empty_catalog(&ui, &m) {
-            text += super::screens::empty_catalog_copy(&m);
+        if is_empty_catalog(&ui, &m) {
+            text += &super::views_library::empty_catalog_copy(&m);
         }
         for term in ENGINEERING {
             assert!(!text.contains(term), "{screen:?} shows {term:?}: {text}");
         }
     }
+}
+
+fn is_empty_catalog(ui: &Ui, m: &AppModel) -> bool {
+    matches!(
+        m.screen,
+        Screen::Albums | Screen::Artists | Screen::Tracks | Screen::Folders | Screen::Queue
+    ) && ui.row_count(m, &m.library.tracks) == 0
 }
 
 impl Ui {
@@ -308,7 +370,7 @@ fn empty_library_states_name_the_problem_without_generic_unavailable() {
         let mut m = app(Screen::Albums);
         m.library.tracks.clear();
         setup(&mut m);
-        let copy = super::screens::empty_catalog_copy(&m);
+        let copy = super::views_library::empty_catalog_copy(&m);
         for term in ENGINEERING {
             assert!(!copy.contains(term), "{copy}");
         }
@@ -319,7 +381,14 @@ fn empty_library_states_name_the_problem_without_generic_unavailable() {
 fn diagnostics_is_the_only_technical_subtree_and_lives_under_system() {
     let mut ui = radios();
     let mut m = app(Screen::Settings);
-    select_key(&mut ui, &mut m, "system");
+    select_key(&mut ui, &mut m, "update");
+    assert_eq!(m.screen, Screen::Update);
+    // Only a deliberate run of taps on the version opens the service menu.
+    for _ in 0..6 {
+        select_key(&mut ui, &mut m, "version");
+        assert_eq!(m.screen, Screen::Update);
+    }
+    select_key(&mut ui, &mut m, "version");
     assert_eq!(m.screen, Screen::SettingsSystem);
     select_key(&mut ui, &mut m, "diagnostics");
     assert_eq!(m.screen, Screen::Diagnostics);
@@ -371,13 +440,32 @@ fn every_normal_route_is_reachable_and_back_restores_parent_focus() {
             );
         }
     }
-    for screen in NORMAL_SCREENS {
-        if !matches!(screen, Screen::TrackInfo) {
-            assert!(
-                seen.iter().any(|s| s.starts_with(&format!("{screen:?}"))),
-                "{screen:?} unreachable"
-            );
-        }
+    // Everything a listener uses is reachable from Home by rows alone; the
+    // service pages, the queue (from Now Playing) and song info (from a
+    // sheet) are not part of the walk.
+    for screen in [
+        Screen::Home,
+        Screen::Albums,
+        Screen::Artists,
+        Screen::Tracks,
+        Screen::Folders,
+        Screen::NowPlaying,
+        Screen::Settings,
+        Screen::Wifi,
+        Screen::Bluetooth,
+        Screen::SettingsAudio,
+        Screen::Equalizer,
+        Screen::Crossfade,
+        Screen::SettingsDisplay,
+        Screen::ScreenTimeout,
+        Screen::Storage,
+        Screen::PcTransfer,
+        Screen::Update,
+    ] {
+        assert!(
+            seen.iter().any(|s| s.starts_with(&format!("{screen:?}"))),
+            "{screen:?} unreachable"
+        );
     }
 }
 
@@ -399,7 +487,7 @@ fn album_back_returns_to_the_same_album_offset_and_focus() {
 #[test]
 fn every_interactive_screen_draws_exactly_one_focus() {
     let ui = radios();
-    let static_pages = [Screen::TrackInfo, Screen::Battery, Screen::Storage];
+    let static_pages = [Screen::TrackInfo, Screen::Battery];
     for screen in NORMAL_SCREENS.into_iter().chain([
         Screen::Maintenance,
         Screen::Diagnostics,
@@ -417,8 +505,9 @@ fn every_interactive_screen_draws_exactly_one_focus() {
         assert_eq!(focus_target_count(&quads), expected, "{screen:?}");
         for q in &quads {
             assert!(q.x.is_finite() && q.y.is_finite() && q.w >= 0. && q.h >= 0.);
-            if let Some(glyph) = q.glyph {
-                assert!((glyph as usize) < glyphs::ADVANCE.len());
+            if let reborn_graphics::Tex::Font(page) = q.tex {
+                let [x, y, w, h] = q.src.map(usize::from);
+                assert!(x + w <= 1024 && y + h <= fontdata::PAGE_HEIGHTS[usize::from(page)]);
             }
         }
     }
@@ -427,9 +516,9 @@ fn every_interactive_screen_draws_exactly_one_focus() {
 #[test]
 fn modals_trap_focus_and_show_one_focus_over_the_screen() {
     let mut ui = radios();
-    let mut m = app(Screen::Albums);
-    ui.model_action(&mut m, Action::PowerMenu);
-    assert_eq!(m.navigation.modal, Some(Modal::QuickSettings));
+    let mut m = app(Screen::Tracks);
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(m.navigation.modal, Some(Modal::ContextMenu));
     for _ in 0..20 {
         ui.model_action(&mut m, Action::WheelClockwise(4));
     }
@@ -442,46 +531,100 @@ fn modals_trap_focus_and_show_one_focus_over_the_screen() {
     );
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.navigation.modal, None);
-    assert_eq!(m.screen, Screen::Albums);
+    assert_eq!(m.screen, Screen::Tracks);
 }
 
 #[test]
-fn quick_settings_power_off_and_restart_default_to_cancel() {
+fn power_hold_fills_a_ring_and_release_cancels_it_without_any_menu() {
     let mut ui = radios();
-    for (label, expected) in [("Power Off", Effect::PowerOff), ("Restart", Effect::Reboot)] {
-        let mut m = app(Screen::Home);
-        ui.model_action(&mut m, Action::PowerMenu);
-        let rows = ui.modal_rows_public(&m, &m.library.tracks);
-        m.navigation.modal_focus = rows.iter().position(|r| r.label == label).unwrap();
-        assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
-        assert!(matches!(m.navigation.modal, Some(Modal::Confirm(_))));
-        assert_eq!(m.navigation.modal_focus, 0, "starts on Cancel");
-        assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
-        assert_eq!(m.navigation.modal, None);
-        ui.model_action(&mut m, Action::PowerMenu);
-        m.navigation.modal_focus = rows.iter().position(|r| r.label == label).unwrap();
-        ui.model_action(&mut m, Action::Select);
-        ui.model_action(&mut m, Action::WheelClockwise(1));
-        assert_eq!(ui.model_action(&mut m, Action::Select), expected);
-    }
-}
-
-#[test]
-fn quick_settings_toggle_radios_in_place_and_hide_missing_brightness() {
-    let mut ui = radios();
-    let mut m = app(Screen::Home);
-    ui.model_action(&mut m, Action::PowerMenu);
-    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::WifiPower);
+    let mut m = app(Screen::NowPlaying);
+    assert_eq!(ui.model_action(&mut m, Action::PowerHold), Effect::None);
+    assert_eq!(m.navigation.modal, None, "no Power menu, no Quick Settings");
+    assert!(ui.power_hold_progress().is_some_and(|p| p < 0.5));
     assert_eq!(
-        m.navigation.modal,
-        Some(Modal::QuickSettings),
-        "sheet stays open"
+        ui.power_hold_complete(),
+        None,
+        "not before the ring is full"
+    );
+    ui.power_hold = Some(Instant::now() - POWER_HOLD / 3);
+    let quads = ui.draw(&m, &m.library.tracks, false);
+    assert!(drawn_text(&quads).contains("Hold to turn off"));
+    ui.model_action(&mut m, Action::PowerHoldCancel);
+    assert_eq!(ui.power_hold_progress(), None);
+    assert!(!drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Hold to turn off"));
+    // Held to the end it turns the player off, once.
+    ui.model_action(&mut m, Action::PowerHold);
+    ui.power_hold = Some(Instant::now() - POWER_HOLD);
+    assert_eq!(ui.power_hold_complete(), Some(Effect::PowerOff));
+    assert_eq!(ui.power_hold_complete(), None);
+}
+
+#[test]
+fn settings_switches_toggle_in_place() {
+    let mut ui = radios();
+    let mut m = app(Screen::Wifi);
+    assert_eq!(select_key(&mut ui, &mut m, "wifi_power"), Effect::WifiPower);
+    assert_eq!(m.navigation.modal, None);
+    let mut m = app(Screen::Bluetooth);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "bt_power"),
+        Effect::BluetoothPower
+    );
+    let mut m = app(Screen::SettingsAudio);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "gapless"),
+        Effect::SetGapless(false)
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "replay_gain"),
+        Effect::SetReplayGain(reborn_core::ReplayGainMode::Track)
     );
     m.platform.brightness_available = false;
-    assert!(!ui
-        .modal_rows_public(&m, &m.library.tracks)
+    let m = app(Screen::SettingsDisplay);
+    assert!(ui
+        .rows(&m, &m.library.tracks)
         .iter()
-        .any(|r| r.label == "Brightness"));
+        .any(|r| r.key == "screen_timeout"));
+}
+
+#[test]
+fn sound_pickers_set_exact_values_and_show_the_current_one() {
+    let mut ui = radios();
+    let mut m = app(Screen::Crossfade);
+    m.settings.crossfade_ms = 4_000;
+    let rows = ui.rows(&m, &m.library.tracks);
+    let checked: Vec<_> = rows
+        .iter()
+        .filter(|r| r.kind == RowKind::Check(true))
+        .map(|r| r.label.as_str())
+        .collect();
+    assert_eq!(checked, ["4 seconds"]);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "crossfade_set:12000"),
+        Effect::SetCrossfade(12_000)
+    );
+    let mut m = app(Screen::ScreenTimeout);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "timeout_set:0"),
+        Effect::SetScreenTimeout(0)
+    );
+    let mut m = app(Screen::Equalizer);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "eq_preset:bass"),
+        Effect::SetEqPreset([6, 4, 0, 0, 0])
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "eq_preset:flat"),
+        Effect::SetEqPreset([0; 5])
+    );
+    // The preset in use is recognised from the stored gains.
+    m.settings.eq_enabled = true;
+    m.settings.eq_bands = reborn_core::flat_eq_bands();
+    m.settings.eq_bands[0].gain_db = 6.;
+    m.settings.eq_bands[1].gain_db = 4.;
+    assert_eq!(pages::eq_preset_name(&m), "Bass boost");
+    m.settings.eq_bands[2].gain_db = 1.;
+    assert_eq!(pages::eq_preset_name(&m), "Custom");
 }
 
 #[test]
@@ -495,8 +638,9 @@ fn wheel_one_detent_is_one_step_outside_long_library_lists() {
         ui.model_action(&mut m, Action::WheelCounterClockwise(3));
         assert_eq!(m.navigation.focus, 0, "{screen:?}");
     }
-    let mut m = app(Screen::Settings);
-    m.navigation.modal = Some(Modal::QuickSettings);
+    let mut m = app(Screen::Tracks);
+    m.navigation.modal = Some(Modal::ContextMenu);
+    m.navigation.context_key = Some("track:0".into());
     ui.model_action(&mut m, Action::WheelClockwise(4));
     assert_eq!(m.navigation.modal_focus, 1);
     // Long library lists accept the input layer's sustained-rotation steps.
@@ -536,8 +680,11 @@ fn now_playing_wheel_is_a_fixed_volume_step_and_select_opens_options() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(labels[0], "Show Queue");
-    assert!(labels.contains(&"Song Info".to_owned()));
+    assert_eq!(labels[0], "Up next");
+    assert!(labels.contains(&"Go to album".to_owned()));
+    assert!(!labels
+        .iter()
+        .any(|l| l.contains("info") || l.contains("Info")));
     // In the options sheet the wheel moves the sheet, not the volume.
     assert_eq!(
         ui.model_action(&mut m, Action::WheelClockwise(1)),
@@ -557,16 +704,8 @@ fn password_entry_moves_one_character_per_detent_and_is_never_drawn() {
     assert_eq!(ui.password, "b");
     ui.password = "secretpass".into();
     let draw = ui.draw(&m, &m.library.tracks, false);
-    let glyphs: String = draw
-        .iter()
-        .filter_map(|q| q.glyph)
-        .map(|g| g.to_string())
-        .collect();
-    let secret: String = "secretpass"
-        .chars()
-        .map(|c| glyphs::index(c).to_string())
-        .collect();
-    assert!(!glyphs.contains(&secret));
+    assert!(!drawn_text(&draw).contains("secretpass"));
+    assert!(drawn_text(&draw).contains("••••••••••"));
     assert_eq!(focus_target_count(&draw), 1);
 }
 
@@ -597,7 +736,7 @@ fn wifi_off_absent_and_failed_states_offer_one_useful_action() {
     ui.wifi.powered = false;
     let m = app(Screen::Wifi);
     let page = pages::page(&ui, &m, &m.library.tracks);
-    assert_eq!(page.hero.unwrap().title, "Wi-Fi Is Off");
+    assert_eq!(page.hero.unwrap().title, "Wi-Fi is off");
     assert_eq!(page.rows.len(), 1);
     assert_eq!(page.rows[0].key, "wifi_power");
 
@@ -712,7 +851,7 @@ fn update_page_follows_typed_state_and_capability() {
     let mut m = app(Screen::Update);
     m.platform.snapshot.enabled.clear();
     let page = pages::page(&ui, &m, &m.library.tracks);
-    assert!(page.rows.is_empty());
+    assert!(!page.rows.iter().any(|r| r.key.starts_with("task:update")));
     assert!(page.hero.unwrap().title.contains("Computer"));
 }
 
@@ -726,7 +865,11 @@ fn shutdown_locks_navigation_but_keeps_volume() {
         low_battery: false,
     });
     assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
-    assert_eq!(ui.model_action(&mut m, Action::PowerMenu), Effect::None);
+    assert_eq!(ui.model_action(&mut m, Action::PowerHold), Effect::None);
+    assert!(
+        ui.power_hold.is_none(),
+        "no turn-off hold while shutting down"
+    );
     assert_eq!(
         ui.model_action(&mut m, Action::VolumeDown),
         Effect::AdjustVolume(-2)
@@ -747,7 +890,7 @@ fn empty_library_and_queue_offer_one_recovery_action() {
     m.queue.clear();
     m.queue_entry_ids.clear();
     ui.model_action(&mut m, Action::Select);
-    assert_eq!(m.screen, Screen::Music);
+    assert_eq!(m.screen, Screen::Home);
 }
 
 #[test]
@@ -758,15 +901,11 @@ fn filtered_track_context_actions_stay_on_the_selected_track() {
         (
             Screen::Album,
             "album:Élodie · Μουσική · Музыка · 音楽\u{1f}Album 0",
-            2,
+            3,
         ),
         (Screen::Tracks, "", 2),
     ] {
-        for (menu, expected) in [
-            (0, Effect::Play(2)),
-            (1, Effect::PlayNext(2)),
-            (2, Effect::AddToQueue(2)),
-        ] {
+        for (menu, expected) in [(0, Effect::PlayNext(2)), (1, Effect::AddToQueue(2))] {
             let mut ui = radios();
             let mut m = app(screen);
             m.library.tracks = tracks.clone();
@@ -807,25 +946,6 @@ fn queue_context_follows_its_occurrence_and_closes_when_it_vanishes() {
 }
 
 #[test]
-fn letter_index_jumps_and_back_returns_to_the_list() {
-    let mut ui = radios();
-    let mut m = app(Screen::Tracks);
-    m.library.tracks[4].title = "Zebra".into();
-    ui.invalidate_catalog();
-    ui.model_action(&mut m, Action::ContextMenu);
-    let rows = ui.modal_rows_public(&m, &m.library.tracks);
-    m.navigation.modal_focus = rows.iter().position(|r| r.key == "letter_index").unwrap();
-    ui.model_action(&mut m, Action::Select);
-    assert_eq!(m.screen, Screen::LibraryIndex);
-    select_key(&mut ui, &mut m, "jump_to:Z");
-    assert_eq!(m.screen, Screen::Tracks);
-    let row = ui
-        .row_at(&m, &m.library.tracks, m.navigation.focus)
-        .unwrap();
-    assert_eq!(row.label, "Zebra");
-}
-
-#[test]
 fn long_and_unicode_text_is_bounded_on_every_surface() {
     let mut ui = radios();
     let long = "Ein sehr langer Titel — 夜の静けさ — Северный свет — ".repeat(8);
@@ -843,11 +963,13 @@ fn long_and_unicode_text_is_bounded_on_every_surface() {
         m.queue[0].album = long.clone();
         m.library.tracks[0].title = long.clone();
         for q in ui.draw(&m, &m.library.tracks, false) {
-            assert!(
-                q.x + q.w <= 482.,
-                "{screen:?} glyph beyond the panel at {}",
-                q.x
-            );
+            if matches!(q.tex, reborn_graphics::Tex::Font(_)) {
+                assert!(
+                    q.x + q.w <= 482.,
+                    "{screen:?} glyph beyond the panel at {}",
+                    q.x
+                );
+            }
         }
     }
 }
@@ -885,18 +1007,29 @@ fn boot_and_shutdown_frames_are_dark_and_end_black() {
     assert_eq!(boot[0].color, theme::color::BG);
     assert_eq!(focus_target_count(&boot), 0);
     let ui_frame = radios().draw(&app(Screen::Home), &library(), false);
-    for frame in 0..SHUTDOWN_FRAMES {
-        let quads = shutdown_frame(&ui_frame, frame, closing_label(false, false));
-        assert!(quads
-            .iter()
-            .all(|q| q.color & 0xFF != 0 || q.glyph.is_some()));
+    for low in [false, true] {
+        let plan = shutdown_plan(low);
+        for frame in 0..plan.frames {
+            let quads = shutdown_frame(&ui_frame, frame, closing_label(false, low), plan);
+            assert!(quads
+                .iter()
+                .all(|q| q.color & 0xFF != 0 || q.tex != reborn_graphics::Tex::Solid));
+        }
     }
-    let last = shutdown_frame(&ui_frame, SHUTDOWN_FRAMES - 1, closing_label(false, false));
-    let overlay = last.last().unwrap();
-    assert_eq!(overlay.color, theme::color::BG, "fully faded");
+    let plan = shutdown_plan(false);
+    let last = shutdown_frame(
+        &ui_frame,
+        plan.frames - 1,
+        closing_label(false, false),
+        plan,
+    );
+    assert!(
+        drawn_text(&last).is_empty(),
+        "the last frames carry no text"
+    );
     assert_eq!(black_frame()[0].color, theme::color::BLACK);
     let halfway = boot_transition(ui_frame, 0.5);
-    assert!(halfway.iter().any(|q| q.glyph.is_some()));
+    assert!(drawn_text(&halfway).contains("reborn"));
 }
 
 #[test]
@@ -916,16 +1049,16 @@ fn only_preferences_and_session_survive_serialization() {
 }
 
 #[test]
-fn equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
+fn custom_equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
     let mut ui = radios();
     let mut m = app(Screen::Equalizer);
+    // Presets first; Custom opens the five bands.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 5);
+    select_key(&mut ui, &mut m, "eq_custom");
+    assert_eq!(m.navigation.filter, "custom");
     let rows = ui.rows(&m, &m.library.tracks);
-    assert_eq!(rows.len(), 7);
-    assert_eq!(
-        ui.model_action(&mut m, Action::Select),
-        Effect::SetEqEnabled(true)
-    );
-    m.navigation.focus = 1;
+    assert_eq!(rows.len(), 6);
+    m.navigation.focus = 0;
     assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
     assert_eq!(m.navigation.modal, Some(Modal::EqBand(0)));
     assert_eq!(m.navigation.modal_focus, 12);
@@ -958,8 +1091,11 @@ fn equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
     assert_eq!(m.navigation.modal_focus, 24);
     let quads = ui.draw(&m, &m.library.tracks, false);
     assert_eq!(focus_target_count(&quads), 1);
-    for q in quads {
-        assert!(q.y >= 0. && q.y + q.h <= 360., "EQ modal overflow: {q:?}");
+    for q in quads
+        .iter()
+        .filter(|q| matches!(q.tex, reborn_graphics::Tex::Font(_)))
+    {
+        assert!(q.y >= 0. && q.y + q.h <= 360., "EQ sheet overflow: {q:?}");
     }
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.navigation.modal, None);
@@ -1028,7 +1164,7 @@ fn diagnostic_export_is_distinct_from_private_backup_and_soc_is_labelled() {
 fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
     use reborn_core::platform::{BluetoothQuality, LdacQuality};
     let mut ui = radios();
-    let mut m = app(Screen::Bluetooth);
+    let mut m = app(Screen::SettingsSystem);
     m.settings.codec_preference = CodecPreference::Ldac;
     ui.bluetooth.codec_choices = vec![CodecPreference::Sbc, CodecPreference::Ldac];
     assert!(!ui
@@ -1049,7 +1185,6 @@ fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
     assert!(rows
         .iter()
         .any(|r| r.key == "codec_preference" && r.secondary == "LDAC"));
-    assert!(visible_text(&ui, &m).contains("Restart the player"));
     m.navigation.focus = rows.iter().position(|r| r.key == "ldac_quality").unwrap();
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
@@ -1066,7 +1201,7 @@ fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
 fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
     use reborn_core::platform::{BluetoothQuality, SbcQuality};
     let mut ui = radios();
-    let mut m = app(Screen::Bluetooth);
+    let mut m = app(Screen::SettingsSystem);
     ui.bluetooth.codec_choices.clear();
     ui.bluetooth.sbc_quality_available = true;
     m.platform.snapshot.bluetooth_quality = BluetoothQuality {
@@ -1156,9 +1291,8 @@ fn power_short_sleeps_when_paused_and_blanks_during_playback() {
     }
     ui.model_action(&mut m, Action::PowerHold);
     assert_eq!(
-        m.navigation.modal,
-        Some(reborn_core::Modal::Confirm(
-            reborn_core::ConfirmAction::PowerOff
-        ))
+        m.navigation.modal, None,
+        "a hold shows the ring, never a menu"
     );
+    assert!(ui.power_hold.is_some());
 }

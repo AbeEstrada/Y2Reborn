@@ -54,34 +54,41 @@ impl Catalog {
         match m.screen {
             Screen::Albums => {
                 let mut albums = BTreeMap::new();
-                for t in tracks.iter().filter(|t| {
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| {
                     t.online
                         && (m.navigation.filter.is_empty()
                             || track_matches(t, &m.navigation.filter))
                 }) {
                     albums
                         .entry((t.album.as_str(), t.album_artist.as_str()))
-                        .or_insert(t);
+                        .or_insert((i, t));
                 }
-                for ((album, artist), t) in albums {
-                    self.push(
-                        Item::new(display_or_unknown(album), album_filter(t)).with_secondary(
-                            display_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
-                        ),
-                    );
+                for ((album, artist), (i, t)) in albums {
+                    self.push(album_item(album, artist, i, t));
                 }
             }
             Screen::Artists => {
-                let artists: BTreeSet<_> = tracks
-                    .iter()
-                    .filter(|t| t.online)
-                    .map(|t| t.artist.as_str())
-                    .collect();
-                for artist in artists {
-                    self.push(Item::new(
-                        display_or_unknown(artist),
-                        format!("artist:{artist}"),
-                    ));
+                let mut artists: BTreeMap<&str, (usize, BTreeSet<&str>, bool)> = BTreeMap::new();
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.online) {
+                    let entry =
+                        artists
+                            .entry(t.artist.as_str())
+                            .or_insert((i, BTreeSet::new(), t.artwork));
+                    entry.1.insert(t.album.as_str());
+                    if !entry.2 && t.artwork {
+                        entry.0 = i;
+                        entry.2 = true;
+                    }
+                }
+                for (artist, (i, albums, _)) in artists {
+                    let mut item =
+                        Item::new(display_or_unknown(artist), format!("artist:{artist}"))
+                            .with_secondary(match albums.len() {
+                                1 => "1 album".to_owned(),
+                                n => format!("{n} albums"),
+                            });
+                    item.art = Some(i);
+                    self.push(item);
                 }
             }
             Screen::Folders => {
@@ -140,13 +147,10 @@ impl Catalog {
             }
             Screen::Tracks | Screen::Album | Screen::Artist => {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
-                    self.push(
-                        Item::new("Play All", "play:collection")
-                            .with_secondary("Hold Select for collection actions"),
-                    );
+                    self.push(Item::new("Play", "play:collection"));
                 }
-                if m.screen == Screen::Artist {
-                    self.push(Item::new("Albums by this Artist", "artist_albums"));
+                if m.screen == Screen::Album {
+                    self.push(Item::new("Shuffle", "shuffle:collection"));
                 }
                 let mut ids: Vec<_> = tracks
                     .iter()
@@ -178,6 +182,19 @@ impl Catalog {
                         );
                     }
                 }
+                if m.screen == Screen::Artist {
+                    // An artist page lists the artist's albums, not their songs.
+                    let mut albums = BTreeMap::new();
+                    for (i, t) in &ids {
+                        albums
+                            .entry((t.album.as_str(), t.album_artist.as_str()))
+                            .or_insert((*i, *t));
+                    }
+                    for ((album, artist), (i, t)) in albums {
+                        self.push(album_item(album, artist, i, t));
+                    }
+                    return;
+                }
                 for (i, t) in ids {
                     // Album rows only name an artist when it differs.
                     if m.screen == Screen::Album
@@ -193,8 +210,15 @@ impl Catalog {
         }
     }
 }
+fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
+    let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(
+        display_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
+    );
+    item.art = Some(index);
+    item
+}
 fn track_item(i: usize, t: &Track) -> Item {
-    Item::new(
+    let mut item = Item::new(
         if t.title.is_empty() {
             &t.filename
         } else {
@@ -202,5 +226,7 @@ fn track_item(i: usize, t: &Track) -> Item {
         },
         format!("track:{i}"),
     )
-    .with_secondary(display_or_unknown(&t.artist))
+    .with_secondary(display_or_unknown(&t.artist));
+    item.art = Some(i);
+    item
 }

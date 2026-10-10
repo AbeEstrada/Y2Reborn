@@ -3,13 +3,15 @@
 //! A page is an optional hero message (empty, off, error or progress state),
 //! a few static facts, and the interactive rows the wheel moves through.
 //! Engineering detail is never placed here; it belongs to `diagnostics`.
-use crate::{components::output_label, BluetoothDeviceView, Item, NetworkView, Ui, WifiStatus};
+use crate::{
+    components::output_label, BluetoothDeviceView, Item, NetworkView, RowKind, Ui, WifiStatus,
+};
 use reborn_core::{
     platform::{
         human_bytes, ChargingState, HealthLevel, LowBattery, SdCard, SleepPhase, SleepProblem,
         UpdatePhase, UpdateProblem, UsbTransfer, VolumeSpace, VolumeState, WakeReason, WifiProblem,
     },
-    AppModel, MediaSource, PlatformTask, RepeatMode, Screen, Track,
+    AppModel, MediaSource, PlatformTask, Screen, Track,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -70,23 +72,11 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
         Screen::Home => Page::rows(vec![
-            row("Music", "music", "Albums · Artists · Songs"),
-            row(
-                "Now Playing",
-                "now_playing",
-                m.current()
-                    .map(|t| crate::track_title(t).to_owned())
-                    .unwrap_or_else(|| "Nothing playing".into()),
-            ),
-            row(
-                "Queue",
-                "queue",
-                match m.queue.len() {
-                    0 => "Empty".into(),
-                    1 => "1 song".into(),
-                    n => format!("{n} songs"),
-                },
-            ),
+            row("Now Playing", "now_playing", ""),
+            row("Artists", "artists", ""),
+            row("Albums", "albums", ""),
+            row("Songs", "tracks", ""),
+            row("Folders", "folders", ""),
             row("Settings", "settings", ""),
         ]),
         Screen::Music => Page::rows(vec![
@@ -99,37 +89,22 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             "Nothing Playing",
             "Choose an album, artist or song to start listening.",
         )
-        .with_rows(vec![Item::new("Open Music", "music")]),
+        .with_rows(vec![Item::new("Browse music", "home")]),
         Screen::NowPlaying => Page::default(),
         Screen::TrackInfo => track_info(m, tracks),
         Screen::Settings => settings(ui, m),
         Screen::Wifi => wifi(ui),
         Screen::Bluetooth => bluetooth(ui, m),
         Screen::PcTransfer => pc_transfer(m),
-        Screen::SettingsAudio => Page::rows(vec![
-            row("Output", "output", output_name(ui, m)),
-            row("Equalizer", "equalizer", on_off(m.settings.eq_enabled)),
-            Item::new("Output Details", "diag:audio"),
-            row(
-                "ReplayGain",
-                "replay_gain",
-                crate::replay_gain_label(m.settings.replay_gain),
-            ),
-        ]),
+        Screen::SettingsAudio => sound(ui, m),
         Screen::Equalizer => equalizer(m),
+        Screen::Crossfade => crossfade(m),
+        Screen::ScreenTimeout => screen_timeout(m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
             row("Repeat", "repeat", crate::repeat_label(m.settings.repeat)),
-            row(
-                "Gapless Playback",
-                "gapless",
-                on_off(m.settings.gapless_enabled),
-            ),
-            row(
-                "Crossfade",
-                "crossfade",
-                crate::crossfade_label(m.settings.crossfade_ms),
-            ),
+            row("Gapless Playback", "gapless", on_off(m.settings.gapless_enabled)),
+            row("Crossfade", "crossfade", crate::crossfade_label(m.settings.crossfade_ms)),
         ]),
         Screen::SettingsLibrary => library(m, tracks),
         Screen::SettingsDisplay => {
@@ -141,14 +116,17 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                     format!("{}%", m.settings.brightness),
                 ));
             }
-            rows.push(row(
-                "Screen Timeout",
-                "timeout",
-                crate::timeout_label(m.settings.screen_timeout_seconds),
-            ));
+            rows.push(
+                row(
+                    "Screen off after",
+                    "screen_timeout",
+                    crate::timeout_label(m.settings.screen_timeout_seconds),
+                )
+                .with_kind(RowKind::Chevron),
+            );
             Page::rows(rows)
         }
-        Screen::SettingsSystem => system(m),
+        Screen::SettingsSystem => system(ui, m),
         Screen::Battery => battery(m),
         Screen::Sleep => sleep(m),
         Screen::Storage => storage(m),
@@ -192,32 +170,118 @@ pub fn output_name(ui: &Ui, m: &AppModel) -> String {
 }
 
 fn settings(ui: &Ui, m: &AppModel) -> Page {
+    let eq = if m.settings.eq_enabled {
+        eq_preset_name(m)
+    } else {
+        "Equalizer off"
+    };
+    let storage = free_text(&m.platform.snapshot.storage.internal)
+        .map(|t| t.split(" free").next().unwrap_or("").to_owned() + " free")
+        .unwrap_or_default();
+    let brightness = if m.platform.brightness_available {
+        format!("Brightness {}%", m.settings.brightness)
+    } else {
+        String::new()
+    };
     Page::rows(vec![
-        row("Wi-Fi", "wifi", ui.wifi_summary()),
-        row("Bluetooth", "bluetooth", ui.bluetooth_summary()),
-        row("PC Transfer", "pc_transfer", usb_summary(m)),
-        row("Audio", "audio", output_name(ui, m)),
-        row("Playback", "playback", playback_summary(m)),
-        row("Library", "library", ""),
-        row("Display", "display", ""),
-        row("System", "system", ""),
+        row("Bluetooth", "bluetooth", ui.bluetooth_summary()).with_kind(RowKind::Chevron),
+        row("Wi-Fi", "wifi", ui.wifi_summary()).with_kind(RowKind::Chevron),
+        row("Sound", "audio", eq).with_kind(RowKind::Chevron),
+        row("Display", "display", brightness).with_kind(RowKind::Chevron),
+        row("Storage", "storage", storage).with_kind(RowKind::Chevron),
+        row("About & Updates", "update", reborn_core::VERSION).with_kind(RowKind::Chevron),
     ])
 }
 
-fn playback_summary(m: &AppModel) -> String {
-    let mut parts = vec![];
-    if m.settings.shuffle {
-        parts.push("Shuffle");
+/// Names of the equalizer presets and their gains (dB) per band
+/// (60 Hz, 250 Hz, 1 kHz, 4 kHz, 12 kHz).
+pub const EQ_PRESETS: [(&str, &str, [i8; 5]); 4] = [
+    ("Flat", "flat", [0, 0, 0, 0, 0]),
+    ("Bass boost", "bass", [6, 4, 0, 0, 0]),
+    ("Vocal", "vocal", [-2, 0, 4, 3, 0]),
+    ("Treble boost", "treble", [0, 0, 0, 4, 6]),
+];
+
+pub(crate) fn eq_gains(m: &AppModel) -> [i8; 5] {
+    let mut out = [0i8; 5];
+    for (slot, band) in out.iter_mut().zip(&m.settings.eq_bands) {
+        *slot = band.gain_db.round().clamp(-12., 12.) as i8;
     }
-    match m.settings.repeat {
-        RepeatMode::Off => {}
-        RepeatMode::Track => parts.push("Repeat One"),
-        RepeatMode::All => parts.push("Repeat All"),
+    out
+}
+
+/// The preset the equalizer currently matches, `Custom` otherwise.
+pub(crate) fn eq_preset_name(m: &AppModel) -> &'static str {
+    if !m.settings.eq_enabled {
+        return "Flat";
     }
-    if m.settings.crossfade_ms > 0 {
-        parts.push("Crossfade");
-    }
-    parts.join(" · ")
+    let gains = eq_gains(m);
+    EQ_PRESETS
+        .iter()
+        .find(|(_, _, preset)| *preset == gains)
+        .map_or("Custom", |(name, _, _)| name)
+}
+
+fn sound(ui: &Ui, m: &AppModel) -> Page {
+    let normalise = m.settings.replay_gain != reborn_core::ReplayGainMode::Off;
+    Page::rows(vec![
+        row("Equalizer", "equalizer", eq_preset_name(m)).with_kind(RowKind::Chevron),
+        row("Normalise volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
+        row("Gapless playback", "gapless", "")
+            .with_kind(RowKind::Toggle(m.settings.gapless_enabled)),
+        row(
+            "Crossfade",
+            "crossfade",
+            crate::crossfade_label(m.settings.crossfade_ms),
+        )
+        .with_kind(RowKind::Chevron),
+        row("Output", "output", output_name(ui, m)).with_kind(RowKind::Chevron),
+    ])
+}
+
+fn crossfade(m: &AppModel) -> Page {
+    Page::rows(
+        [0u32, 2, 4, 6, 8, 12]
+            .into_iter()
+            .map(|s| {
+                let label = if s == 0 {
+                    "Off".to_owned()
+                } else {
+                    format!("{s} seconds")
+                };
+                row(&label, &format!("crossfade_set:{}", s * 1000), "")
+                    .with_kind(RowKind::Check(m.settings.crossfade_ms == s * 1000))
+            })
+            .collect(),
+    )
+}
+
+fn screen_timeout(m: &AppModel) -> Page {
+    let labels = [
+        (15u32, "15 seconds"),
+        (30, "30 seconds"),
+        (60, "1 minute"),
+        (120, "2 minutes"),
+        (0, "Never"),
+    ];
+    let mut page = Page::rows(
+        labels
+            .into_iter()
+            .map(|(s, label)| {
+                row(label, &format!("timeout_set:{s}"), "")
+                    .with_kind(RowKind::Check(m.settings.screen_timeout_seconds == s))
+            })
+            .collect(),
+    );
+    page.status = Some(
+        if m.settings.screen_timeout_seconds == 0 {
+            "Never keeps the screen on while music plays and drains the battery faster."
+        } else {
+            "The screen turns off after this long without a button press."
+        }
+        .into(),
+    );
+    page
 }
 
 fn usb_summary(m: &AppModel) -> &'static str {
@@ -240,10 +304,15 @@ fn wifi(ui: &Ui) -> Page {
         );
     }
     if !w.powered {
-        return Page::hero("Wi-Fi Is Off", "Turn on Wi-Fi to connect to a network.")
-            .with_rows(vec![Item::new("Turn On Wi-Fi", "wifi_power")]);
+        return Page::hero(
+            "Wi-Fi is off",
+            "Turn it on to sync the clock and get updates.",
+        )
+        .with_rows(vec![
+            row("Wi-Fi", "wifi_power", "").with_kind(RowKind::Toggle(false))
+        ]);
     }
-    let mut rows = vec![row("Wi-Fi", "wifi_power", "On")];
+    let mut rows = vec![row("Wi-Fi", "wifi_power", "").with_kind(RowKind::Toggle(true))];
     let connected = w.status.network();
     for n in &w.networks {
         let state = if connected == Some(n.ssid.as_str()) && w.problem.is_some() {
@@ -341,12 +410,14 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
     }
     if !b.powered {
         return Page::hero(
-            "Bluetooth Is Off",
-            "Turn on Bluetooth to listen with wireless headphones.",
+            "Bluetooth is off",
+            "Turn it on to listen with wireless headphones.",
         )
-        .with_rows(vec![Item::new("Turn On Bluetooth", "bt_power")]);
+        .with_rows(vec![
+            row("Bluetooth", "bt_power", "").with_kind(RowKind::Toggle(false))
+        ]);
     }
-    let mut rows = vec![row("Bluetooth", "bt_power", "On")];
+    let mut rows = vec![row("Bluetooth", "bt_power", "").with_kind(RowKind::Toggle(true))];
     let mut devices: Vec<&BluetoothDeviceView> = b.devices.iter().collect();
     devices.sort_by_key(|d| (!d.connected, !d.saved_pairing()));
     for d in devices {
@@ -355,42 +426,6 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
             &format!("bt_device:{}", d.path),
             d.description(&m.output),
         ));
-    }
-    if !b.codec_choices.is_empty() {
-        rows.push(row(
-            "Codec Preference",
-            "codec_preference",
-            m.settings.codec_preference.label(),
-        ));
-    }
-    let quality = m.platform.snapshot.bluetooth_quality;
-    if quality.sbc_supported && b.sbc_quality_available {
-        if let Some(q) = quality.requested_sbc {
-            rows.push(disabled(
-                row("SBC Quality", "sbc_quality", q.label()),
-                m.platform.busy.is_none(),
-            ));
-        }
-    }
-    if b.codec_choices
-        .contains(&reborn_core::CodecPreference::Ldac)
-    {
-        if quality.ldac_supported {
-            if let Some(q) = quality.requested_quality {
-                rows.push(disabled(
-                    row("LDAC Quality", "ldac_quality", q.label()),
-                    m.platform.busy.is_none(),
-                ));
-            }
-        }
-        if quality.abr_supported {
-            if let Some(abr) = quality.requested_abr {
-                rows.push(disabled(
-                    row("LDAC Auto Rate", "ldac_abr", on_off(abr)),
-                    m.platform.busy.is_none(),
-                ));
-            }
-        }
     }
     let scanning = b.scan.active();
     rows.push(disabled(
@@ -405,6 +440,7 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
         ),
         !scanning,
     ));
+    let quality = m.platform.snapshot.bluetooth_quality;
     let mut page = Page::rows(rows);
     page.status = if quality.pending_restart {
         Some("Restart the player to apply the saved codec quality.".into())
@@ -528,9 +564,49 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
     ])
 }
 
-fn system(m: &AppModel) -> Page {
+/// The hidden service menu: everything an owner or developer needs that a
+/// listener does not. Reached by tapping the version in About & Updates.
+fn system(ui: &Ui, m: &AppModel) -> Page {
     let s = &m.platform.snapshot;
-    Page::rows(vec![
+    let b = &ui.bluetooth;
+    let quality = m.platform.snapshot.bluetooth_quality;
+    let mut rows: Vec<Item> = vec![];
+    if !b.codec_choices.is_empty() {
+        rows.push(row(
+            "Codec Preference",
+            "codec_preference",
+            m.settings.codec_preference.label(),
+        ));
+    }
+    if quality.sbc_supported && b.sbc_quality_available {
+        if let Some(q) = quality.requested_sbc {
+            rows.push(disabled(
+                row("SBC Quality", "sbc_quality", q.label()),
+                m.platform.busy.is_none(),
+            ));
+        }
+    }
+    if b.codec_choices
+        .contains(&reborn_core::CodecPreference::Ldac)
+    {
+        if quality.ldac_supported {
+            if let Some(q) = quality.requested_quality {
+                rows.push(disabled(
+                    row("LDAC Quality", "ldac_quality", q.label()),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+        if quality.abr_supported {
+            if let Some(abr) = quality.requested_abr {
+                rows.push(disabled(
+                    row("LDAC Auto Rate", "ldac_abr", on_off(abr)),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+    }
+    rows.extend(vec![
         row("Battery", "battery", battery_summary(m)),
         row("Sleep", "sleep", "Pause and rest the player"),
         row(
@@ -552,7 +628,8 @@ fn system(m: &AppModel) -> Page {
         ),
         Item::new("Restart", "confirm:reboot"),
         Item::new("Power Off", "confirm:power_off"),
-    ])
+    ]);
+    Page::rows(rows)
 }
 
 pub fn battery_summary(m: &AppModel) -> String {
@@ -611,25 +688,38 @@ pub(crate) fn eq_frequency(hz: f32) -> String {
 }
 
 fn equalizer(m: &AppModel) -> Page {
-    let defaults = reborn_core::flat_eq_bands();
-    let bands = if m.settings.eq_bands.is_empty() {
-        &defaults
-    } else {
-        &m.settings.eq_bands
-    };
-    let mut rows = vec![row(
-        "Equalizer",
-        "eq_enabled",
-        on_off(m.settings.eq_enabled),
-    )];
-    rows.extend(bands.iter().take(8).enumerate().map(|(index, band)| {
-        row(
-            &eq_frequency(band.frequency_hz),
-            &format!("eq_band:{index}"),
-            format!("{:+.0} dB", band.gain_db),
-        )
-    }));
-    rows.push(Item::new("Reset to Flat", "eq_reset"));
+    if m.navigation.filter == "custom" {
+        let defaults = reborn_core::flat_eq_bands();
+        let bands = if m.settings.eq_bands.is_empty() {
+            &defaults
+        } else {
+            &m.settings.eq_bands
+        };
+        let mut rows = vec![];
+        rows.extend(bands.iter().take(8).enumerate().map(|(index, band)| {
+            row(
+                &eq_frequency(band.frequency_hz),
+                &format!("eq_band:{index}"),
+                format!("{:+.0} dB", band.gain_db),
+            )
+        }));
+        rows.push(Item::new("Reset to Flat", "eq_reset"));
+        return Page::rows(rows);
+    }
+    let current = eq_preset_name(m);
+    let mut rows: Vec<Item> = EQ_PRESETS
+        .iter()
+        .map(|(name, key, _)| {
+            row(name, &format!("eq_preset:{key}"), "").with_kind(RowKind::Check(current == *name))
+        })
+        .collect();
+    rows.push(
+        row("Custom", "eq_custom", "").with_kind(if current == "Custom" {
+            RowKind::Check(true)
+        } else {
+            RowKind::Chevron
+        }),
+    );
     Page::rows(rows)
 }
 
@@ -702,6 +792,21 @@ fn storage(m: &AppModel) -> Page {
         ),
         _ => Page::default(),
     };
+    page = page.with_rows(vec![
+        disabled(
+            row(
+                "Scan for music",
+                "scan_library",
+                if m.library.scanning {
+                    "Scanning…"
+                } else {
+                    ""
+                },
+            ),
+            !m.library.scanning,
+        ),
+        row("From a computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
+    ]);
     page = page.fact(
         "Internal Storage",
         free_text(internal).unwrap_or_else(|| "Checking…".into()),
@@ -736,7 +841,17 @@ pub fn update_summary(m: &AppModel) -> String {
     }
 }
 
+/// About & Updates: the update status first, then the facts an owner may want.
 fn update(m: &AppModel) -> Page {
+    let mut page = update_status(m);
+    page.rows
+        .push(row("Version", "version", reborn_core::VERSION));
+    page.rows
+        .push(row("Reset settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
+    page
+}
+
+fn update_status(m: &AppModel) -> Page {
     let s = &m.platform.snapshot;
     let u = &s.update;
     let busy = m.platform.busy;

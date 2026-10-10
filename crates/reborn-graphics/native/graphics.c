@@ -113,7 +113,11 @@ typedef struct {
   EGLDisplay display;
   EGLSurface window;
   EGLContext context;
-  GLuint program, vbo, white, font, display_font, icons, art, collection_art;
+  /* Texture slots, in the order the product UI names them (see rb_graphics_quad):
+   * 0 white, 1..3 glyph pages, 4 shape/icon masks, 5 artwork, 6 collection
+   * artwork, 7 thumbnail atlas. Every sampled size is kept for UV scaling. */
+  GLuint program, vbo, tex[8];
+  int tex_w[8], tex_h[8];
   struct flip flip;
   /* Bounded adjacent-texture batching, preserving the original draw order. */
   GLfloat vertices[256 * 6 * 8];
@@ -167,17 +171,9 @@ void rb_graphics_close(RbGraphics *g) {
       glDeleteProgram(g->program);
     if (g->vbo)
       glDeleteBuffers(1, &g->vbo);
-    if (g->font)
-      glDeleteTextures(1, &g->font);
-    /* display uses the same licensed sans atlas */
-    if (g->icons)
-      glDeleteTextures(1, &g->icons);
-    if (g->white)
-      glDeleteTextures(1, &g->white);
-    if (g->art)
-      glDeleteTextures(1, &g->art);
-    if (g->collection_art)
-      glDeleteTextures(1, &g->collection_art);
+    for (int i = 0; i < 8; i++)
+      if (g->tex[i])
+        glDeleteTextures(1, &g->tex[i]);
   }
   if (g->current)
     gbm_surface_release_buffer(g->surface, g->current);
@@ -226,8 +222,36 @@ static GLuint texture(int w, int h, const uint8_t *p) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   return t;
 }
-int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
-                     const uint8_t *display_font, const uint8_t *icons) {
+/* Thumbnail atlas geometry; keep in step with reborn-graphics/src/lib.rs. */
+#define RB_THUMB_W 1024
+#define RB_THUMB_H 512
+/* Coverage masks (glyph pages, shapes, icons) arrive as one byte per texel and
+ * are sampled as luminance-alpha (1,1,1,a): the unchanged fragment program then
+ * tints them exactly like the former RGBA atlases at half the video memory. */
+static GLuint mask_texture(int w, int h, const uint8_t *a8) {
+  uint8_t *la = malloc((size_t)w * h * 2);
+  if (!la)
+    return 0;
+  for (size_t i = 0; i < (size_t)w * h; i++) {
+    la[2 * i] = 255;
+    la[2 * i + 1] = a8[i];
+  }
+  GLuint t;
+  glGenTextures(1, &t);
+  glBindTexture(GL_TEXTURE_2D, t);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, w, h, 0,
+               GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, la);
+  free(la);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  return t;
+}
+int rb_graphics_open(RbGraphics **out, const uint8_t *const font_pages[3],
+                     const int font_heights[3], const uint8_t *masks,
+                     int mask_w, int mask_h) {
   *out = NULL;
   RbGraphics *g = calloc(1, sizeof(*g));
   if (!g)
@@ -401,31 +425,33 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glViewport(0, 0, g->width, g->height);
   uint8_t white[] = {255, 255, 255, 255};
-  g->white = texture(1, 1, white);
-  g->font = texture(1024, 1024, ui_font);
-  (void)display_font;
-  g->display_font = g->font;
-  g->icons = texture(192, 160, icons);
-  g->collection_art = texture(1, 1, white);
-  glBindTexture(GL_TEXTURE_2D, g->collection_art);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  g->art = texture(1, 1, white);
-  /* Album art is also used as a full-screen backdrop by the product UI.
-   * Linear filtering keeps that treatment photographic instead of blocky;
-   * the bitmap font intentionally remains nearest-filtered. */
-  glBindTexture(GL_TEXTURE_2D, g->art);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glBindTexture(GL_TEXTURE_2D, g->font);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glBindTexture(GL_TEXTURE_2D, g->display_font);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glBindTexture(GL_TEXTURE_2D, g->icons);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  g->tex[0] = texture(1, 1, white);
+  g->tex_w[0] = g->tex_h[0] = 1;
+  for (int i = 0; i < 3; i++) {
+    g->tex[1 + i] = mask_texture(1024, font_heights[i], font_pages[i]);
+    g->tex_w[1 + i] = 1024;
+    g->tex_h[1 + i] = font_heights[i];
+  }
+  g->tex[4] = mask_texture(mask_w, mask_h, masks);
+  g->tex_w[4] = mask_w;
+  g->tex_h[4] = mask_h;
+  /* Album art is also used as a full-screen backdrop by the product UI;
+   * linear filtering keeps that treatment photographic instead of blocky. */
+  g->tex[5] = texture(1, 1, white);
+  g->tex[6] = texture(1, 1, white);
+  g->tex_w[5] = g->tex_h[5] = g->tex_w[6] = g->tex_h[6] = 1;
+  /* Thumbnails: RGBA slots uploaded one at a time by rb_graphics_thumb. */
+  g->tex[7] = texture(RB_THUMB_W, RB_THUMB_H, NULL);
+  g->tex_w[7] = RB_THUMB_W;
+  g->tex_h[7] = RB_THUMB_H;
+  for (int i = 5; i < 8; i++) {
+    glBindTexture(GL_TEXTURE_2D, g->tex[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  }
+  for (int i = 0; i < 8; i++)
+    if (!g->tex[i])
+      goto fail;
   if (glGetError() != GL_NO_ERROR)
     goto fail;
   *out = g;
@@ -457,24 +483,25 @@ void rb_graphics_begin(RbGraphics *g) {
   glClearColor(.035, .047, .07, 1);
   glClear(GL_COLOR_BUFFER_BIT);
 }
+/* `tex` selects the texture (0 white, 1..3 glyph pages, 4 masks, 5 artwork,
+ * 6 collection artwork, 7 thumbnails); (sx, sy, sw, sh) is the source rectangle
+ * in texels of a mask/glyph/thumbnail texture and is ignored otherwise. */
 void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
-                      uint32_t color, int glyph, int icon, int display_font,
-                      int art) {
-  GLuint tex = art == 2 ? g->collection_art : art ? g->art
-                  : icon >= 0 ? g->icons
-                  : glyph >= 0 ? display_font ? g->display_font : g->font
-                               : g->white;
-  if (g->vertices_used && (g->batch_texture != tex ||
-                           g->vertices_used + 6 > 256 * 6))
+                      uint32_t color, int tex, int sx, int sy, int sw,
+                      int sh) {
+  if (tex < 0 || tex > 7)
+    return;
+  GLuint t = g->tex[tex];
+  if (g->vertices_used &&
+      (g->batch_texture != t || g->vertices_used + 6 > 256 * 6))
     flush_batch(g);
-  g->batch_texture = tex;
+  g->batch_texture = t;
   float u = 0, v = 0, uw = 1, vh = 1;
-  if (icon >= 0 && !art) {
-    u = (icon % 6) / 6.f; v = (icon / 6) / 5.f;
-    uw = 1 / 6.f; vh = 1 / 5.f;
-  } else if (glyph >= 0 && !art) {
-    u = (glyph % 32) / 32.f; v = (glyph / 32) / 32.f;
-    uw = 1 / 32.f; vh = 1 / 32.f;
+  if ((tex >= 1 && tex <= 4) || tex == 7) {
+    u = (float)sx / g->tex_w[tex];
+    v = (float)sy / g->tex_h[tex];
+    uw = (float)sw / g->tex_w[tex];
+    vh = (float)sh / g->tex_h[tex];
   }
   /* Same box transform and triangle order as the original strip renderer. */
   float cx = (2 * x + w) / g->width - 1;
@@ -494,8 +521,20 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
     memcpy(dst + 4, tint, 4 * sizeof(GLfloat));
   }
 }
+/* Upload one 98x98 RGBA thumbnail cell (a 96x96 image with a replicated
+ * one-pixel gutter) at atlas cell (cx, cy). */
+int rb_graphics_thumb(RbGraphics *g, int cx, int cy, const uint8_t *rgba) {
+  if (cx < 0 || cy < 0 || (cx + 1) * 98 > RB_THUMB_W ||
+      (cy + 1) * 98 > RB_THUMB_H)
+    return -EINVAL;
+  glBindTexture(GL_TEXTURE_2D, g->tex[7]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, cx * 98, cy * 98, 98, 98, GL_RGBA,
+                  GL_UNSIGNED_BYTE, rgba);
+  return glGetError() == GL_NO_ERROR ? 0 : -EIO;
+}
 int rb_graphics_art(RbGraphics *g, const uint8_t *p, int collection) {
-  glBindTexture(GL_TEXTURE_2D, collection ? g->collection_art : g->art);
+  glBindTexture(GL_TEXTURE_2D, collection ? g->tex[6] : g->tex[5]);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 160, 160, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, p);
   return glGetError() == GL_NO_ERROR ? 0 : -EIO;

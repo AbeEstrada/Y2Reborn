@@ -1,18 +1,23 @@
-# Reborn UI v1 font
+# Reborn UI v3 type and shapes
 
-One 1024×1024 RGBA atlas contains 1,001 proportional DejaVu Sans 2.37 glyphs,
-at 24 px in 32 px cells. The UI scales these to its centralized type tokens.
-Both former font roles share this texture. No runtime TTF loader is required.
+Open Sans (SIL Open Font License 1.1, `OpenSans-OFL.txt`) is rendered once, at
+build time, into coverage-mask pages — one byte per texel, sampled by the
+renderer as luminance-alpha and tinted by the draw colour:
 
-The official public DejaVu release supplied the TTF, not a system/private font.
-See `provenance.json` for its URL and SHA-256 and `DejaVuSans.LICENSE` for the
-upstream license. Regenerate with `tools/assets/build_atlas.py` and the extracted
-official release directory. Build-only dependencies: Pillow 11.3, CairoSVG 2.8.2.
+| Page | File | Contents |
+| --- | --- | --- |
+| 0 | `reborn-regular.a8` | Regular 11/13/15/17 px, Light 23 px, Light 44 px wordmark |
+| 1 | `reborn-semibold.a8` | SemiBold 10/13/15/17/20/25/28/36 px |
+| 2 | `reborn-fallback.a8` | Regular 24 px, scaled, for every character an exact set lacks |
 
-Coverage: basic/extended Latin U+0000–024F (controls are sanitized), Greek
-U+0370–03FF, Cyrillic U+0400–04FF, selected punctuation and U+FFFD. Unsupported
-characters map to U+FFFD; they never become arbitrary texture coordinates.
-CJK, emoji, shaping and bidirectional layout remain unavailable.
+Every `text::Face` is one weight at one pixel size, so glyphs are drawn 1:1 on
+the pixel grid rather than scaled from one bitmap. The exact sets cover basic
+and extended Latin (U+0020–017F), common punctuation and the euro sign; the
+fallback page adds the rest of Latin Extended-B, Greek, Cyrillic, arrows and
+U+FFFD, which stands in for anything else (CJK, emoji and shaping are not
+supported). `provenance.json` records the font file hashes, set sizes and page
+heights. `crates/reborn-ui/src/fontdata.rs` holds the matching metrics.
 
-The older `reborn-display.rgba` asset is historical and is not included by the
-UI or installed by the UI v1 candidate.
+Regenerate everything (fonts and `assets/icons`) with
+`tools/assets/build_ui_assets.py`. Build inputs: Pillow and the Open Sans TTFs;
+no font file is installed on the player.

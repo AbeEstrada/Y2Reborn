@@ -1,172 +1,20 @@
-//! Reborn primitives. Bounds are expressed in pixels, with one proportional
-//! licensed sans atlas and one immutable icon atlas shared by native and preview.
-use crate::theme::{color, radius, type_scale};
-use crate::{glyphs, Item, Ui};
+//! Shared widgets of the UI v3 visual system: status bar, list highlights,
+//! grouped cards, switches, pills, covers, sheets and toasts.
+use crate::{
+    canvas::{Canvas, Icon},
+    text::{self, Face},
+    theme::{alpha, color, fade, mix, HEIGHT, WIDTH},
+    Ui,
+};
 use reborn_core::{
     platform::{ChargingState, LowBattery},
-    AppModel, AudioOutput,
+    AppModel, AudioOutput, Track,
 };
-use reborn_graphics::Quad;
 
-pub struct Canvas {
-    pub draw: Vec<Quad>,
-}
-impl Canvas {
-    pub fn new() -> Self {
-        Self {
-            draw: Vec::with_capacity(1800),
-        }
-    }
-    pub fn finish(self) -> Vec<Quad> {
-        self.draw
-    }
-    pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: u32) {
-        if w > 0. && h > 0. {
-            self.draw.push(Quad::rect(x, y, w, h, fill));
-        }
-    }
-    pub fn rounded(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, fill: u32) {
-        self.rect(x + r, y, w - r * 2., h, fill);
-        self.rect(x, y + r, w, h - r * 2., fill);
-        for row in 0..r.ceil() as usize {
-            let dy = r - row as f32 - 0.5;
-            let inset = r - (r * r - dy * dy).max(0.).sqrt();
-            self.rect(x + inset, y + row as f32, w - 2. * inset, 1., fill);
-            self.rect(x + inset, y + h - row as f32 - 1., w - 2. * inset, 1., fill);
-        }
-    }
-    pub fn focus_panel(&mut self, x: f32, y: f32, w: f32, h: f32, focused: bool) {
-        if focused {
-            let i = self.draw.len();
-            self.rounded(x, y, w, h, radius::SMALL, color::ACCENT_GOLD_BRIGHT);
-            self.draw[i].focus_target = true;
-            self.rounded(
-                x + 2.,
-                y + 2.,
-                w - 4.,
-                h - 4.,
-                radius::SMALL - 2.,
-                color::FOCUS_FILL,
-            );
-        }
-    }
-    pub fn text(&mut self, x: f32, y: f32, value: &str, scale: f32, tint: u32) {
-        self.text_box(x, y, 464. - x, value, scale, tint);
-    }
-    pub fn text_box(&mut self, x: f32, y: f32, width: f32, value: &str, scale: f32, tint: u32) {
-        let size = 8. * scale;
-        let value = fit_pixels(value, width, size);
-        let mut cursor = x;
-        for ch in value.chars() {
-            let glyph = glyphs::index(ch);
-            let ratio = size / 24.;
-            let mut q = Quad::rect(
-                cursor - 2. * ratio,
-                y - 6. * ratio,
-                32. * ratio,
-                32. * ratio,
-                tint,
-            );
-            q.glyph = Some(glyph);
-            self.draw.push(q);
-            cursor += glyphs::ADVANCE[glyph as usize] * ratio;
-        }
-    }
-    pub fn centered(&mut self, x: f32, y: f32, value: &str, scale: f32, tint: u32) {
-        let value = fit_pixels(value, (x.min(480. - x) - 16.) * 2., scale * 8.);
-        self.text(
-            x - text_width(&value, scale * 8.) / 2.,
-            y,
-            &value,
-            scale,
-            tint,
-        );
-    }
-    pub fn icon(&mut self, name: &str, x: f32, y: f32, size: f32, tint: u32) {
-        let i = match name {
-            "albums" => 0,
-            "artist" => 1,
-            "back" => 2,
-            "battery" => 3,
-            "bluetooth" => 4,
-            "chevron_right" => 5,
-            "display" | "brightness" => 6,
-            "eq" => 7,
-            "headphones" => 9,
-            "heart" => 10,
-            "info" => 11,
-            "menu" => 13,
-            "next" => 14,
-            "pause" => 15,
-            "play" => 16,
-            "previous" => 17,
-            "repeat" => 18,
-            "sd" => 19,
-            "settings" => 20,
-            "shuffle" => 21,
-            "songs" => 22,
-            "storage" => 23,
-            "volume" => 24,
-            "wifi" => 25,
-            _ => 13,
-        };
-        let mut q = Quad::rect(x, y, size, size, tint);
-        q.icon = Some(i);
-        self.draw.push(q);
-    }
-    pub fn artwork(&mut self, x: f32, y: f32, size: f32, has_art: bool) {
-        if has_art {
-            let mut q = Quad::rect(x, y, size, size, color::TEXT_PRIMARY);
-            q.artwork = true;
-            self.draw.push(q);
-        } else {
-            self.rounded(x, y, size, size, 6., color::SURFACE);
-            self.icon(
-                "albums",
-                x + size * 0.3,
-                y + size * 0.3,
-                size * 0.4,
-                color::TEXT_MUTED,
-            );
-        }
-    }
-    pub fn progress(&mut self, x: f32, y: f32, width: f32, value: f32) {
-        self.rect(x, y, width, 4., color::TRACK);
-        self.rect(x, y, width * value.clamp(0., 1.), 4., color::ACCENT_GOLD);
-    }
-}
-pub fn text_width(value: &str, size: f32) -> f32 {
-    value
-        .chars()
-        .map(|ch| glyphs::ADVANCE[glyphs::index(ch) as usize] * size / 24.)
-        .sum()
-}
-pub fn fit_pixels(value: &str, width: f32, size: f32) -> String {
-    let clean: String = value
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .take(1024)
-        .collect();
-    if text_width(&clean, size) <= width {
-        return clean;
-    }
-    let mut out = String::new();
-    let mut used = text_width("…", size);
-    for ch in clean.chars() {
-        used += text_width(&ch.to_string(), size);
-        if used > width {
-            break;
-        }
-        out.push(ch);
-    }
-    if width >= text_width("…", size) {
-        out.push('…');
-    }
-    out
-}
 pub fn time(ms: u64) -> String {
     format!("{}:{:02}", ms / 60_000, (ms / 1000) % 60)
 }
+
 pub fn progress(position: u64, duration: u64) -> f32 {
     if duration == 0 {
         0.
@@ -174,257 +22,484 @@ pub fn progress(position: u64, duration: u64) -> f32 {
         (position as f32 / duration as f32).clamp(0., 1.)
     }
 }
+
 pub fn output_label(output: &AudioOutput) -> String {
     match output {
         AudioOutput::Wired => "Headphone jack".into(),
         AudioOutput::Bluetooth(_) => "Bluetooth".into(),
     }
 }
-pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel) {
-    c.rect(0., 0., 480., 28., color::BG_RAISED);
-    if m.playback == reborn_core::PlaybackState::Playing {
-        c.icon("play", 16., 7., 14., color::ACCENT_GOLD);
+
+/// A stable identity for the cover shared by every track of one album.
+pub fn art_key(track: &Track) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    if track.album.is_empty() && track.album_artist.is_empty() {
+        feed(
+            track
+                .path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+    } else {
+        feed(track.album.as_bytes());
+        feed(if track.album_artist.is_empty() {
+            track.artist.as_bytes()
+        } else {
+            track.album_artist.as_bytes()
+        });
     }
+    hash | 1
+}
+
+// ---------------------------------------------------------------- status bar
+
+/// The top strip: optional back arrow, a tracked-caps title in the middle and
+/// the status cluster (radios, charging, battery) on the right.
+pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool) {
+    if back {
+        c.icon(Icon::Back, 22., 18., 20., color::MUTED);
+    }
+    if !title.is_empty() {
+        let mut shown = title.to_owned();
+        while shown.chars().count() > 1 && text::width_tracked(Face::S10, &shown, 1.7) > 250. {
+            shown.pop();
+            shown = shown.trim_end().to_owned();
+            if text::width_tracked(Face::S10, &shown, 1.7) <= 250. {
+                shown.push('…');
+                break;
+            }
+        }
+        c.text_center_tracked(
+            240.,
+            18. + Face::S10.mid_offset(),
+            &shown,
+            Face::S10,
+            color::MUTED,
+            1.7,
+        );
+    }
+    status_cluster(c, ui, m, color::MUTED);
+}
+
+fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
     let b = m.platform.battery;
     let low = matches!(
         b.level,
         LowBattery::Low | LowBattery::Critical | LowBattery::ShuttingDown
-    );
-    let tint = if low {
-        color::DANGER
-    } else {
-        color::TEXT_SECONDARY
-    };
-    let mut x = 438.;
-    c.icon("battery", x, 4., 22., tint);
-    if matches!(b.charging, ChargingState::Charging | ChargingState::Full) {
-        c.text(466., 7., "+", type_scale::BODY, color::ACCENT_GOLD);
+    ) || b.percent.is_some_and(|p| p <= 15);
+    let fill = if low { color::DANGER } else { color::TEXT };
+    // Battery body, nub and charge level.
+    let (x0, y0) = (440., 12.);
+    c.rrect_outline(x0, y0, 22., 12., 3., 1., tint);
+    c.rect(x0 + 23., y0 + 4., 2., 4., tint);
+    if let Some(p) = b.percent.filter(|p| *p <= 100) {
+        let w = (18. * f32::from(p) / 100.)
+            .round()
+            .max(if p > 0 { 2. } else { 0. });
+        c.rect(x0 + 2., y0 + 2., w, 8., fill);
     }
-    if let Some(percent) = b.percent.filter(|p| *p <= 100) {
-        let text = format!("{percent}%");
-        let w = text_width(&text, 12.);
-        x -= w + 6.;
-        c.text(x, 8., &text, type_scale::SECONDARY, tint);
+    let mut right = x0 - 8.;
+    if let Some(p) = b.percent.filter(|p| *p <= 100) {
+        let text = p.to_string();
+        let w = text::width(Face::S10, &text);
+        c.text(
+            right - w,
+            18. + Face::S10.mid_offset(),
+            &text,
+            Face::S10,
+            if low { color::DANGER } else { tint },
+        );
+        right -= w + 8.;
+    }
+    if matches!(b.charging, ChargingState::Charging) {
+        c.icon(Icon::Bolt, right - 5., 18., 14., color::SUCCESS);
+        right -= 16.;
     }
     if ui.bluetooth.powered {
-        x -= 26.;
         let connected = ui.bluetooth.devices.iter().any(|d| d.connected);
         c.icon(
-            "bluetooth",
-            x,
-            5.,
+            Icon::Bluetooth,
+            right - 7.,
             18.,
-            if connected {
-                color::TEXT_PRIMARY
-            } else {
-                color::TEXT_MUTED
-            },
+            16.,
+            if connected { color::TEXT } else { color::DIM },
         );
+        right -= 20.;
     }
     if ui.wifi.powered {
-        x -= 26.;
         let connected = matches!(ui.wifi.status, crate::WifiStatus::Connected(_));
         c.icon(
-            "wifi",
-            x,
-            5.,
+            Icon::Wifi,
+            right - 7.,
             18.,
-            if connected {
-                color::TEXT_PRIMARY
-            } else {
-                color::TEXT_MUTED
-            },
+            16.,
+            if connected { color::TEXT } else { color::DIM },
         );
     }
 }
-pub fn title(c: &mut Canvas, name: &str, detail: &str) {
-    let value = fit_pixels(detail, 130., 12.);
-    let width = text_width(&value, 12.);
-    c.text_box(
-        16.,
-        40.,
-        440. - width,
-        name,
-        type_scale::SCREEN_TITLE,
-        color::TEXT_PRIMARY,
-    );
-    c.text(
-        464. - width,
-        47.,
-        &value,
-        type_scale::SECONDARY,
-        color::TEXT_MUTED,
+
+// --------------------------------------------------------- highlights, cards
+
+/// The focused row of a list: accent-tinted glass with a hairline.
+pub fn accent_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, accent: u32) {
+    let start = c.draw.len();
+    c.rrect(x, y, w, h, 12., alpha(accent, 46));
+    c.mark_focus(start);
+    c.rrect_outline(x, y, w, h, 12., 1., alpha(accent, 120));
+}
+
+/// The focused row of a settings-style list: neutral glass.
+pub fn glass_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
+    let start = c.draw.len();
+    c.rrect(x, y, w, h, 12., color::GLASS);
+    c.mark_focus(start);
+}
+
+/// A grouped card behind a run of settings rows.
+pub fn card(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
+    c.rrect(x, y, w, h, 16., color::GLASS_FAINT);
+}
+
+pub fn section_label(c: &mut Canvas, x: f32, cy: f32, label: &str) {
+    c.text_tracked(
+        x,
+        cy + Face::S10.mid_offset(),
+        &label.to_uppercase(),
+        Face::S10,
+        color::MUTED,
+        1.4,
     );
 }
-pub fn row(c: &mut Canvas, item: &Item, y: f32, focused: bool, trailing: &str, playing: bool) {
-    c.focus_panel(16., y, 448., 46., focused && item.enabled);
-    let x = if playing { 44. } else { 28. };
-    if playing {
-        c.icon("play", 26., y + 16., 13., color::ACCENT_GOLD);
-    }
-    let tail_width = if trailing.is_empty() {
-        0.
-    } else {
-        text_width(trailing, 12.) + 20.
-    };
-    let has_secondary = !item.secondary.is_empty();
-    c.text_box(
+
+pub fn toggle(c: &mut Canvas, right: f32, cy: f32, on: bool) {
+    let (w, h) = (44., 26.);
+    let x = right - w;
+    let y = cy - h / 2.;
+    c.rrect(
         x,
-        y + if has_secondary { 6. } else { 14. },
-        428. - x - tail_width,
-        &item.label,
-        type_scale::ROW,
-        if item.enabled {
-            color::TEXT_PRIMARY
+        y,
+        w,
+        h,
+        13.,
+        if on {
+            color::SUCCESS
         } else {
-            color::TEXT_MUTED
+            color::GLASS_STRONG
         },
     );
-    if has_secondary {
-        c.text_box(
+    c.disc(x + if on { 31. } else { 13. }, cy, 10., color::TEXT);
+}
+
+pub fn check(c: &mut Canvas, cx: f32, cy: f32, tint: u32) {
+    c.icon(Icon::Check, cx, cy, 20., tint);
+}
+
+pub fn chevron(c: &mut Canvas, right: f32, cy: f32) {
+    c.icon(Icon::Chevron, right - 8., cy, 16., color::DIM);
+}
+
+/// Four signal bars, `level` of them lit.
+pub fn signal_bars(c: &mut Canvas, right: f32, cy: f32, level: u8) {
+    for i in 0..4u8 {
+        let h = 4. + f32::from(i) * 3.;
+        let x = right - 22. + f32::from(i) * 6.;
+        let lit = i < level;
+        c.rrect(
             x,
-            y + 27.,
-            428. - x - tail_width,
-            &item.secondary,
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
-    }
-    if !trailing.is_empty() {
-        c.text(
-            450. - text_width(trailing, 12.),
-            y + 16.,
-            trailing,
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
+            cy + 7. - h,
+            4.,
+            h,
+            1.,
+            if lit { color::TEXT } else { color::TRACK },
         );
     }
 }
-/// A thin position rail beside long lists.
-pub fn scroll_indicator(
+
+/// A rounded pill button.
+#[allow(clippy::too_many_arguments)]
+pub fn pill(
     c: &mut Canvas,
-    top: f32,
-    height: f32,
-    scroll: usize,
-    visible: usize,
-    count: usize,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    label: &str,
+    face: Face,
+    fill: u32,
+    ink: u32,
 ) {
-    if count == 0 {
+    c.rrect(x, y, w, h, h / 2., fill);
+    c.text_center(x + w / 2., y + h / 2. + face.mid_offset(), label, face, ink);
+}
+
+/// A thin outlined tag such as `LOSSLESS 24/96`.
+pub fn tag(c: &mut Canvas, x: f32, cy: f32, label: &str, tint: u32) -> f32 {
+    let w = text::width_tracked(Face::S10, label, 0.5) + 20.;
+    c.rrect_outline(x, cy - 10., w, 20., 10., 1., alpha(tint, 170));
+    c.text_tracked(
+        x + 10.,
+        cy + Face::S10.mid_offset(),
+        label,
+        Face::S10,
+        tint,
+        0.5,
+    );
+    w
+}
+
+/// A thin horizontal track with its lit part and an optional knob.
+pub fn slider(c: &mut Canvas, x: f32, cy: f32, w: f32, value: f32, lit: u32, knob: bool) {
+    let h = 4.;
+    c.rrect(x, cy - h / 2., w, h, 2., color::TRACK);
+    let filled = (w * value.clamp(0., 1.)).round();
+    c.rrect(x, cy - h / 2., filled, h, 2., lit);
+    if knob {
+        c.disc(x + filled, cy, 6., color::TEXT);
+    }
+}
+
+// ------------------------------------------------------------------- covers
+
+/// Where the cover of a track comes from for the current frame.
+pub fn cover(c: &mut Canvas, ui: &Ui, track: Option<(usize, &Track)>, x: f32, y: f32, size: f32) {
+    cover_rounded(c, ui, track, x, y, size, (size * 0.11).max(4.));
+}
+
+pub fn cover_rounded(
+    c: &mut Canvas,
+    ui: &Ui,
+    track: Option<(usize, &Track)>,
+    x: f32,
+    y: f32,
+    size: f32,
+    radius: f32,
+) {
+    let Some((index, t)) = track else {
+        placeholder(c, x, y, size, radius, 0);
         return;
+    };
+    let key = art_key(t);
+    if ui.thumb_resident(key) {
+        c.draw.push(reborn_graphics::Quad {
+            tex: reborn_graphics::Tex::Thumb(key),
+            ..reborn_graphics::Quad::rect(x, y, size, size, color::TEXT)
+        });
+    } else {
+        placeholder(c, x, y, size, radius, key);
+        ui.want_thumb(key, index);
     }
-    let thumb = (height * visible as f32 / count as f32).max(16.);
-    let y = top + (height - thumb) * scroll as f32 / (count - visible).max(1) as f32;
-    c.rect(470., top, 2., height, color::SURFACE);
-    c.rect(470., y, 2., thumb, color::TEXT_MUTED);
 }
-pub fn footer(c: &mut Canvas, m: &AppModel, has_art: bool) {
-    c.rect(0., 324., 480., 36., color::BG_RAISED);
-    if let Some(track) = m.current() {
-        c.artwork(16., 329., 26., has_art);
-        c.text_box(
-            52.,
-            329.,
-            320.,
-            crate::track_title(track),
-            type_scale::SECONDARY,
-            color::TEXT_PRIMARY,
-        );
-        c.text_box(
-            52.,
-            345.,
-            320.,
-            crate::display_or_unknown(&track.artist),
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
+
+/// A calm gradient tile standing in for a cover that is missing or loading.
+pub fn placeholder(c: &mut Canvas, x: f32, y: f32, size: f32, radius: f32, key: u64) {
+    let hue = [
+        0x3A4560u32,
+        0x4A3A58,
+        0x2F5058,
+        0x58463A,
+        0x3A5846,
+        0x50405A,
+    ];
+    let base = hue[(key >> 8) as usize % hue.len()] << 8 | 0xFF;
+    c.rrect(x, y, size, size, radius, mix(base, color::BG, 0.35));
+    if size >= 40. {
         c.icon(
-            if m.playback == reborn_core::PlaybackState::Playing {
-                "play"
-            } else {
-                "pause"
-            },
-            444.,
-            333.,
-            18.,
-            color::TEXT_SECONDARY,
+            Icon::Note,
+            x + size / 2.,
+            y + size / 2.,
+            (size * 0.34).round(),
+            fade(color::TEXT, 0.35),
         );
     }
 }
-/// One calm line of radio progress or a problem in the footer strip.
-pub fn status_strip(c: &mut Canvas, message: &str) {
-    c.rect(0., 324., 480., 36., color::BG_RAISED);
-    c.text_box(
-        16.,
-        336.,
-        448.,
-        message,
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
+
+/// A soft shadow under a raised cover.
+pub fn cover_shadow(c: &mut Canvas, x: f32, y: f32, size: f32) {
+    c.glow(
+        x + size / 2.,
+        y + size * 0.62,
+        size * 0.78,
+        size * 0.72,
+        0x00000090,
     );
 }
-/// A modal sheet sized to its content and centred vertically. Up to six
-/// rows are visible; longer sheets scroll with the focus.
-pub fn dialog(c: &mut Canvas, title: &str, body: &str, rows: &[Item], focus: usize) {
-    const PITCH: f32 = 40.;
-    let lines = crate::screens::wrap_lines(body, 376., 14., 3);
-    let header = 54. + lines.len() as f32 * 20. + if lines.is_empty() { 0. } else { 10. };
-    let capacity = ((328. - header - 14.) / PITCH).floor().clamp(1., 6.) as usize;
-    let visible = rows.len().clamp(1, capacity);
-    let height = header + visible as f32 * PITCH + 14.;
-    let top_edge = ((360. - height) / 2.).max(16.);
-    c.rect(0., 0., 480., 360., color::SCRIM_STRONG);
-    c.rounded(32., top_edge, 416., height, 10., color::SURFACE);
-    c.text_box(
-        52.,
-        top_edge + 18.,
-        376.,
-        title,
-        type_scale::SCREEN_TITLE,
-        color::TEXT_PRIMARY,
+
+// ---------------------------------------------------------- sheets and toasts
+
+/// A dimmed backdrop for a modal sheet.
+pub fn scrim(c: &mut Canvas, strong: bool) {
+    c.rect(
+        0.,
+        0.,
+        WIDTH,
+        HEIGHT,
+        if strong {
+            color::SCRIM_STRONG
+        } else {
+            color::SCRIM
+        },
     );
-    let mut y = top_edge + 52.;
-    for line in &lines {
-        c.text_box(52., y, 376., line, type_scale::BODY, color::TEXT_SECONDARY);
-        y += 20.;
+}
+
+pub struct SheetRow<'a> {
+    pub label: &'a str,
+    pub detail: &'a str,
+    pub enabled: bool,
+}
+
+/// A bottom sheet of actions, as used for song options. The focused row is a
+/// white pill with dark text, so focus never depends on colour.
+pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRow], focus: usize) {
+    scrim(c, false);
+    let row_h = 31.;
+    let head = if subtitle.is_empty() { 40. } else { 52. };
+    let visible = rows.len().min(6);
+    let h = head + visible as f32 * row_h + 14.;
+    let (x, w) = (8., WIDTH - 16.);
+    let y = HEIGHT - h - 8.;
+    c.rrect(x, y, w, h, 18., color::SHEET);
+    c.rrect_outline(x, y, w, h, 18., 1., color::GLASS);
+    c.text_mid(x + 20., y + 22., w - 40., title, Face::S15, color::TEXT);
+    if !subtitle.is_empty() {
+        c.text_mid(x + 20., y + 40., w - 40., subtitle, Face::R11, color::MUTED);
     }
-    let top = top_edge + header;
-    let start = focus.saturating_sub(visible - 1);
-    for (index, item) in rows.iter().enumerate().skip(start).take(visible) {
-        let y = top + (index - start) as f32 * PITCH;
-        c.focus_panel(48., y, 384., 38., index == focus && item.enabled);
-        let tail = fit_pixels(&item.secondary, 150., 12.);
-        let tail_w = text_width(&tail, 12.);
-        c.text_box(
-            62.,
-            y + 11.,
-            350. - tail_w,
-            &item.label,
-            type_scale::ROW,
-            if item.enabled {
-                color::TEXT_PRIMARY
-            } else {
-                color::TEXT_MUTED
-            },
+    let start = focus.saturating_sub(visible.saturating_sub(1));
+    for (i, row) in rows.iter().enumerate().skip(start).take(visible) {
+        let ry = y + head + (i - start) as f32 * row_h;
+        let selected = i == focus && row.enabled;
+        if selected {
+            let at = c.draw.len();
+            c.rrect(x + 8., ry, w - 16., row_h - 3., 10., 0xF2F3F5FF);
+            c.mark_focus(at);
+        }
+        let ink = if selected {
+            color::INK
+        } else if row.enabled {
+            color::TEXT
+        } else {
+            color::DIM
+        };
+        c.text_mid(
+            x + 22.,
+            ry + (row_h - 3.) / 2.,
+            w - 150.,
+            row.label,
+            Face::R15,
+            ink,
         );
-        if !tail.is_empty() {
-            c.text(
-                418. - tail_w,
-                y + 13.,
-                &tail,
-                type_scale::SECONDARY,
-                color::TEXT_SECONDARY,
+        if !row.detail.is_empty() {
+            c.text_mid_right(
+                x + w - 22.,
+                ry + (row_h - 3.) / 2.,
+                row.detail,
+                Face::R11,
+                if selected { 0x4A4E58FF } else { color::MUTED },
             );
         }
     }
 }
-pub fn toast(c: &mut Canvas, message: &str) {
-    c.rounded(16., 284., 448., 34., 6., color::SURFACE_HOVER);
-    c.text_box(
-        28.,
-        294.,
-        424.,
-        message,
-        type_scale::BODY,
-        color::TEXT_PRIMARY,
-    );
+
+/// A centred dialog with a message and a short row of choices.
+pub fn dialog(
+    c: &mut Canvas,
+    title: &str,
+    body: &str,
+    rows: &[SheetRow],
+    focus: usize,
+    danger: bool,
+) {
+    scrim(c, true);
+    let lines = text::wrap(Face::R13, body, 300., 4);
+    let h = 74. + lines.len() as f32 * 19. + rows.len() as f32 * 38. + 10.;
+    let (w, x) = (340., 70.);
+    let y = ((HEIGHT - h) / 2.).max(12.);
+    c.rrect(x, y, w, h, 18., color::SHEET);
+    c.rrect_outline(x, y, w, h, 18., 1., color::GLASS);
+    c.text_center(WIDTH / 2., y + 34., title, Face::S17, color::TEXT);
+    let mut ty = y + 62.;
+    for line in &lines {
+        c.text_center(WIDTH / 2., ty, line, Face::R13, color::MUTED);
+        ty += 19.;
+    }
+    let mut ry = ty + 10.;
+    for (i, row) in rows.iter().enumerate() {
+        let selected = i == focus && row.enabled;
+        if selected {
+            let at = c.draw.len();
+            let fill = if danger && i > 0 {
+                color::DANGER
+            } else {
+                0xF2F3F5FF
+            };
+            c.rrect(x + 24., ry, w - 48., 32., 16., fill);
+            c.mark_focus(at);
+        } else {
+            c.rrect(x + 24., ry, w - 48., 32., 16., color::GLASS_FAINT);
+        }
+        let ink = if selected {
+            color::INK
+        } else if row.enabled {
+            color::TEXT
+        } else {
+            color::DIM
+        };
+        c.text_center(
+            WIDTH / 2.,
+            ry + 16. + Face::S13.mid_offset(),
+            row.label,
+            Face::S13,
+            ink,
+        );
+        ry += 38.;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    Info,
+    Error,
+}
+
+/// A short message at the top of the screen.
+pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
+    let w = (text::width(Face::S13, message) + 52.).min(WIDTH - 32.);
+    let x = (WIDTH - w) / 2.;
+    let y = 44.;
+    c.rrect(x, y, w, 34., 17., 0x14161CF4);
+    c.rrect_outline(x, y, w, 34., 17., 1., color::GLASS);
+    let dot = match tone {
+        Tone::Info => color::MUTED,
+        Tone::Error => color::DANGER,
+    };
+    c.disc(x + 18., y + 17., 4., dot);
+    c.text_mid(x + 32., y + 17., w - 46., message, Face::S13, color::TEXT);
+}
+
+/// A thin position rail beside a long list.
+pub fn scroll_rail(
+    c: &mut Canvas,
+    top: f32,
+    height: f32,
+    position: usize,
+    count: usize,
+    visible: usize,
+    accent: u32,
+) {
+    if count <= visible {
+        return;
+    }
+    let thumb = (height * visible as f32 / count as f32).clamp(18., height);
+    let y = top + (height - thumb) * position as f32 / (count - visible).max(1) as f32;
+    c.rrect(WIDTH - 14., top, 2., height, 1., color::TRACK);
+    c.rrect(WIDTH - 14., y.round(), 2., thumb.round(), 1., accent);
 }

@@ -43,7 +43,7 @@ struct Runtime {
     platform_observed: bool,
     /// Remaining frames of the first-frame fade from the boot mark into the UI.
     boot_fade: u8,
-    collection_art: Option<artwork::Worker>,
+    thumbs: Option<artwork::Worker>,
     playback: playback::Playback,
     log: Observer,
     db: Database,
@@ -463,10 +463,7 @@ impl Runtime {
             return Err("sleep_preparation_busy".into());
         }
         let scan_ready = self.scanner.quiesce();
-        let art_ready = self
-            .collection_art
-            .as_mut()
-            .is_none_or(|worker| worker.quiesce());
+        let art_ready = self.thumbs.as_mut().is_none_or(|worker| worker.quiesce());
         if !scan_ready || !art_ready {
             self.scanner.resume();
             self.background.update(
@@ -533,16 +530,10 @@ impl Runtime {
 
     fn recreate_graphics(&mut self) -> Result<(), String> {
         self.art = false;
-        self.ui.collection_art = None;
-        if let Some(worker) = &mut self.collection_art {
-            worker.selected = None;
+        if let Some(worker) = &mut self.thumbs {
+            worker.forget_failures();
         }
-        self.graphics = Some(Renderer::open(
-            reborn_ui::font_atlas(),
-            reborn_ui::display_font_atlas(),
-            &reborn_ui::icons_atlas(),
-            self.log.clone(),
-        )?);
+        self.graphics = Some(Renderer::open(&reborn_ui::atlases(), self.log.clone())?);
         self.dirty.mark_render();
         Ok(())
     }
@@ -1093,8 +1084,8 @@ impl Runtime {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
                 self.playback.set_volume(self.model.settings.volume);
-                self.ui
-                    .flash(format!("Volume {}", self.model.settings.volume));
+                self.ui.show_volume();
+                self.dirty.mark_render();
                 // A hold may adjust every 90 ms. Keep the atomic audio target
                 // immediate; persist on the existing bounded checkpoint and
                 // shutdown boundaries instead of fsyncing each step.
@@ -1301,6 +1292,15 @@ impl Runtime {
                 } else {
                     self.checkpoint();
                 }
+            }
+            Effect::SetEqPreset(gains) => {
+                let mut bands = reborn_core::flat_eq_bands();
+                for (band, gain) in bands.iter_mut().zip(gains) {
+                    band.gain_db = f32::from(gain.clamp(-12, 12));
+                }
+                self.model.settings.eq_bands = bands;
+                self.model.settings.eq_enabled = gains.iter().any(|g| *g != 0);
+                self.reload_dsp()?;
             }
             Effect::ResetEq => {
                 self.model.settings.eq_bands = reborn_core::flat_eq_bands();
@@ -2261,12 +2261,7 @@ fn run() -> Result<(), String> {
         );
         None
     } else {
-        match Renderer::open(
-            reborn_ui::font_atlas(),
-            reborn_ui::display_font_atlas(),
-            &reborn_ui::icons_atlas(),
-            log.clone(),
-        ) {
+        match Renderer::open(&reborn_ui::atlases(), log.clone()) {
             Ok(g) => Some(g),
             Err(e) => {
                 log.health_set("graphics", HealthState::Failed, true, &e);
@@ -2402,7 +2397,7 @@ fn run() -> Result<(), String> {
         platform_refresh_pending: false,
         platform_observed: false,
         boot_fade: reborn_ui::BOOT_FADE_FRAMES,
-        collection_art: if headless {
+        thumbs: if headless {
             None
         } else {
             Some(artwork::Worker::spawn().map_err(|e| e.to_string())?)
@@ -2550,47 +2545,56 @@ fn run() -> Result<(), String> {
         ) {
             observation_pending = None;
         }
-        if let Some(worker) = &mut rt.collection_art {
-            let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
-                && !rt.model.screen_off
-                && !rt.sleep_prepared
-            {
-                rt.ui
-                    .collection_track(&rt.model, &rt.model.library.tracks)
-                    .map(|track| {
-                        artwork::Key::new(
-                            track,
-                            rt.model
-                                .sources
-                                .iter()
-                                .find(|s| s.id == track.source_id)
-                                .and_then(|s| s.mount_id),
-                            &rt.model.settings.music_directory,
-                        )
-                    })
-            } else {
-                None
-            };
-            // Drain replies before scheduling: stale completions cannot fill the
-            // bounded channel and hide the new route's completion.
-            while let Ok(reply) = worker.replies.try_recv() {
+        if let Some(worker) = &mut rt.thumbs {
+            // Upload finished thumbnails (a few per pass, so a burst never
+            // stalls a frame), then queue what the last frame could not show.
+            for _ in 0..3 {
+                let Ok(reply) = worker.replies.try_recv() else {
+                    break;
+                };
                 if performance.enabled() {
-                    performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.pixels.as_ref().map(Vec::len),"current":desired.as_ref()==Some(&reply.key)}));
+                    performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.rgba.as_ref().map(Vec::len)}));
                 }
-                if desired.as_ref() == Some(&reply.key)
-                    && reply.source.as_ref().is_some_and(|s| s.is_current())
-                {
-                    if let (Some(pixels), Some(renderer)) = (reply.pixels, rt.graphics.as_mut()) {
-                        if renderer.collection_artwork(&pixels).is_ok() {
-                            rt.ui.collection_art = Some((reply.key.source, reply.key.id));
+                match (reply.rgba, rt.graphics.as_mut()) {
+                    (Some(rgba), Some(renderer)) => {
+                        if renderer.upload_thumb(reply.thumb, &rgba).is_ok() {
                             rt.dirty.mark_render();
                         }
                     }
+                    (None, _) => worker.record_failure(reply.thumb),
+                    _ => {}
                 }
             }
-            if worker.select(desired) {
-                rt.ui.collection_art = None;
-                rt.dirty.mark_render();
+            let wanted = rt.ui.take_wanted_thumbs();
+            if !rt.model.screen_off && !rt.sleep_prepared && rt.graphics.is_some() {
+                let tracks = &rt.model.library.tracks;
+                let jobs = wanted
+                    .into_iter()
+                    .filter(|(key, _)| {
+                        rt.graphics
+                            .as_ref()
+                            .is_some_and(|g| !g.thumb_resident(*key))
+                    })
+                    .filter_map(|(key, index)| {
+                        let track = tracks.get(index)?;
+                        Some(artwork::Job {
+                            thumb: key,
+                            art: artwork::Key::new(
+                                track,
+                                rt.model
+                                    .sources
+                                    .iter()
+                                    .find(|s| s.id == track.source_id)
+                                    .and_then(|s| s.mount_id),
+                                &rt.model.settings.music_directory,
+                            ),
+                            cache: rt.root.join("cache"),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !jobs.is_empty() {
+                    worker.want(jobs);
+                }
             }
         }
         rt.poll_platform();
@@ -2648,8 +2652,13 @@ fn run() -> Result<(), String> {
         }
         rt.wifi_idle_tick();
         log.heartbeat("ui", 10);
-        if rt.ui.expire_notice() {
+        if rt.ui.expire_notice() || rt.ui.animating() {
             rt.dirty.mark_render();
+        }
+        if let Some(effect) = rt.ui.power_hold_complete() {
+            if let Err(error) = rt.effect(effect) {
+                rt.fail("power", error);
+            }
         }
         rt.poll_pending_reconfiguration();
         if rt.model.screen_off {
@@ -2746,8 +2755,11 @@ fn run() -> Result<(), String> {
                     bytes,
                 } => {
                     if artwork_matches_current(&rt.model, generation, entry_id, track_id) {
+                        rt.ui.accent = reborn_ui::art::accent_from_rgba(&bytes);
                         if let Some(g) = &mut rt.graphics {
-                            if g.artwork(&bytes).is_ok() {
+                            let mut rounded = bytes.to_vec();
+                            reborn_ui::art::round_corners(&mut rounded, 160);
+                            if g.artwork(&rounded).is_ok() {
                                 rt.art = true;
                                 rt.dirty.mark_render();
                             }
@@ -2880,6 +2892,9 @@ fn run() -> Result<(), String> {
                             log.emit(Level::Info, "startup", "library_ready", "Initial library published", None, json!({"elapsed_ms":process_started.elapsed().as_millis(),"tracks":rt.model.library.tracks.len()}));
                         }
                         rt.ui.invalidate_catalog();
+                        if let Some(worker) = &mut rt.thumbs {
+                            worker.forget_failures();
+                        }
                     }
                     Err(e) => rt.fail("database", e),
                 }
@@ -3257,6 +3272,9 @@ fn run() -> Result<(), String> {
                     let g = rt.model.generation;
                     rt.model.apply(Event::SourceChanged(sources.clone()));
                     rt.ui.invalidate_catalog();
+                    if let Some(worker) = &mut rt.thumbs {
+                        worker.forget_failures();
+                    }
                     if g != rt.model.generation {
                         rt.playback.stop(rt.model.generation)
                     }
@@ -3349,6 +3367,9 @@ fn run() -> Result<(), String> {
             if rt.model.screen == Screen::DiagnosticSection && rt.model.navigation.filter == "audio"
             {
                 rt.model.platform.audio_facts = audio_facts(&rt.playback.audio_state(), &rt.model);
+            }
+            if let Some(g) = &rt.graphics {
+                rt.ui.set_resident_thumbs(g.resident_thumbs());
             }
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
             let layout_ms = frame_started.elapsed().as_secs_f64() * 1000.;
@@ -3475,14 +3496,15 @@ fn run() -> Result<(), String> {
         rt.model.navigation.modal = None;
         let last = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
         let closing = reborn_ui::closing_label(intent.restart, intent.low_battery);
-        rt.graphics.take().map(|g| (g, last, closing))
+        let plan = reborn_ui::shutdown_plan(intent.low_battery);
+        rt.graphics.take().map(|g| (g, last, closing, plan))
     });
     // The UI dissolves into the shutdown screen, which says "Saving" while the
     // real save below runs; its status then becomes the closing label.
-    if let Some((g, last, closing)) = farewell.as_mut() {
-        for frame in 0..reborn_ui::SHUTDOWN_CLOSE_FRAME {
+    if let Some((g, last, closing, plan)) = farewell.as_mut() {
+        for frame in 0..plan.close_frame {
             let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing));
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
             thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
         }
     }
@@ -3515,10 +3537,10 @@ fn run() -> Result<(), String> {
             json!({}),
         );
     }
-    if let Some((g, last, closing)) = farewell.as_mut() {
-        for frame in reborn_ui::SHUTDOWN_CLOSE_FRAME..reborn_ui::SHUTDOWN_FRAMES {
+    if let Some((g, last, closing, plan)) = farewell.as_mut() {
+        for frame in plan.close_frame..plan.frames {
             let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing));
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
             thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
         }
         // Final dark frame first, then the backlight: the panel never shows a
@@ -3542,7 +3564,7 @@ fn run() -> Result<(), String> {
             "shutdown_presented",
             "Shutdown transition presented",
             None,
-            json!({"frames":reborn_ui::SHUTDOWN_FRAMES + 1}),
+            json!({"frames":farewell.as_ref().map_or(0, |f| f.3.frames) + 1}),
         );
     }
     if let Some(intent) = &shutdown_intent {

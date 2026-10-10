@@ -1,9 +1,9 @@
-# Reborn Simple icon atlas
+# Reborn UI v3 shapes and icons
 
-`src/` preserves the monochrome SVG sources used from the owner-supplied
-Reborn Y2 Simple UI Asset Pack. `provenance.json` records each source hash and
-the stable slot mapping; unused legacy names alias a supplied Simple icon.
-
-`reborn-icons.rgba` is 192×160: six columns by five rows of 32×32 cells.
-Regenerate with `tools/assets/build_atlas.py`. Runtime uses GLES textures and
-needs no SVG parser, Python or CairoSVG. This atlas contains no sample artwork.
+`reborn-masks.a8` is one coverage-mask page (see `assets/fonts/README.md` for
+the format) drawn by `tools/assets/build_ui_assets.py`: pixel-exact rounded
+corners and quarter rings for every radius the UI uses, inverse corners for
+circular crops, a disc, rings, a radial glow, alpha ramps, 48 pre-rendered
+ring-progress frames and the icon set. `crates/reborn-ui/src/maskdata.rs`
+lists every rectangle. Nothing here is third-party artwork; the icons are
+simple vector drawings made for Reborn.

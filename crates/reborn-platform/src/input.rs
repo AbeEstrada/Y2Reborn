@@ -883,10 +883,13 @@ impl ActionRouter {
                 }
             }
             NormalizedInput::Cancel(control) => {
-                self.long_pressed.remove(&control);
+                let held = self.long_pressed.remove(&control);
                 self.dark_navigation.remove(&control);
                 if control == PhysicalControl::Power {
                     self.power_started_on = None;
+                    if held {
+                        return vec![Action::PowerHoldCancel];
+                    }
                 }
                 vec![]
             }
@@ -901,7 +904,11 @@ impl ActionRouter {
                     return vec![];
                 }
                 if self.long_pressed.remove(&control) {
-                    return vec![];
+                    return if control == PhysicalControl::Power {
+                        vec![Action::PowerHoldCancel]
+                    } else {
+                        vec![]
+                    };
                 }
                 match control {
                     PhysicalControl::Select if screen_on => vec![Action::Select],
@@ -1875,7 +1882,12 @@ mod tests {
                 ) {
                     actions.extend(router.route(&event, true));
                 }
-                assert_eq!(actions, vec![if held { long } else { short }]);
+                let mut expected = vec![if held { long } else { short }];
+                if held && long == Action::PowerHold {
+                    // Releasing a Power hold ends the turn-off countdown.
+                    expected.push(Action::PowerHoldCancel);
+                }
+                assert_eq!(actions, expected);
             }
         }
     }
@@ -1958,12 +1970,13 @@ mod tests {
             ),
             vec![Action::ScreenWake, Action::PowerHold]
         );
-        assert!(router
-            .route(
+        assert_eq!(
+            router.route(
                 &event(NormalizedInput::Release(PhysicalControl::Power)),
                 true
-            )
-            .is_empty());
+            ),
+            vec![Action::PowerHoldCancel]
+        );
     }
 
     #[test]

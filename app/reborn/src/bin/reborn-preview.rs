@@ -13,39 +13,29 @@ use std::{fs, path::PathBuf};
 
 fn tracks() -> Vec<Track> {
     let albums = [
-        ("Northark", "Echoes of a Higher Place"),
-        ("Émilie & the Northern Lights", "A Landscape in Sound"),
-        ("Quiet Harbour", "Low Tide"),
+        ("Northark", "Night Drive", ["A Brighter Silence", "Fields of Tomorrow", "The Weighing Sky"]),
+        ("Northark", "Echoes of a Higher Place", ["Halcyon Lights", "Still Water", "Morning Ferry"]),
+        ("Quiet Harbour", "Low Tide", ["Halcyon", "Harbour Lights", "Salt and Cedar"]),
+        ("Émilie & the Northern Lights", "A Landscape in Sound", ["Lumière à l'horizon", "Северный свет", "A very long title that extends well beyond the edge of a small physical music player"]),
+        ("Verdant", "Halcyon Days", ["Green Room", "Fern", "Understory"]),
+        ("Marlowe", "Slow Light", ["Amber", "Late Afternoon", "Dust"]),
+        ("Ines Calder", "Paper Moons", ["Paper Moons", "Orbit", "Quiet Hours"]),
+        ("Lowlands", "Cold Water", ["Cold Water", "Deep End", "Kelp"]),
     ];
-    let titles = [
-        "A Brighter Silence",
-        "Fields of Tomorrow",
-        "The Weighing Sky",
-        "Halcyon",
-        "Still Light",
-        "Lumière à l'horizon",
-        "Северный свет",
-        "夜の静けさ",
-        "A very long title that extends well beyond the edge of a small physical music player",
-        "Morning Ferry",
-        "Salt and Cedar",
-        "Harbour Lights",
-    ];
-    titles
-        .iter()
-        .enumerate()
-        .map(|(i, title)| {
-            let (artist, album) = albums[(i / 5).min(2)];
-            Track {
+    let mut out = vec![];
+    for (a, (artist, album, titles)) in albums.iter().enumerate() {
+        for (n, title) in titles.iter().enumerate() {
+            let i = out.len();
+            out.push(Track {
                 id: i as i64 + 1,
-                source_id: if i < 10 { "internal" } else { "uuid:CARD" }.into(),
-                path: format!("/data/music/{artist}/{album}/{i:02}.flac").into(),
-                filename: format!("{i:02} {title}.flac"),
+                source_id: if a < 6 { "internal" } else { "uuid:CARD" }.into(),
+                path: format!("/media/internal/music/{artist}/{album}/{n:02}.flac").into(),
+                filename: format!("{n:02} {title}.flac"),
                 title: (*title).into(),
-                artist: artist.into(),
-                album: album.into(),
-                album_artist: artist.into(),
-                track: (i % 5) as u32 + 1,
+                artist: (*artist).into(),
+                album: (*album).into(),
+                album_artist: (*artist).into(),
+                track: n as u32 + 1,
                 duration_ms: 198_000 + i as u64 * 17_000,
                 codec: "flac".into(),
                 sample_rate: if i % 2 == 0 { 96_000 } else { 44_100 },
@@ -53,9 +43,10 @@ fn tracks() -> Vec<Track> {
                 artwork: true,
                 online: true,
                 ..Default::default()
-            }
-        })
-        .collect()
+            });
+        }
+    }
+    out
 }
 
 fn status() -> Value {
@@ -213,10 +204,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from(
         std::env::args()
             .nth(1)
-            .unwrap_or_else(|| "out/product-ui-v2-preview-quads".into()),
+            .unwrap_or_else(|| "out/product-ui-v3-preview-quads".into()),
     );
     fs::create_dir_all(&output)?;
-    let album = "album:Northark\u{1f}Echoes of a Higher Place";
+    let album = "album:Quiet Harbour\u{1f}Low Tide";
     let mut cases: Vec<(&str, AppModel, Setup)> = vec![];
     let none = || -> Setup { Box::new(|_, _| {}) };
     macro_rules! case {
@@ -227,253 +218,230 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cases.push(($name, $m, Box::new($f)))
         };
     }
-    case!("04-home", at(Screen::Home, ""));
-    case!("05-music", at(Screen::Music, ""));
-    case!("06-albums", at(Screen::Albums, ""));
-    case!("07-album", at(Screen::Album, album), |_, m| m
-        .navigation
-        .focus = 1);
-    case!("08-artists", at(Screen::Artists, ""));
-    case!("09-artist", at(Screen::Artist, "artist:Northark"));
-    case!("10-songs", at(Screen::Tracks, ""), |_, m| m
-        .navigation
-        .focus = 2);
-    case!("11-folders", at(Screen::Folders, ""));
-    case!("12-now-playing", at(Screen::NowPlaying, ""));
+    let orange = 0xFF965AFFu32;
+    let teal = 0x5AE6CDFFu32;
+    // Home, library
+    case!("04-home-playing", at(Screen::Home, ""), move |ui, _| ui
+        .accent =
+        orange);
+    case!("05-home-idle", at(Screen::Home, ""), move |ui, m| {
+        ui.accent = teal;
+        m.queue.clear();
+        m.queue_entry_ids.clear();
+        m.playback = PlaybackState::Stopped;
+        m.navigation.focus = 1;
+    });
+    case!("06-artists", at(Screen::Artists, ""), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 2;
+    });
     case!(
-        "13-now-playing-options",
+        "07-artist",
+        at(Screen::Artist, "artist:Northark"),
+        move |ui, _| ui.accent = orange
+    );
+    case!("08-albums", at(Screen::Albums, ""), move |ui, m| {
+        ui.accent = orange;
+        m.navigation.focus = 5;
+    });
+    case!("09-album", at(Screen::Album, album), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 3;
+    });
+    case!("10-songs", at(Screen::Tracks, ""), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 2;
+    });
+    case!(
+        "11-songs-fast-scroll",
+        at(Screen::Tracks, ""),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 2;
+            ui.fast_scroll_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(600));
+        }
+    );
+    case!("12-folders", at(Screen::Folders, ""));
+    case!(
+        "13-folder",
+        at(Screen::Folders, "folder:/media/internal/music"),
+        |_, m| m.navigation.focus = 1
+    );
+    // Playing
+    case!(
+        "14-now-playing",
         at(Screen::NowPlaying, ""),
-        |ui, m| {
+        move |ui, m| {
+            ui.accent = orange;
+            m.settings.shuffle = true;
+            m.settings.gapless_enabled = true;
+            m.output = AudioOutput::Bluetooth("AA".into());
+        }
+    );
+    case!(
+        "14b-now-playing-all-options",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.settings.shuffle = true;
+            m.settings.repeat = reborn_core::RepeatMode::All;
+            m.settings.eq_enabled = true;
+            m.settings.replay_gain = reborn_core::ReplayGainMode::Track;
+            m.output = AudioOutput::Bluetooth("AA".into());
+        }
+    );
+    case!(
+        "15-now-playing-paused",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.playback = PlaybackState::Paused;
+            m.settings.repeat = reborn_core::RepeatMode::Track;
+        }
+    );
+    case!("16-volume", at(Screen::NowPlaying, ""), move |ui, _| {
+        ui.accent = orange;
+        ui.volume_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(600));
+    });
+    case!("17-up-next", at(Screen::Queue, ""), move |ui, m| {
+        ui.accent = orange;
+        m.navigation.focus = 2;
+    });
+    case!("18-song-menu", at(Screen::Tracks, ""), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 2;
+        ui.model_action(m, Action::ContextMenu);
+    });
+    case!(
+        "18b-now-playing-menu",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
             ui.model_action(m, Action::Select);
         }
     );
-    case!("14-queue", at(Screen::Queue, ""), |_, m| m
-        .navigation
-        .focus = 2);
-    case!("15-quick-settings", at(Screen::Home, ""), |ui, m| {
-        ui.model_action(m, Action::PowerMenu);
+    case!("19-play-error", at(Screen::NowPlaying, ""), move |ui, _| {
+        ui.accent = orange;
+        ui.flash("Can't play Intro.flac");
     });
-    case!("16-settings", at(Screen::Settings, ""));
-    case!("17-wifi", at(Screen::Wifi, ""), |_, m| m.navigation.focus =
-        1);
-    case!("18-wifi-off", at(Screen::Wifi, ""), |ui, _| {
+    // Settings
+    case!("20-settings", at(Screen::Settings, ""));
+    case!(
+        "21-bluetooth-pairing",
+        at(Screen::Bluetooth, ""),
+        |ui, _| {
+            ui.pairing =
+                Some("Kopfhörer Ü2 shows code 482 913. Pair only if the code matches.".into());
+            ui.pairing_focus = 0;
+        }
+    );
+    case!("23-bluetooth", at(Screen::Bluetooth, ""), |_, m| {
+        m.output = AudioOutput::Bluetooth("AA".into());
+        m.navigation.focus = 2;
+    });
+    case!("24-wifi-off", at(Screen::Wifi, ""), |ui, _| {
         ui.wifi.powered = false;
         ui.wifi.status = WifiStatus::Disconnected;
     });
-    case!("19-wifi-error", at(Screen::Wifi, ""), |ui, m| {
-        ui.wifi.status = WifiStatus::Connecting("Studio".into());
-        ui.wifi.problem = Some(reborn_core::platform::WifiProblem::WrongPassword);
-        m.navigation.focus = 2;
-    });
-    case!("20-wifi-password", at(Screen::Wifi, ""), |ui, m| {
+    case!("25-wifi", at(Screen::Wifi, ""), |_, m| m.navigation.focus =
+        2);
+    case!("26-wifi-password", at(Screen::Wifi, ""), |ui, m| {
         m.navigation.focus = 3;
         ui.model_action(m, Action::Select);
         for _ in 0..3 {
-            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelClockwise(1));
         }
+        ui.model_action(m, Action::Select);
+        ui.model_action(m, Action::Select);
     });
-    case!("21-bluetooth", at(Screen::Bluetooth, ""), |_, m| {
+    case!("27-sound", at(Screen::SettingsAudio, ""), |_, m| {
         m.output = AudioOutput::Bluetooth("AA".into());
+        m.settings.eq_enabled = true;
+        m.settings.eq_bands = reborn_core::flat_eq_bands();
+        m.settings.eq_bands[0].gain_db = 6.;
+        m.settings.eq_bands[1].gain_db = 4.;
+    });
+    case!("28-equalizer", at(Screen::Equalizer, ""), |_, m| {
+        m.settings.eq_enabled = true;
+        m.settings.eq_bands = reborn_core::flat_eq_bands();
+        m.settings.eq_bands[0].gain_db = 6.;
+        m.settings.eq_bands[1].gain_db = 4.;
         m.navigation.focus = 1;
     });
-    case!("22-bluetooth-off", at(Screen::Bluetooth, ""), |ui, _| {
-        ui.bluetooth.powered = false;
-    });
-    case!("23-bluetooth-device", at(Screen::Bluetooth, ""), |ui, m| {
-        m.navigation.focus = 1;
-        ui.model_action(m, Action::Select);
-    });
-    case!("24-pc-transfer", at(Screen::PcTransfer, ""));
-    case!(
-        "25-pc-transfer-disconnected",
-        at(Screen::PcTransfer, ""),
-        |_, m| {
-            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Disconnected;
-        }
-    );
-    case!(
-        "25b-pc-transfer-copying",
-        at(Screen::PcTransfer, ""),
-        |_, m| {
-            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
-        }
-    );
-    case!(
-        "25c-pc-transfer-error",
-        at(Screen::PcTransfer, ""),
-        |_, m| {
-            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Error;
-        }
-    );
-    case!(
-        "25d-pc-transfer-refreshing",
-        at(Screen::PcTransfer, ""),
-        |_, m| {
-            m.library.scanning = true;
-        }
-    );
-    case!("26-audio", at(Screen::SettingsAudio, ""));
-    case!("27-output", at(Screen::SettingsAudio, ""), |ui, m| {
-        ui.model_action(m, Action::Select);
-    });
-    case!("28-playback", at(Screen::SettingsPlayback, ""));
-    case!("29-library", at(Screen::SettingsLibrary, ""), |_, m| {
-        m.library.last_scan = Some(reborn_core::ScanSummary {
-            discovered: 1284,
-            reused: 1280,
-            elapsed_ms: 900,
-        });
+    case!("29-crossfade", at(Screen::Crossfade, ""), |_, m| {
+        m.navigation.focus = 2;
     });
     case!("30-display", at(Screen::SettingsDisplay, ""));
-    case!("31-system", at(Screen::SettingsSystem, ""));
-    case!("32-battery", at(Screen::Battery, ""), |_, m| {
-        m.platform.battery.charging = ChargingState::Charging;
+    case!("31-screen-off", at(Screen::ScreenTimeout, ""), |_, m| {
+        m.navigation.focus = 1;
+        m.settings.screen_timeout_seconds = 30;
     });
-    case!("33-battery-low", at(Screen::Battery, ""), |_, m| {
-        m.platform.battery = BatteryState {
-            percent: Some(8),
-            estimated: true,
-            charging: ChargingState::OnBattery,
-            level: LowBattery::Low,
-        };
-    });
-    case!("34-storage", at(Screen::Storage, ""));
-    case!("35-storage-no-sd", at(Screen::Storage, ""), |_, m| {
-        m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::Absent;
-    });
-    case!("36-update", at(Screen::Update, ""));
-    case!("37-update-available", at(Screen::Update, ""), |_, m| {
+    case!("32-storage", at(Screen::Storage, ""), |_, m| m
+        .navigation
+        .focus = 0);
+    case!("33-about", at(Screen::Update, ""), |_, m| {
         m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Available {
             version: "1.1.0".into(),
         };
         m.platform.snapshot.update.can_download = true;
     });
-    case!("38-update-needs-wifi", at(Screen::Update, ""), |_, m| {
-        m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Failed(
-            reborn_core::platform::UpdateProblem::NeedsNetwork,
-        );
+    case!("35-about-up-to-date", at(Screen::Update, ""), |_, m| m
+        .navigation
+        .focus =
+        1);
+    case!("36-reset-confirm", at(Screen::Update, ""), |ui, m| {
+        m.navigation.focus = 3;
+        ui.model_action(m, Action::Select);
     });
-    case!("39-about", at(Screen::About, ""));
-    case!("40-maintenance", at(Screen::Maintenance, ""), |_, m| {
-        m.navigation.focus = 3
+    // System
+    case!("37-power-hold", at(Screen::NowPlaying, ""), move |ui, _| {
+        ui.accent = orange;
+        ui.power_hold = Some(std::time::Instant::now() - std::time::Duration::from_millis(750));
     });
-    case!(
-        "41-confirm-rebuild",
-        at(Screen::Maintenance, ""),
-        |ui, m| {
-            m.navigation.focus = 3;
-            ui.model_action(m, Action::Select);
-        }
-    );
-    case!("42-diagnostics", at(Screen::Diagnostics, ""));
-    case!(
-        "43-diagnostics-battery",
-        at(Screen::DiagnosticSection, "battery")
-    );
-    case!("44-empty-library", at(Screen::Albums, ""), |_, m| {
+    case!("38-battery-low", at(Screen::Home, ""), move |ui, m| {
+        ui.accent = orange;
+        m.platform.battery = BatteryState {
+            percent: Some(8),
+            estimated: true,
+            charging: ChargingState::OnBattery,
+            level: LowBattery::Critical,
+        };
+    });
+    case!("40-usb-connected", at(Screen::PcTransfer, ""));
+    case!("41-usb-copying", at(Screen::PcTransfer, ""), |_, m| {
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
+    });
+    case!("45-empty-library", at(Screen::Albums, ""), |_, m| {
         m.library.tracks.clear();
         m.queue.clear();
         m.queue_entry_ids.clear();
+        m.playback = PlaybackState::Stopped;
     });
-    case!("45-no-sd", at(Screen::SettingsLibrary, ""), |_, m| {
-        m.sources.truncate(1);
-        m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::Absent;
+    case!("03-scanning", at(Screen::Albums, ""), |_, m| {
+        m.library.tracks.clear();
+        m.library.scanning = true;
+        m.queue.clear();
+        m.queue_entry_ids.clear();
     });
+    case!("46-service-menu", at(Screen::SettingsSystem, ""));
+    case!("47-diagnostics", at(Screen::Diagnostics, ""));
     case!(
-        "46-sd-removed-now-playing",
+        "48-sd-removed-now-playing",
         at(Screen::NowPlaying, ""),
-        |_, m| {
-            m.replace_queue(tracks()[10..].to_vec(), 0).unwrap();
+        move |ui, m| {
+            ui.accent = orange;
+            m.replace_queue(tracks()[18..].to_vec(), 0).unwrap();
             m.sources.truncate(1);
             m.playback = PlaybackState::Paused;
         }
     );
-    case!("47-long-names", at(Screen::NowPlaying, ""), |_, m| {
-        m.replace_queue(tracks()[8..9].to_vec(), 0).unwrap();
+    case!("49-long-names", at(Screen::NowPlaying, ""), move |ui, m| {
+        ui.accent = teal;
+        m.replace_queue(tracks()[11..12].to_vec(), 0).unwrap();
         m.position_ms = 20_000;
     });
-    case!("48-unicode-songs", at(Screen::Tracks, ""), |_, m| m
-        .navigation
-        .focus =
-        9);
-    case!("49-song-info", at(Screen::TrackInfo, "0"));
-    case!("50-pairing", at(Screen::Bluetooth, ""), |ui, _| {
-        ui.pairing = Some("Kopfhörer Ü2 shows code 482 913. Pair only if the code matches.".into());
-        ui.pairing_focus = 0;
-    });
-    case!(
-        "51-power-off-confirm",
-        at(Screen::SettingsSystem, ""),
-        |ui, m| {
-            m.navigation.focus = ui
-                .rows(m, &m.library.tracks)
-                .iter()
-                .position(|row| row.key == "confirm:power_off")
-                .unwrap();
-            ui.model_action(m, Action::Select);
-        }
-    );
-    case!("52-empty-queue", at(Screen::Queue, ""), |_, m| {
-        m.queue.clear();
-        m.queue_entry_ids.clear();
-        m.playback = PlaybackState::Stopped;
-    });
-    case!("53-nothing-playing", at(Screen::NowPlaying, ""), |_, m| {
-        m.queue.clear();
-        m.queue_entry_ids.clear();
-        m.playback = PlaybackState::Stopped;
-    });
-
-    case!("54-equalizer", at(Screen::Equalizer, ""), |_, m| {
-        m.settings.eq_enabled = true;
-        m.settings.eq_bands = reborn_core::flat_eq_bands();
-        m.settings.eq_bands[0].gain_db = 2.;
-    });
-    case!("55-equalizer-gain", at(Screen::Equalizer, ""), |_, m| {
-        m.navigation.modal = Some(reborn_core::Modal::EqBand(0));
-        m.navigation.modal_focus = 14;
-    });
-    case!("56-sleep-refused", at(Screen::Sleep, ""), |_, m| {
-        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::SleepRefused;
-        m.platform.snapshot.sleep.problem =
-            Some(reborn_core::platform::SleepProblem::QualificationPending);
-    });
-    case!("57-sleep-playback", at(Screen::Sleep, ""), |_, m| {
-        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::SleepRefused;
-        m.platform.snapshot.sleep.problem =
-            Some(reborn_core::platform::SleepProblem::PlaybackActive);
-    });
-    case!("58-sleep-restored", at(Screen::Sleep, ""), |_, m| {
-        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Restored;
-        m.platform.snapshot.sleep.same_boot = Some(true);
-        m.platform.snapshot.sleep.wake = reborn_core::platform::WakeReason::Power;
-    });
-    case!("59-ldac-quality", at(Screen::Bluetooth, ""), |ui, m| {
-        use reborn_core::platform::{BluetoothQuality, LdacQuality, SbcQuality};
-        use reborn_core::CodecPreference;
-        ui.bluetooth.codec_choices = vec![
-            CodecPreference::Auto,
-            CodecPreference::Sbc,
-            CodecPreference::Ldac,
-        ];
-        m.platform.snapshot.bluetooth_quality = BluetoothQuality {
-            sbc_supported: true,
-            requested_sbc: Some(SbcQuality::High),
-            effective_sbc: Some(SbcQuality::High),
-            ldac_supported: true,
-            abr_supported: true,
-            requested_quality: Some(LdacQuality::High),
-            effective_quality: Some(LdacQuality::Standard),
-            requested_abr: Some(true),
-            effective_abr: Some(false),
-            pending_restart: true,
-        };
-        m.navigation.focus = ui
-            .rows(m, &m.library.tracks)
-            .iter()
-            .position(|row| row.key == "ldac_quality")
-            .unwrap();
-    });
+    case!("50-song-info", at(Screen::TrackInfo, "0"));
 
     let mut manifest = vec![];
     let write = |name: &str, quads: &[reborn_graphics::Quad], focus: usize| {
@@ -486,23 +454,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap(),
         )
     };
+    let keys: Vec<u64> = tracks().iter().map(reborn_ui::art_key).collect();
     let mut home = vec![];
     for (name, mut m, setup) in cases {
         let mut ui = ui();
         setup(&mut ui, &mut m);
+        ui.set_resident_thumbs(keys.clone());
         let tracks = std::mem::take(&mut m.library.tracks);
         ui.normalize(&mut m, &tracks);
         m.library.tracks = tracks;
         let draw = ui.draw(&m, &m.library.tracks, !m.queue.is_empty());
         let focus = reborn_ui::focus_target_count(&draw);
-        let static_page = matches!(
-            name,
-            "32-battery" | "33-battery-low" | "34-storage" | "35-storage-no-sd" | "49-song-info"
-        );
         assert!(focus <= 1, "{name}: {focus} focus targets");
-        assert!(static_page || focus == 1, "{name}: no focus target");
         write(name, &draw, focus)?;
-        if name == "04-home" {
+        if name == "04-home-playing" {
             home = draw;
         }
         manifest.push(name.to_owned());
@@ -536,25 +501,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
     write("03b-boot-failed", &reborn_ui::boot_failure_screen(), 0)?;
-    // Shutdown: UI into the "Saving" screen, the bar draining while closing,
-    // the dimmed last frame, the final dark frame.
+    // Shutdown sequence, one frame per stage.
+    let plan = reborn_ui::shutdown_plan(false);
     let closing = reborn_ui::closing_label(false, false);
-    let close = reborn_ui::SHUTDOWN_CLOSE_FRAME;
-    for (label, frame, text) in [
-        ("a-dissolve", 3, closing),
-        ("b-saving", close - 1, closing),
-        ("c-closing", close + 4, closing),
-        ("d-dimming", reborn_ui::SHUTDOWN_FRAMES - 3, closing),
-    ] {
+    let stages = [
+        ("a-recede", plan.close_frame / 2),
+        ("b-saving", plan.close_frame - 1),
+        ("c-closing", plan.close_frame + 8),
+        ("d-last-step", plan.close_frame + 26),
+        ("e-bar-gone", plan.close_frame + 36),
+        ("f-dimming", plan.frames - 12),
+        ("g-last-light", plan.frames - 4),
+    ];
+    for (label, frame) in stages {
         write(
             &format!("90-shutdown-{label}"),
-            &reborn_ui::shutdown_frame(&home, frame, text),
+            &reborn_ui::shutdown_frame(&home, frame, closing, plan),
             0,
         )?;
+        manifest.push(format!("90-shutdown-{label}"));
     }
+    let low = reborn_ui::shutdown_plan(true);
     write(
         "93-shutdown-low-battery",
-        &reborn_ui::shutdown_frame(&home, close + 2, reborn_ui::closing_label(false, true)),
+        &reborn_ui::shutdown_frame(
+            &home,
+            low.close_frame + 4,
+            reborn_ui::closing_label(false, true),
+            low,
+        ),
         0,
     )?;
     write("94-shutdown-final-black", &reborn_ui::black_frame(), 0)?;
@@ -568,10 +543,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "03-boot-fade",
         "03c-boot-fade-lift",
         "03b-boot-failed",
-        "90-shutdown-a-dissolve",
-        "90-shutdown-b-saving",
-        "90-shutdown-c-closing",
-        "90-shutdown-d-dimming",
         "93-shutdown-low-battery",
         "94-shutdown-final-black",
     ] {
@@ -585,10 +556,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|p| (p.label, reborn_ui::LABEL_Y))
         .collect::<Vec<_>>();
     for (i, line) in reborn_ui::BOOT_FAILURE_LABELS.iter().enumerate() {
-        texts.push((
-            *line,
-            reborn_ui::LABEL_Y + reborn_ui::FAILURE_LINE_PITCH * i as f32,
-        ));
+        texts.push((*line, reborn_ui::failure_line_y(i)));
     }
     let mut seen = vec![];
     texts.retain(|t| {
@@ -601,7 +569,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_vec_pretty(&json!({
             "schema": "org.reborn.boot-layout/v1",
             "width": 480, "height": 360,
-            "background": 0x090B0Du32,
+            "background": 0x06070Au32,
             "bar": {"x": reborn_ui::BAR_X, "y": reborn_ui::BAR_Y, "w": reborn_ui::BAR_W,
                     "h": reborn_ui::BAR_H, "track": reborn_ui::BAR_TRACK >> 8,
                     "fill": reborn_ui::BAR_FILL >> 8},
@@ -611,7 +579,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "failure_tokens": reborn_ui::BOOT_FAILURE_TOKENS,
             "failure_lines": reborn_ui::BOOT_FAILURE_LABELS.iter().enumerate().map(|(i, text)| json!({
                 "text": text,
-                "y": reborn_ui::LABEL_Y + reborn_ui::FAILURE_LINE_PITCH * i as f32,
+                "y": reborn_ui::failure_line_y(i),
             })).collect::<Vec<_>>(),
             "mark": reborn_ui::boot_mark_frame(),
             "labels": texts.iter().map(|(text, y)| json!({

@@ -1,28 +1,41 @@
 #![forbid(unsafe_code)]
 
+pub mod art;
 mod boot;
+mod canvas;
 mod catalog;
 mod components;
 pub mod diagnostics;
-mod glyphs;
+mod fontdata;
+mod maskdata;
 pub mod pages;
 mod screens;
+mod text;
 pub mod theme;
+mod views_library;
+mod views_playing;
+mod views_settings;
+mod views_system;
 
 use reborn_core::{
     platform::WifiProblem, Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal,
     NavigationFrame, PlatformTask, RadioScan, RepeatMode, Screen, Track,
 };
 use reborn_graphics::Quad;
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 pub use boot::{
     black_frame, boot_failure_screen, boot_label_frame, boot_mark_frame, boot_screen,
-    boot_transition, closing_label, shutdown_frame, with_overlay, BootPhase, BAR_FILL, BAR_H,
-    BAR_TRACK, BAR_W, BAR_X, BAR_Y, BOOT_FADE_FRAMES, BOOT_FAILURE_LABELS, BOOT_FAILURE_TOKENS,
-    BOOT_FINAL_LABEL, BOOT_PHASES, FAILURE_LINE_PITCH, LABEL_Y, SAVING_LABEL, SHUTDOWN_CLOSE_FRAME,
-    SHUTDOWN_FRAMES,
+    boot_transition, closing_label, failure_line_y, shutdown_frame, shutdown_plan, with_overlay,
+    BootPhase, ShutdownPlan, BAR_FILL, BAR_H, BAR_TRACK, BAR_W, BAR_X, BAR_Y, BOOT_FADE_FRAMES,
+    BOOT_FAILURE_LABELS, BOOT_FAILURE_TOKENS, BOOT_FINAL_LABEL, BOOT_PHASES, FAILURE_LINE_PITCH,
+    LABEL_Y, SAVING_LABEL,
 };
+pub use components::art_key;
 pub use reborn_core::Effect;
 
 /// Count the semantic focus markers emitted by the presentation layer. The
@@ -32,12 +45,32 @@ pub fn focus_target_count(quads: &[Quad]) -> usize {
     quads.iter().filter(|quad| quad.focus_target).count()
 }
 
+/// Library size stamp and the artist, album and song counts for it.
+type CountsCache = Option<((usize, usize), [usize; 3])>;
+
+/// How a settings-style row presents its value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowKind {
+    /// A value or nothing at the right.
+    #[default]
+    Plain,
+    /// An on/off switch.
+    Toggle(bool),
+    /// A choice in a picker; the current one carries a check mark.
+    Check(bool),
+    /// Opens another page.
+    Chevron,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub label: String,
     pub key: String,
     pub secondary: String,
     pub enabled: bool,
+    pub kind: RowKind,
+    /// Index of the library track whose cover represents this row.
+    pub art: Option<usize>,
 }
 
 impl Item {
@@ -47,11 +80,18 @@ impl Item {
             key: key.into(),
             secondary: String::new(),
             enabled: true,
+            kind: RowKind::Plain,
+            art: None,
         }
     }
 
     pub fn with_secondary(mut self, secondary: impl Into<String>) -> Self {
         self.secondary = secondary.into();
+        self
+    }
+
+    pub fn with_kind(mut self, kind: RowKind) -> Self {
+        self.kind = kind;
         self
     }
 }
@@ -180,13 +220,24 @@ pub struct Ui {
     pub bluetooth: BluetoothView,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
-    pub collection_art: Option<(String, i64)>,
     password: String,
     ssid: String,
     letter: usize,
     pub text_entry: bool,
     catalog: std::cell::RefCell<catalog::Catalog>,
-    letter_index: Vec<Item>,
+    /// Accent colour taken from the current cover (0 = the default accent).
+    pub accent: u32,
+    /// The volume line is shown until this moment.
+    pub volume_until: Option<Instant>,
+    /// When the Power button reached the turn-off hold.
+    pub power_hold: Option<Instant>,
+    /// Fast list scrolling shows the current letter until this moment.
+    pub fast_scroll_until: Option<Instant>,
+    /// Taps on the version row; the service menu opens after a deliberate run.
+    version_taps: u8,
+    resident: HashSet<u64>,
+    wanted: RefCell<Vec<(u64, usize)>>,
+    counts: RefCell<CountsCache>,
 }
 
 const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
@@ -194,6 +245,14 @@ const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012
 const ACCELERATED_LIST_MINIMUM: usize = 40;
 /// Volume change per wheel detent on Now Playing.
 const WHEEL_VOLUME_STEP: i8 = 2;
+/// Taps on the version row that open the service menu.
+const VERSION_TAPS: u8 = 7;
+/// How long the volume line stays, and how long it takes to fade at the end.
+const VOLUME_LINE: Duration = Duration::from_millis(1300);
+const VOLUME_FADE: Duration = Duration::from_millis(300);
+/// The Power hold: it starts when the input layer reports the long press and
+/// fills the ring over this long; releasing before the end cancels it.
+pub const POWER_HOLD: Duration = Duration::from_millis(1200);
 
 impl Ui {
     /// Borrow the authoritative library for one synchronous semantic action.
@@ -242,15 +301,111 @@ impl Ui {
     }
 
     pub fn expire_notice(&mut self) -> bool {
-        if self
-            .notice_until
-            .is_some_and(|until| Instant::now() >= until)
-        {
+        let now = Instant::now();
+        let mut changed = false;
+        if self.notice_until.is_some_and(|until| now >= until) {
             self.notice.clear();
             self.notice_until = None;
-            return true;
+            changed = true;
         }
-        false
+        if self.volume_until.is_some_and(|until| now >= until) {
+            self.volume_until = None;
+            changed = true;
+        }
+        if self.fast_scroll_until.is_some_and(|until| now >= until) {
+            self.fast_scroll_until = None;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Whether something on screen changes with time (a fade, a ring), so the
+    /// caller keeps redrawing.
+    pub fn animating(&self) -> bool {
+        self.volume_until.is_some() || self.power_hold.is_some()
+    }
+
+    /// The turn-off hold completed: the effect to run, once.
+    pub fn power_hold_complete(&mut self) -> Option<Effect> {
+        if self.power_hold_progress().is_some_and(|p| p >= 1.) {
+            self.power_hold = None;
+            return Some(Effect::PowerOff);
+        }
+        None
+    }
+
+    /// Artists, albums and songs in the library, recounted only when it changes.
+    pub(crate) fn library_counts(&self, tracks: &[Track]) -> [usize; 3] {
+        let stamp = (tracks.as_ptr() as usize, tracks.len());
+        if let Some((seen, counts)) = *self.counts.borrow() {
+            if seen == stamp {
+                return counts;
+            }
+        }
+        let mut artists = std::collections::BTreeSet::new();
+        let mut albums = std::collections::BTreeSet::new();
+        let mut songs = 0;
+        for t in tracks.iter().filter(|t| t.online) {
+            artists.insert(t.artist.as_str());
+            albums.insert((t.album.as_str(), t.album_artist.as_str()));
+            songs += 1;
+        }
+        let counts = [artists.len(), albums.len(), songs];
+        *self.counts.borrow_mut() = Some((stamp, counts));
+        counts
+    }
+
+    /// The accent in use: the cover's, or the default before one is known.
+    pub fn accent(&self) -> u32 {
+        if self.accent == 0 {
+            theme::color::ACCENT
+        } else {
+            self.accent
+        }
+    }
+
+    /// Show the volume line for about a second.
+    pub fn show_volume(&mut self) {
+        self.volume_until = Some(Instant::now() + VOLUME_LINE);
+    }
+
+    /// Whether the volume line is visible now, and how opaque (0..=1).
+    pub fn volume_visibility(&self) -> f32 {
+        match self.volume_until {
+            Some(until) => {
+                let left = until.saturating_duration_since(Instant::now());
+                (left.as_secs_f32() / VOLUME_FADE.as_secs_f32()).clamp(0., 1.)
+            }
+            None => 0.,
+        }
+    }
+
+    /// Progress (0..=1) of the Power hold toward turning the player off.
+    pub fn power_hold_progress(&self) -> Option<f32> {
+        self.power_hold
+            .map(|since| (since.elapsed().as_secs_f32() / POWER_HOLD.as_secs_f32()).min(1.))
+    }
+
+    /// Replace the set of thumbnails the renderer holds.
+    pub fn set_resident_thumbs(&mut self, keys: impl IntoIterator<Item = u64>) {
+        self.resident = keys.into_iter().collect();
+    }
+
+    pub(crate) fn thumb_resident(&self, key: u64) -> bool {
+        self.resident.contains(&key)
+    }
+
+    pub(crate) fn want_thumb(&self, key: u64, track_index: usize) {
+        let mut wanted = self.wanted.borrow_mut();
+        if wanted.len() < 64 && !wanted.iter().any(|(k, _)| *k == key) {
+            wanted.push((key, track_index));
+        }
+    }
+
+    /// Thumbnails the last `draw` could not show yet, with a library track
+    /// index that carries each cover.
+    pub fn take_wanted_thumbs(&self) -> Vec<(u64, usize)> {
+        std::mem::take(&mut self.wanted.borrow_mut())
     }
 
     fn go(m: &mut AppModel, screen: Screen, filter: impl Into<String>) {
@@ -331,7 +486,6 @@ impl Ui {
             | Screen::Artist
             | Screen::Album
             | Screen::Tracks => self.catalog_rows(m, tracks),
-            Screen::LibraryIndex => self.letter_index.clone(),
             Screen::Queue => self.queue_rows(m),
             Screen::Diagnostics => diagnostics::root(m),
             Screen::DiagnosticSection => diagnostics::section_rows(m, &m.navigation.filter),
@@ -478,16 +632,15 @@ impl Ui {
                 return vec![];
             }
             return vec![
-                Item::new("Show Queue", "show_queue"),
+                Item::new("Up next", "show_queue"),
                 Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
                     "On"
                 } else {
                     "Off"
                 }),
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
-                Item::new("Go to Album", "go_album"),
-                Item::new("Go to Artist", "go_artist"),
-                Item::new("Song Info", "track_info"),
+                Item::new("Go to album", "go_album"),
+                Item::new("Go to artist", "go_artist"),
             ];
         }
         let selected_key = m.navigation.context_key.clone().or_else(|| {
@@ -497,18 +650,12 @@ impl Ui {
         });
         let key = selected_key.as_deref();
         if key.is_some_and(|key| key.starts_with("track:")) {
-            let mut actions = vec![
-                Item::new("Play", "play"),
-                Item::new("Play Next", "play_next"),
-                Item::new("Add to Queue", "add_queue"),
-                Item::new("Go to Album", "go_album"),
-                Item::new("Go to Artist", "go_artist"),
-                Item::new("Song Info", "track_info"),
+            return vec![
+                Item::new("Play next", "play_next"),
+                Item::new("Add to queue", "add_queue"),
+                Item::new("Go to album", "go_album"),
+                Item::new("Go to artist", "go_artist"),
             ];
-            if m.screen == Screen::Tracks && m.navigation.filter.is_empty() {
-                actions.push(Item::new("Jump to Letter", "letter_index"));
-            }
-            return actions;
         }
         if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
             return vec![
@@ -519,7 +666,7 @@ impl Ui {
             ];
         }
         match m.screen {
-            Screen::Albums | Screen::Artists => vec![Item::new("Jump to Letter", "letter_index")],
+            Screen::Albums | Screen::Artists => vec![],
             Screen::Queue => {
                 let Some(i) = self.queue_target(m, key) else {
                     return vec![];
@@ -606,26 +753,6 @@ impl Ui {
     fn modal_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         match m.navigation.modal {
             Some(Modal::ContextMenu) => self.context_rows(m, tracks),
-            Some(Modal::QuickSettings) => {
-                let mut rows = vec![
-                    Item::new("Wi-Fi", "quick_wifi").with_secondary(self.wifi_summary()),
-                    Item::new("Bluetooth", "quick_bluetooth")
-                        .with_secondary(self.bluetooth_summary()),
-                    Item::new("Output", "output").with_secondary(pages::output_name(self, m)),
-                ];
-                rows[0].enabled = self.wifi.available;
-                rows[1].enabled = self.bluetooth.available;
-                if m.platform.brightness_available {
-                    rows.push(
-                        Item::new("Brightness", "brightness")
-                            .with_secondary(format!("{}%", m.settings.brightness)),
-                    );
-                }
-                rows.push(Item::new("Restart", "confirm:reboot"));
-                rows.push(Item::new("Sleep", "sleep"));
-                rows.push(Item::new("Power Off", "confirm:power_off"));
-                rows
-            }
             Some(Modal::OutputPicker) => {
                 let mut rows = vec![Item::new("Headphone jack", "output:wired").with_secondary(
                     if m.output == AudioOutput::Wired {
@@ -692,7 +819,6 @@ impl Ui {
 
     pub(crate) fn modal_copy(&self, m: &AppModel) -> (String, String) {
         let (title, body) = match m.navigation.modal {
-            Some(Modal::QuickSettings) => ("Quick Settings", ""),
             Some(Modal::OutputPicker) => ("Output", "Choose where music plays."),
             Some(Modal::CodecPicker) => (
                 "Bluetooth Codec",
@@ -769,7 +895,11 @@ impl Ui {
                 return Effect::Platform(reborn_core::PlatformTask::SleepRequest);
             }
             Action::PowerHold => {
-                Self::open_modal(m, Modal::Confirm(ConfirmAction::PowerOff));
+                self.power_hold = Some(Instant::now());
+                return Effect::None;
+            }
+            Action::PowerHoldCancel => {
+                self.power_hold = None;
                 return Effect::None;
             }
             Action::PlayPause => return Effect::TogglePlayback,
@@ -830,10 +960,6 @@ impl Ui {
                 Self::back(m);
                 return Effect::None;
             }
-            Action::PowerMenu => {
-                Self::open_modal(m, Modal::QuickSettings);
-                return Effect::None;
-            }
             Action::ContextMenu => {
                 self.open_context(m, tracks);
                 return Effect::None;
@@ -864,7 +990,7 @@ impl Ui {
         if self.row_count(m, tracks) == 0 {
             return match m.screen {
                 Screen::Queue => {
-                    Self::go(m, Screen::Music, "");
+                    Self::home(m);
                     Effect::None
                 }
                 s if Self::is_catalog(s) && !m.library.scanning => Effect::ScanLibrary,
@@ -918,6 +1044,9 @@ impl Ui {
         let accelerate = m.navigation.modal.is_none()
             && Self::is_catalog(m.screen)
             && self.row_count(m, tracks) >= ACCELERATED_LIST_MINIMUM;
+        if accelerate && suggested.abs() > 1 {
+            self.fast_scroll_until = Some(Instant::now() + Duration::from_millis(700));
+        }
         self.move_focus(m, tracks, if accelerate { suggested } else { direction });
         Effect::None
     }
@@ -969,25 +1098,12 @@ impl Ui {
     }
 
     fn select_row(&mut self, m: &mut AppModel, tracks: &[Track], key: &str) -> Effect {
-        if let Some(letter) = key.strip_prefix("jump_to:").and_then(|s| s.chars().next()) {
-            Self::back(m);
-            let mut catalog = self.catalog.borrow_mut();
-            catalog.ensure(m, tracks);
-            let target = catalog
-                .rows
-                .iter()
-                .position(|row| initial(row_label(row, tracks)) == letter);
-            drop(catalog);
-            if let Some(index) = target {
-                m.navigation.focus = index;
-                m.navigation.scroll = index.saturating_sub(2);
-            } else {
-                self.flash("That section is no longer in your library");
-            }
-            return Effect::None;
-        }
         if key == "back" {
             Self::back(m);
+            return Effect::None;
+        }
+        if key == "home" {
+            Self::home(m);
             return Effect::None;
         }
         if key.starts_with("value:") {
@@ -1024,6 +1140,26 @@ impl Ui {
             }
             return Effect::None;
         }
+        if key == "eq_custom" {
+            Self::go(m, Screen::Equalizer, "custom");
+            return Effect::None;
+        }
+        if key == "version" {
+            self.version_taps = self.version_taps.saturating_add(1);
+            if self.version_taps >= VERSION_TAPS {
+                self.version_taps = 0;
+                Self::go(m, Screen::SettingsSystem, "");
+            } else if self.version_taps >= 3 {
+                self.flash(format!(
+                    "{} more taps for the service menu",
+                    VERSION_TAPS - self.version_taps
+                ));
+            }
+            return Effect::None;
+        }
+        if key == "shuffle:collection" {
+            return self.play_filtered(m, tracks, true);
+        }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
             return Effect::None;
@@ -1035,6 +1171,7 @@ impl Ui {
             Screen::Artists => Self::go(m, Screen::Artist, key),
             Screen::Albums => Self::go(m, Screen::Album, key),
             Screen::Folders if !key.starts_with("track:") => Self::go(m, Screen::Folders, key),
+            Screen::Artist if key.starts_with("album:") => Self::go(m, Screen::Album, key),
             Screen::Artist | Screen::Album | Screen::Tracks | Screen::Folders => {
                 if key == "artist_albums" {
                     Self::go(m, Screen::Albums, m.navigation.filter.clone());
@@ -1097,9 +1234,19 @@ impl Ui {
             "eq_reset" => Effect::ResetEq,
             "replay_gain" => Effect::SetReplayGain(match m.settings.replay_gain {
                 reborn_core::ReplayGainMode::Off => reborn_core::ReplayGainMode::Track,
-                reborn_core::ReplayGainMode::Track => reborn_core::ReplayGainMode::Album,
-                reborn_core::ReplayGainMode::Album => reborn_core::ReplayGainMode::Off,
+                _ => reborn_core::ReplayGainMode::Off,
             }),
+            k if k.starts_with("crossfade_set:") => {
+                Effect::SetCrossfade(k["crossfade_set:".len()..].parse().ok()?)
+            }
+            k if k.starts_with("timeout_set:") => {
+                Effect::SetScreenTimeout(k["timeout_set:".len()..].parse().ok()?)
+            }
+            k if k.starts_with("eq_preset:") => {
+                let name = &k["eq_preset:".len()..];
+                let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;
+                Effect::SetEqPreset(*gains)
+            }
             "shuffle" => Effect::SetShuffle(!m.settings.shuffle),
             "repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
@@ -1119,9 +1266,9 @@ impl Ui {
                 _ => 15,
             }),
             "scan_library" => Effect::ScanLibrary,
-            "wifi_power" | "quick_wifi" => Effect::WifiPower,
+            "wifi_power" => Effect::WifiPower,
             "wifi_scan" => Effect::WifiScan,
-            "bt_power" | "quick_bluetooth" => Effect::BluetoothPower,
+            "bt_power" => Effect::BluetoothPower,
             "bt_scan" => Effect::BluetoothScan,
             _ => return None,
         })
@@ -1246,25 +1393,6 @@ impl Ui {
         };
         let key = row.key.clone();
         match m.navigation.modal.clone() {
-            Some(Modal::QuickSettings) => {
-                if key == "sleep" {
-                    Self::close_modal(m);
-                    Self::go(m, Screen::Sleep, "");
-                    return Effect::None;
-                }
-                if let Some(name) = key.strip_prefix("confirm:") {
-                    if let Some(action) = confirm_action(name) {
-                        Self::open_modal(m, Modal::Confirm(action));
-                    }
-                    return Effect::None;
-                }
-                if key == "output" {
-                    Self::open_modal(m, Modal::OutputPicker);
-                    return Effect::None;
-                }
-                // Radios and brightness change in place; the sheet stays open.
-                self.setting(m, &key).unwrap_or(Effect::None)
-            }
             Some(Modal::OutputPicker) => {
                 Self::close_modal(m);
                 match key.strip_prefix("output:") {
@@ -1375,22 +1503,6 @@ impl Ui {
         }
         Self::close_modal(m);
         match menu_key {
-            "letter_index" => {
-                let mut catalog = self.catalog.borrow_mut();
-                catalog.ensure(m, tracks);
-                let letters: std::collections::BTreeSet<char> = catalog
-                    .rows
-                    .iter()
-                    .map(|row| initial(row_label(row, tracks)))
-                    .collect();
-                self.letter_index = letters
-                    .into_iter()
-                    .map(|letter| Item::new(letter.to_string(), format!("jump_to:{letter}")))
-                    .collect();
-                drop(catalog);
-                Self::go(m, Screen::LibraryIndex, "");
-                Effect::None
-            }
             "bt_connect" | "bt_output" => self
                 .device(Some(&source_key))
                 .filter(|device| menu_key != "bt_output" || device.usable_audio())
@@ -1525,6 +1637,8 @@ fn route(key: &str) -> Option<Screen> {
         "audio" => Screen::SettingsAudio,
         "equalizer" => Screen::Equalizer,
         "playback" => Screen::SettingsPlayback,
+        "crossfade" => Screen::Crossfade,
+        "screen_timeout" => Screen::ScreenTimeout,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
         "system" => Screen::SettingsSystem,
@@ -1662,17 +1776,7 @@ fn next_brightness(current: u8) -> u8 {
         .unwrap_or(reborn_core::BRIGHTNESS_LEVELS[0])
 }
 
-fn row_label<'a>(row: &'a catalog::Row, tracks: &'a [Track]) -> &'a str {
-    match row {
-        catalog::Row::Item(i) => &i.label,
-        track => track
-            .track()
-            .map(|i| track_title(&tracks[i]))
-            .unwrap_or_default(),
-    }
-}
-
-fn initial(label: &str) -> char {
+pub(crate) fn initial(label: &str) -> char {
     label
         .chars()
         .next()
@@ -1681,21 +1785,29 @@ fn initial(label: &str) -> char {
         .unwrap_or('#')
 }
 
-pub fn font_atlas() -> &'static [u8] {
-    include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/fonts/reborn-ui.rgba"
-    ))
-}
-pub fn display_font_atlas() -> &'static [u8] {
-    font_atlas()
-}
-pub fn icons_atlas() -> Vec<u8> {
-    include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/icons/reborn-icons.rgba"
-    ))
-    .to_vec()
+/// The coverage-mask atlases the native renderer needs.
+pub fn atlases() -> reborn_graphics::Atlases<'static> {
+    reborn_graphics::Atlases {
+        font_pages: [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/fonts/reborn-regular.a8"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/fonts/reborn-semibold.a8"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/fonts/reborn-fallback.a8"
+            )),
+        ],
+        masks: include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/icons/reborn-masks.a8"
+        )),
+        mask_size: maskdata::MASK_SIZE,
+    }
 }
 
 pub(crate) fn track_title(t: &Track) -> &str {
@@ -1735,13 +1847,6 @@ fn track_matches(track: &Track, filter: &str) -> bool {
 }
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
-}
-fn replay_gain_label(mode: reborn_core::ReplayGainMode) -> &'static str {
-    match mode {
-        reborn_core::ReplayGainMode::Off => "Off",
-        reborn_core::ReplayGainMode::Track => "Track",
-        reborn_core::ReplayGainMode::Album => "Album",
-    }
 }
 fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {

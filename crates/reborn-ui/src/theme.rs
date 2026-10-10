@@ -1,89 +1,63 @@
-//! The single source of truth for the Reborn visual system.
+//! The single source of truth for the Reborn visual system (UI v3).
 //!
-//! The values mirror `Reborn_Y2_Simple_UI_Asset_Pack/tokens/reborn_simple_tokens.json`.
-//! Screen code consumes these named tokens instead of inventing colors,
-//! spacing, radii, or type sizes locally.
+//! A near-black canvas, white type in three tiers, one accent colour taken from
+//! the cover that is playing, and translucent white "glass" for raised areas.
+//! Screen code consumes these named tokens; nothing invents colours, sizes or
+//! spacing locally. Type uses the exact-size Open Sans sets in `text::Face`.
 
 pub const WIDTH: f32 = 480.0;
 pub const HEIGHT: f32 = 360.0;
 
 pub mod color {
-    pub const BG: u32 = 0x090B0DFF;
-    pub const BG_RAISED: u32 = 0x0F1215FF;
-    pub const SURFACE: u32 = 0x15191DFF;
-    pub const SURFACE_HOVER: u32 = 0x1B2025FF;
-    pub const SURFACE_BORDER: u32 = 0x2B3036FF;
-    pub const TEXT_PRIMARY: u32 = 0xF2F0EBFF;
-    pub const TEXT_SECONDARY: u32 = 0xA7A9ACFF;
-    // Lifted slightly for native 480x360 readability. Operational secondary
-    // text uses TEXT_SECONDARY; this tier remains for quiet labels.
-    pub const TEXT_MUTED: u32 = 0x858B93FF;
-    pub const ACCENT_GOLD: u32 = 0xE7C98BFF;
-    pub const ACCENT_GOLD_BRIGHT: u32 = 0xFFE2A4FF;
-    pub const ACCENT_GOLD_DIM: u32 = 0x7D6337FF;
-    pub const FOCUS_GLOW: u32 = 0xFFE2A4FF;
-    pub const FOCUS_FILL: u32 = 0x201C16FF;
-    pub const DANGER: u32 = 0xD46B65FF;
-    pub const SUCCESS: u32 = 0x74B68BFF;
-    pub const TRACK: u32 = 0x3B4148FF;
+    pub const BG: u32 = 0x06070AFF;
     pub const BLACK: u32 = 0x000000FF;
-    pub const SCRIM: u32 = 0x090B0DCC;
-    pub const SCRIM_STRONG: u32 = 0x090B0DEE;
-    pub const BOOT_SCRIM: u32 = 0x090B0DD8;
-    pub const BOOT_SCRIM_STRONG: u32 = 0x090B0DEA;
+    pub const TEXT: u32 = 0xF6F6F8FF;
+    /// Secondary text; at least 4.5:1 on `BG`.
+    pub const MUTED: u32 = 0xA0A4AEFF;
+    /// Quiet labels and hints; at least 4.5:1 on `BG`.
+    pub const DIM: u32 = 0x848894FF;
+    pub const INK: u32 = 0x06070AFF;
+    /// Accent used before any cover has been seen, or when a cover is too dull.
+    pub const ACCENT: u32 = 0x6EA0FFFF;
+    pub const DANGER: u32 = 0xFF7864FF;
+    pub const SUCCESS: u32 = 0x3CC878FF;
+    pub const WARNING: u32 = 0xFFBE3CFF;
+    /// Translucent white steps for raised areas, rules and tracks.
+    pub const GLASS_FAINT: u32 = 0xFFFFFF10;
+    pub const GLASS: u32 = 0xFFFFFF24;
+    pub const GLASS_STRONG: u32 = 0xFFFFFF3A;
+    pub const RULE: u32 = 0xFFFFFF12;
+    pub const TRACK: u32 = 0xFFFFFF32;
+    pub const SCRIM: u32 = 0x000000A0;
+    pub const SCRIM_STRONG: u32 = 0x000000E1;
+    pub const SHEET: u32 = 0x0E1014FA;
 }
 
-pub mod space {
-    pub const BASE: f32 = 4.0;
-    pub const XS: f32 = 4.0;
-    pub const SM: f32 = 8.0;
-    pub const MD: f32 = 12.0;
-    pub const LG: f32 = 16.0;
-    pub const XL: f32 = 24.0;
-    pub const SCREEN_MARGIN: f32 = 16.0;
-    pub const ROW_GAP: f32 = 2.0;
+/// `color` with its alpha replaced.
+pub const fn alpha(color: u32, a: u8) -> u32 {
+    (color & 0xFFFF_FF00) | a as u32
 }
 
-pub mod radius {
-    pub const SMALL: f32 = 6.0;
-    pub const MEDIUM: f32 = 10.0;
-    pub const LARGE: f32 = 14.0;
+/// `color` with its alpha scaled by `factor` (0..=1).
+pub fn fade(color: u32, factor: f32) -> u32 {
+    let a = ((color & 0xFF) as f32 * factor.clamp(0., 1.)).round() as u32;
+    (color & 0xFFFF_FF00) | a
 }
 
-pub mod stroke {
-    pub const HAIRLINE: f32 = 1.0;
-    pub const FOCUS: f32 = 2.0;
-}
-
-pub mod type_scale {
-    // The renderer's 16 px glyph cells are displayed at these scales.
-    // Functional text bottoms out at 12 px on the physical panel.
-    pub const HERO: f32 = 3.25; // 26 px
-    pub const SCREEN_TITLE: f32 = 2.5; // 20 px
-    pub const SECTION: f32 = 2.25; // 18 px
-    pub const ROW: f32 = 1.875; // 15 px
-    pub const BODY: f32 = 1.75; // 14 px
-    pub const SECONDARY: f32 = 1.5; // 12 px
-    pub const MICRO: f32 = 1.5; // 12 px, compact functional text
-    pub const DECORATIVE: f32 = 1.5; // 12 px minimum
-    pub const ICON_LABEL: f32 = 1.5; // 12 px
+/// Linear blend of two colours' RGB, alpha taken from `a`.
+pub fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let t = t.clamp(0., 1.);
+    let channel = |shift: u32| {
+        let x = ((a >> shift) & 0xFF) as f32;
+        let y = ((b >> shift) & 0xFF) as f32;
+        ((x + (y - x) * t).round() as u32) << shift
+    };
+    channel(24) | channel(16) | channel(8) | (a & 0xFF)
 }
 
 pub mod layout {
-    pub const STATUS_H: f32 = 28.0;
-    pub const CONTENT_TOP: f32 = 76.0;
-    pub const FOOTER_TOP: f32 = 324.0;
-    pub const BOTTOM_H: f32 = 36.0;
-    pub const MIN_ROW_H: f32 = 46.0;
-    pub const ROW_H: f32 = 46.0;
-    pub const ART_NOW: f32 = 164.0;
-    pub const ART_LIST: f32 = 40.0;
-    pub const LIST_VISIBLE: usize = 5;
-    pub const SIDEBAR_W: f32 = 136.0;
-    pub const CONTENT_X: f32 = 156.0;
+    pub const SIDE: f32 = 16.0;
+    /// Vertical room taken by the status bar on list screens.
+    pub const LIST_TOP: f32 = 38.0;
+    pub const ROW_H: f32 = 53.0;
 }
-
-pub const UI_FONT: &str = "DejaVu Sans";
-pub const DISPLAY_FONT: &str = "DejaVu Sans";
-pub const ICON_COLUMNS: usize = 6;
-pub const ICON_ROWS: usize = 5;

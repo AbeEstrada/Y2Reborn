@@ -23,20 +23,22 @@ class Candidate(unittest.TestCase):
   self.assertGreaterEqual(len(images),60)
   for path in images:
    with Image.open(path) as image:self.assertEqual(image.size,(480,360),path.name)
- def test_product_v2_previews_cover_the_product_at_native_resolution(self):
-  previews=root/'docs/ui/previews/v2'
+ def test_product_v3_previews_cover_the_product_at_native_resolution(self):
+  previews=root/'docs/ui/previews/v3'
   images=[p for p in previews.glob('*.png') if p.stem!='contact-sheet']
   self.assertGreaterEqual(len(images),60)
   for path in images:
    with Image.open(path) as image:self.assertEqual(image.size,(480,360),path.name)
   names={p.stem for p in images}
-  for required in ['01-boot-splash','12-now-playing','15-quick-settings','42-diagnostics','94-shutdown-final-black']:
+  for required in ['01-boot-splash','14-now-playing','37-power-hold','47-diagnostics','94-shutdown-final-black']:
    self.assertIn(required,names)
  def test_atlas_provenance_and_safe_bounds(self):
-  import hashlib
   fonts=json.loads((root/'assets/fonts/provenance.json').read_text())
-  icons=json.loads((root/'assets/icons/provenance.json').read_text())
-  self.assertEqual(fonts['glyphs'],1001)
-  self.assertEqual((root/'assets/fonts/reborn-ui.rgba').stat().st_size,1024*1024*4)
-  for name,digest in icons['svg_sha256'].items():self.assertEqual(hashlib.sha256((root/'assets/icons/src'/f'{name}.svg').read_bytes()).hexdigest(),digest)
+  self.assertEqual(fonts['family'],'Open Sans')
+  self.assertFalse(fonts['runtime_font_files'])
+  for name,height in zip(('regular','semibold','fallback'),fonts['page_heights']):
+   self.assertEqual((root/f'assets/fonts/reborn-{name}.a8').stat().st_size,1024*height)
+  w,h=fonts['mask_atlas']
+  self.assertEqual((root/'assets/icons/reborn-masks.a8').stat().st_size,w*h)
+  self.assertTrue((root/'assets/fonts/OpenSans-OFL.txt').read_text().startswith('Copyright'))
 if __name__=='__main__':unittest.main()

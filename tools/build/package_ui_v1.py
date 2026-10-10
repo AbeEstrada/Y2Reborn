@@ -109,7 +109,7 @@ def main():
     version_file = output / "metadata/versions.json"
     version_file.write_text(json.dumps(versions, indent=2) + "\n")
     payload["etc/y2linux/versions.json"] = version_file
-    for name, path in (("font-license.txt", "assets/fonts/DejaVuSans.LICENSE"), ("font-provenance.json", "assets/fonts/provenance.json"), ("icon-provenance.json", "assets/icons/provenance.json")):
+    for name, path in (("font-license.txt", "assets/fonts/OpenSans-OFL.txt"), ("font-provenance.json", "assets/fonts/provenance.json")):
         payload["usr/share/reborn/" + name] = REPO / path
     script = output / "metadata/root-overlay.debugfs"
     commands = []
@@ -155,9 +155,9 @@ def main():
             assert any(os.path.lexists(rootfs / folder / dependency) for folder in ("lib", "usr/lib")), dependency
     (build / "buildroot").mkdir(exist_ok=True)
     (build / "buildroot/target").symlink_to("../rootfs")
-    for source_file, destination in ((REPO / "Cargo.lock", "Cargo.lock"), (REPO / "assets/fonts/provenance.json", "font-provenance.json"), (REPO / "assets/icons/provenance.json", "icon-provenance.json"), (base / "manifest.json", "base-platform-manifest.json")):
+    for source_file, destination in ((REPO / "Cargo.lock", "Cargo.lock"), (REPO / "assets/fonts/provenance.json", "font-provenance.json"), (base / "manifest.json", "base-platform-manifest.json")):
         shutil.copyfile(source_file, output / "metadata" / destination)
-    shutil.copyfile(REPO / "assets/fonts/DejaVuSans.LICENSE", output / "licenses/DejaVuSans.LICENSE")
+    shutil.copyfile(REPO / "assets/fonts/OpenSans-OFL.txt", output / "licenses/OpenSans-OFL.txt")
     shutil.copyfile(REPO / "LICENSE", output / "licenses/Reborn.LICENSE")
     shutil.copyfile(build / "cross-build.log", output / "validation/cross-build.log")
     report = {"schema": "org.reborn.ui-candidate/v1", "status": "IMAGE_VALIDATED_PHYSICAL_PENDING",

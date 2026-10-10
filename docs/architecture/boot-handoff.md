@@ -66,7 +66,7 @@ through `y2_stage` (its existing stage names), `rcS` before each service that
 matters (`rc_*`), `boot-gate` for each real wait, and Reborn through
 `startup_phase` (`reborn_platform::contract::boot_milestone`). The table lives
 in `reborn_ui::BOOT_PHASES`; `reborn-preview` exports it with the rendered
-text to `docs/ui/previews/v2/boot-layout.json`, and Y2Linux
+text to `docs/ui/previews/v3/boot-layout.json`, and Y2Linux
 `tools/graphics/make-splash-mark.py` generates `reborn-splash-mark.h` from it.
 
 | Milestones | Status line |

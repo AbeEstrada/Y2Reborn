@@ -137,9 +137,7 @@ fn run() -> Result<(), String> {
     // and restores the application, never runs beside the production renderer.
     let mut renderer = if args.iter().any(|a| a == "--graphics") {
         Some(reborn_graphics::Renderer::open(
-            reborn_ui::font_atlas(),
-            reborn_ui::display_font_atlas(),
-            &reborn_ui::icons_atlas(),
+            &reborn_ui::atlases(),
             reborn_observability::Observer::new(&root.join("logs")).map_err(|e| e.to_string())?,
         )?)
     } else {
@@ -335,39 +333,33 @@ fn run() -> Result<(), String> {
                 size: stat.as_ref().map(|s| s.len()).unwrap_or(0),
                 ..Default::default()
             };
-            if !worker.select(Some(artwork::Key::new(
-                &track,
-                None,
-                std::path::Path::new(dir),
-            ))) {
-                return Err("artwork fixture scheduling failed".into());
-            }
+            let cache =
+                std::env::temp_dir().join(format!("reborn-bench-thumbs-{}", std::process::id()));
+            fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+            worker.want(vec![artwork::Job {
+                thumb: index as u64 + 1,
+                art: artwork::Key::new(&track, None, std::path::Path::new(dir)),
+                cache: cache.clone(),
+            }]);
             let reply = worker
                 .replies
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .map_err(|e| e.to_string())?;
-            if worker.selected.as_ref() != Some(&reply.key) {
+            if reply.thumb != index as u64 + 1 {
                 return Err("stale artwork fixture reply".into());
             }
-            if reply.pixels.is_some() && !reply.source.as_ref().is_some_and(|s| s.is_current()) {
-                return Err("artwork source changed before benchmark publication".into());
-            }
             let expected_hit = (4..8).contains(&step) || step >= 10;
-            if reply.cache_hit != expected_hit {
+            if reply.cache_hit != expected_hit && reply.rgba.is_some() {
                 return Err("artwork fixture cache regression".into());
             }
-            if worker.select(Some(reply.key.clone())) {
-                return Err("unchanged artwork route was rescheduled".into());
-            }
             let mut upload_ms = None;
-            if let (Some(pixels), Some(g)) = (&reply.pixels, &mut renderer) {
+            if let (Some(pixels), Some(g)) = (&reply.rgba, &mut renderer) {
                 let start = Instant::now();
-                g.collection_artwork(pixels)?;
+                g.upload_thumb(index as u64 + 1, pixels)?;
                 upload_ms = Some(start.elapsed().as_secs_f64() * 1000.);
             }
             artwork_samples.push(json!({"fixture":fixtures[index], "cache_hit":reply.cache_hit,
-                "static_repeat_suppressed":true,
-                "decode_ms":reply.decode_ms,"rgba_bytes":reply.pixels.as_ref().map(Vec::len),"upload_ms":upload_ms}));
+                "decode_ms":reply.decode_ms,"rgba_bytes":reply.rgba.as_ref().map(Vec::len),"upload_ms":upload_ms}));
         }
         if !worker.quiesce() {
             return Err("artwork benchmark did not quiesce".into());

@@ -1,7 +1,8 @@
-use super::Quad;
+use super::{Quad, Tex, FONT_PAGE_WIDTH, THUMB_CELL, THUMB_COLUMNS, THUMB_SIZE, THUMB_SLOTS};
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
 use std::{
+    collections::HashMap,
     ffi::{c_char, c_int, c_void, CStr},
     ptr::NonNull,
     time::Instant,
@@ -13,9 +14,11 @@ unsafe extern "C" {
     fn rb_graphics_error() -> *const c_char;
     fn rb_graphics_open(
         out: *mut *mut c_void,
-        ui_font: *const u8,
-        display_font: *const u8,
-        icons: *const u8,
+        font_pages: *const *const u8,
+        font_heights: *const c_int,
+        masks: *const u8,
+        mask_w: c_int,
+        mask_h: c_int,
     ) -> c_int;
     fn rb_graphics_close(p: *mut c_void);
     fn rb_graphics_info(p: *mut c_void) -> *const c_char;
@@ -29,16 +32,25 @@ unsafe extern "C" {
         w: f32,
         h: f32,
         color: u32,
-        glyph: c_int,
-        icon: c_int,
-        display_font: c_int,
-        art: c_int,
+        tex: c_int,
+        sx: c_int,
+        sy: c_int,
+        sw: c_int,
+        sh: c_int,
     );
+    fn rb_graphics_thumb(p: *mut c_void, cx: c_int, cy: c_int, rgba: *const u8) -> c_int;
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_readback(p: *mut c_void, pixels: *mut u8) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
     fn rb_graphics_sleep(p: *mut c_void, off: c_int) -> c_int;
+}
+/// Coverage-mask atlases, one byte per texel: three 1024-wide glyph pages
+/// (Regular, SemiBold, fallback) and the shape/icon page.
+pub struct Atlases<'a> {
+    pub font_pages: [&'a [u8]; 3],
+    pub masks: &'a [u8],
+    pub mask_size: (usize, usize),
 }
 pub struct Renderer {
     raw: NonNull<c_void>,
@@ -48,6 +60,16 @@ pub struct Renderer {
     log: Observer,
     presented: bool,
     pub timings: FrameTimings,
+    thumbs: HashMap<u64, ThumbSlot>,
+    frame: u64,
+    missing: Vec<u64>,
+    mask_size: (usize, usize),
+    page_heights: [usize; 3],
+}
+#[derive(Clone, Copy)]
+struct ThumbSlot {
+    cell: usize,
+    used: u64,
 }
 #[derive(Default, serde::Serialize)]
 pub struct FrameTimings {
@@ -73,26 +95,30 @@ impl Renderer {
             .gauge("graphics_scanout_active", if off { 0.0 } else { 1.0 });
         Ok(())
     }
-    pub fn open(
-        ui_font: &[u8],
-        display_font: &[u8],
-        icons: &[u8],
-        log: Observer,
-    ) -> Result<Self, String> {
-        if ui_font.len() != 1024 * 1024 * 4 || display_font.len() != 1024 * 1024 * 4 {
-            return Err("font atlas dimensions".into());
+    pub fn open(atlases: &Atlases, log: Observer) -> Result<Self, String> {
+        let mut heights = [0 as c_int; 3];
+        for (height, page) in heights.iter_mut().zip(atlases.font_pages) {
+            if page.is_empty() || page.len() % FONT_PAGE_WIDTH != 0 {
+                return Err("font page dimensions".into());
+            }
+            *height = (page.len() / FONT_PAGE_WIDTH) as c_int;
         }
-        if icons.len() != 192 * 160 * 4 {
-            return Err("icon atlas dimensions".into());
+        let (mask_w, mask_h) = atlases.mask_size;
+        if mask_w == 0 || mask_h == 0 || atlases.masks.len() != mask_w * mask_h {
+            return Err("mask atlas dimensions".into());
         }
+        let pages = atlases.font_pages.map(<[u8]>::as_ptr);
         let mut p = std::ptr::null_mut();
-        // SAFETY: font has exactly the checked RGBA length; constructor copies it into GL and returns uniquely owned handles.
+        // SAFETY: every page has the checked one-byte-per-texel length; the
+        // constructor copies them into GL and returns uniquely owned handles.
         let r = unsafe {
             rb_graphics_open(
                 &mut p,
-                ui_font.as_ptr(),
-                display_font.as_ptr(),
-                icons.as_ptr(),
+                pages.as_ptr(),
+                heights.as_ptr(),
+                atlases.masks.as_ptr(),
+                mask_w as c_int,
+                mask_h as c_int,
             )
         };
         if r < 0 {
@@ -133,6 +159,11 @@ impl Renderer {
             log,
             presented: false,
             timings: FrameTimings::default(),
+            thumbs: HashMap::new(),
+            frame: 0,
+            missing: Vec::new(),
+            mask_size: atlases.mask_size,
+            page_heights: heights.map(|h| h as usize),
         })
     }
     pub fn render(&mut self, quads: &[Quad]) -> Result<(), String> {
@@ -146,21 +177,41 @@ impl Renderer {
         Ok(pixels)
     }
     fn render_inner(&mut self, quads: &[Quad], pixels: Option<&mut [u8]>) -> Result<(), String> {
-        if quads
-            .iter()
-            .any(|q| q.glyph.is_some_and(|g| g >= 1001) || q.icon.is_some_and(|i| i >= 26))
-        {
-            return Err("texture atlas index outside validated bounds".into());
+        if quads.iter().any(|q| !self.valid_source(q)) {
+            return Err("texture source outside validated bounds".into());
         }
         if quads.len() > 20000 {
             return Err("draw list exceeds limit".into());
         }
+        self.frame += 1;
+        self.missing.clear();
         let start = Instant::now();
         let cpu_start = thread_cpu_seconds();
         // SAFETY: live EGL context is current on this thread; uniquely borrowed renderer prevents concurrent calls.
         unsafe {
             rb_graphics_begin(self.raw.as_ptr());
             for q in quads {
+                let (tex, src) = match q.tex {
+                    Tex::Solid => (0, [0; 4]),
+                    Tex::Font(page) => (1 + c_int::from(page), q.src),
+                    Tex::Mask => (4, q.src),
+                    Tex::Art => (5, [0; 4]),
+                    Tex::CollectionArt => (6, [0; 4]),
+                    Tex::Thumb(key) => match self.thumbs.get_mut(&key) {
+                        Some(slot) => {
+                            slot.used = self.frame;
+                            let x = (slot.cell % THUMB_COLUMNS * THUMB_CELL + 1) as u16;
+                            let y = (slot.cell / THUMB_COLUMNS * THUMB_CELL + 1) as u16;
+                            (7, [x, y, THUMB_SIZE as u16, THUMB_SIZE as u16])
+                        }
+                        None => {
+                            if !self.missing.contains(&key) && self.missing.len() < 64 {
+                                self.missing.push(key);
+                            }
+                            continue;
+                        }
+                    },
+                };
                 rb_graphics_quad(
                     self.raw.as_ptr(),
                     q.x,
@@ -168,14 +219,11 @@ impl Renderer {
                     q.w,
                     q.h,
                     q.color,
-                    q.glyph.map(i32::from).unwrap_or(-1),
-                    q.icon.map(i32::from).unwrap_or(-1),
-                    i32::from(q.display_font),
-                    if q.collection_artwork {
-                        2
-                    } else {
-                        i32::from(q.artwork)
-                    },
+                    tex,
+                    c_int::from(src[0]),
+                    c_int::from(src[1]),
+                    c_int::from(src[2]),
+                    c_int::from(src[3]),
                 );
             }
             rb_graphics_submit(self.raw.as_ptr());
@@ -227,6 +275,88 @@ impl Renderer {
                 .health_set("graphics", HealthState::Ok, true, &self.info);
             self.presented = true;
         }
+        Ok(())
+    }
+    fn valid_source(&self, q: &Quad) -> bool {
+        let [x, y, w, h] = q.src.map(usize::from);
+        let inside = |width: usize, height: usize| x + w <= width && y + h <= height;
+        match q.tex {
+            Tex::Font(page) => {
+                usize::from(page) < 3
+                    && inside(FONT_PAGE_WIDTH, self.page_heights[usize::from(page)])
+            }
+            Tex::Mask => inside(self.mask_size.0, self.mask_size.1),
+            _ => true,
+        }
+    }
+    /// Library thumbnails the last frame wanted but that are not resident,
+    /// in draw order. The caller loads them and calls `upload_thumb`.
+    pub fn missing_thumbs(&self) -> &[u64] {
+        &self.missing
+    }
+    /// Keys of every thumbnail the atlas currently holds.
+    pub fn resident_thumbs(&self) -> impl Iterator<Item = u64> + '_ {
+        self.thumbs.keys().copied()
+    }
+    pub fn thumb_resident(&self, key: u64) -> bool {
+        self.thumbs.contains_key(&key)
+    }
+    /// Store a 96x96 RGBA thumbnail, evicting the least recently drawn cell
+    /// when the atlas is full. Cells drawn in the current frame are kept.
+    pub fn upload_thumb(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
+        if rgba.len() != THUMB_SIZE * THUMB_SIZE * 4 {
+            return Err("thumbnail dimensions".into());
+        }
+        let cell = match self.thumbs.get(&key) {
+            Some(slot) => slot.cell,
+            None if self.thumbs.len() < THUMB_SLOTS => (0..THUMB_SLOTS)
+                .find(|cell| self.thumbs.values().all(|slot| slot.cell != *cell))
+                .ok_or("thumbnail atlas full")?,
+            None => {
+                let (victim, slot) = self
+                    .thumbs
+                    .iter()
+                    .min_by_key(|(_, slot)| slot.used)
+                    .map(|(key, slot)| (*key, *slot))
+                    .ok_or("thumbnail atlas empty")?;
+                if slot.used == self.frame {
+                    return Err("thumbnail atlas full of visible cells".into());
+                }
+                self.thumbs.remove(&victim);
+                slot.cell
+            }
+        };
+        let mut block = vec![0u8; THUMB_CELL * THUMB_CELL * 4];
+        for y in 0..THUMB_CELL {
+            for x in 0..THUMB_CELL {
+                let sx = x.saturating_sub(1).min(THUMB_SIZE - 1);
+                let sy = y.saturating_sub(1).min(THUMB_SIZE - 1);
+                let from = (sy * THUMB_SIZE + sx) * 4;
+                let to = (y * THUMB_CELL + x) * 4;
+                block[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+            }
+        }
+        // SAFETY: the block is exactly one validated 98x98 RGBA cell and the
+        // cell index is inside the atlas; GL copies it before returning.
+        let r = unsafe {
+            rb_graphics_thumb(
+                self.raw.as_ptr(),
+                (cell % THUMB_COLUMNS) as c_int,
+                (cell / THUMB_COLUMNS) as c_int,
+                block.as_ptr(),
+            )
+        };
+        if r < 0 {
+            return Err(format!("thumbnail upload {r}"));
+        }
+        self.thumbs.insert(
+            key,
+            ThumbSlot {
+                cell,
+                used: self.frame,
+            },
+        );
+        self.log.add("thumbnail_uploads", 1.);
         Ok(())
     }
     pub fn artwork(&mut self, rgba: &[u8]) -> Result<(), String> {
