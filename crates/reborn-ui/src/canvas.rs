@@ -49,6 +49,7 @@ pub enum Icon {
     Search,
     Vinyl,
     Person,
+    Crossfade,
 }
 
 impl Icon {
@@ -92,6 +93,7 @@ impl Icon {
             Self::Search => mask::SEARCH,
             Self::Vinyl => mask::VINYL,
             Self::Person => mask::PERSON,
+            Self::Crossfade => mask::CROSSFADE,
         }
     }
 }
@@ -133,6 +135,9 @@ impl Canvas {
         Self {
             draw: Vec::with_capacity(1200),
         }
+    }
+    pub fn from_quads(draw: Vec<Quad>) -> Self {
+        Self { draw }
     }
     pub fn finish(self) -> Vec<Quad> {
         self.draw
@@ -285,6 +290,17 @@ impl Canvas {
         }
         let src = mask::ARCS[frame.min(mask::ARC_FRAMES) - 1];
         self.masked(src, cx - r, cy - r, 2. * r, 2. * r, color);
+    }
+
+    /// A spinner on a flat background: a bright segment that grows from 12
+    /// o'clock, slides round the ring and shrinks away, then repeats.
+    /// `track` is the opaque colour of the ring behind it; `phase` is 0..1.
+    pub fn spinner(&mut self, cx: f32, cy: f32, r: f32, bright: u32, track: u32, phase: f32) {
+        const LENGTH: f32 = 0.34;
+        let s = phase.rem_euclid(1.) * (1. + LENGTH);
+        self.arc(cx, cy, r, 1., track);
+        self.arc(cx, cy, r, s.min(1.), bright);
+        self.arc(cx, cy, r, (s - LENGTH).max(0.), track);
     }
 
     /// A soft radial glow; alpha falls from `color` at the centre to 0 at the edge.

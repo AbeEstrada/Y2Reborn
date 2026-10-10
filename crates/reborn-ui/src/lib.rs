@@ -4,6 +4,7 @@ pub mod art;
 mod boot;
 mod canvas;
 mod catalog;
+pub mod charge;
 mod components;
 pub mod diagnostics;
 mod fontdata;
@@ -18,8 +19,9 @@ mod views_settings;
 mod views_system;
 
 use reborn_core::{
-    platform::WifiProblem, Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal,
-    NavigationFrame, PlatformTask, RadioScan, RepeatMode, Screen, Track,
+    platform::{LowBattery, UsbTransfer, WifiProblem},
+    Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal, NavigationFrame,
+    PlatformTask, RadioScan, RepeatMode, Screen, Track,
 };
 use reborn_graphics::Quad;
 use std::{
@@ -238,6 +240,31 @@ pub struct Ui {
     resident: HashSet<u64>,
     wanted: RefCell<Vec<(u64, usize)>>,
     counts: RefCell<CountsCache>,
+    /// A dialog the player raises by itself (Bluetooth failure, low battery).
+    pub alert: Option<Alert>,
+    alert_focus: usize,
+    /// The device a pair/connect request is waiting on: path, name, operation, start.
+    bt_busy: Option<(String, String, String, Instant)>,
+    usb_state: Option<UsbTransfer>,
+    usb_dismissed: bool,
+    battery_acked: u8,
+    /// Something on screen sweeps with time (a spinner), so keep redrawing.
+    spinning: bool,
+    /// Freeze spinners at this phase (previews and tests).
+    pub spin_fixed: Option<f32>,
+}
+
+/// A dialog the player raises by itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Alert {
+    /// A Bluetooth pair/connect request failed.
+    BluetoothFailed {
+        path: String,
+        name: String,
+        operation: String,
+    },
+    /// The battery crossed a warning level.
+    BatteryLow,
 }
 
 const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
@@ -322,7 +349,189 @@ impl Ui {
     /// Whether something on screen changes with time (a fade, a ring), so the
     /// caller keeps redrawing.
     pub fn animating(&self) -> bool {
-        self.volume_until.is_some() || self.power_hold.is_some()
+        self.volume_until.is_some() || self.power_hold.is_some() || self.spinning
+    }
+
+    /// A 0..1 phase for spinners, one turn about every 1.6 s.
+    pub fn spin_phase(&self) -> f32 {
+        if let Some(fixed) = self.spin_fixed {
+            return fixed;
+        }
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let elapsed = START.get_or_init(Instant::now).elapsed().as_millis() % 1600;
+        elapsed as f32 / 1600.
+    }
+
+    /// Watch platform state the UI reacts to by itself: a computer connecting,
+    /// a Bluetooth request finishing or failing, the battery running low and
+    /// work that shows a spinner. Returns whether the screen needs redrawing.
+    pub fn observe(&mut self, m: &AppModel) -> bool {
+        let before = (
+            self.usb_overlay(m),
+            self.alert.clone(),
+            self.bt_busy.is_some(),
+            self.spinning,
+        );
+        let usb = m.platform.snapshot.usb;
+        if self.usb_state != Some(usb) {
+            let was_attached = matches!(
+                self.usb_state,
+                Some(UsbTransfer::Ready | UsbTransfer::Copying)
+            );
+            let now_attached = matches!(usb, UsbTransfer::Ready | UsbTransfer::Copying);
+            // A new connection, or copying starting, shows the screen again.
+            if !now_attached
+                || !was_attached
+                || (usb == UsbTransfer::Copying && self.usb_state == Some(UsbTransfer::Ready))
+            {
+                self.usb_dismissed = false;
+            }
+            self.usb_state = Some(usb);
+        }
+        let level = match m.platform.battery.level {
+            LowBattery::Normal => 0,
+            LowBattery::Low => 1,
+            LowBattery::Critical => 2,
+            LowBattery::ShuttingDown => 3,
+        };
+        if level == 0 {
+            self.battery_acked = 0;
+        } else if level > self.battery_acked && level < 3 && self.alert.is_none() {
+            self.alert = Some(Alert::BatteryLow);
+            self.alert_focus = 0;
+        }
+        if let Some((path, name, operation, since)) = self.bt_busy.clone() {
+            let connected = self
+                .bluetooth
+                .devices
+                .iter()
+                .any(|d| d.path == path && d.connected);
+            if connected || since.elapsed() > Duration::from_secs(45) {
+                self.bt_busy = None;
+            } else if self.bluetooth.problem.is_some()
+                && since.elapsed() > Duration::from_millis(800)
+            {
+                self.bt_busy = None;
+                self.alert = Some(Alert::BluetoothFailed {
+                    path,
+                    name,
+                    operation,
+                });
+                self.alert_focus = 1;
+            }
+        }
+        self.spinning = m.library.scanning
+            || m.platform.snapshot.update.phase == reborn_core::platform::UpdatePhase::Downloading
+            || self.usb_overlay(m) && usb == UsbTransfer::Copying
+            || self.bt_busy.is_some();
+        before
+            != (
+                self.usb_overlay(m),
+                self.alert.clone(),
+                self.bt_busy.is_some(),
+                self.spinning,
+            )
+            || self.spinning
+    }
+
+    /// Whether the computer-connection screen covers the UI.
+    pub fn usb_overlay(&self, m: &AppModel) -> bool {
+        // Only a state `observe` has seen counts, so a stale fixture or the
+        // first frames of a session never raise it.
+        !self.usb_dismissed
+            && !m.screen_off
+            && self.usb_state == Some(m.platform.snapshot.usb)
+            && matches!(
+                m.platform.snapshot.usb,
+                UsbTransfer::Ready | UsbTransfer::Copying
+            )
+    }
+
+    /// The device a Bluetooth request is waiting on, with its operation.
+    pub(crate) fn bluetooth_busy(&self) -> Option<(&str, &str)> {
+        self.bt_busy
+            .as_ref()
+            .map(|(_, name, operation, _)| (name.as_str(), operation.as_str()))
+    }
+
+    pub(crate) fn alert_focus(&self) -> usize {
+        self.alert_focus
+    }
+
+    /// Input for the overlays above every screen. `Some` means consumed.
+    fn overlay_action(&mut self, m: &AppModel, action: Action) -> Option<Effect> {
+        if let Some(alert) = self.alert.clone() {
+            let buttons = match alert {
+                Alert::BluetoothFailed { .. } => 2,
+                Alert::BatteryLow => 1,
+            };
+            return Some(match action {
+                Action::WheelClockwise(_) | Action::NavigateDown => {
+                    self.alert_focus = (self.alert_focus + 1).min(buttons - 1);
+                    Effect::None
+                }
+                Action::WheelCounterClockwise(_) | Action::NavigateUp => {
+                    self.alert_focus = self.alert_focus.saturating_sub(1);
+                    Effect::None
+                }
+                Action::Back | Action::Home => {
+                    self.dismiss_alert(m);
+                    Effect::None
+                }
+                Action::Select => {
+                    let retry = self.alert_focus == 1;
+                    self.dismiss_alert(m);
+                    match alert {
+                        Alert::BluetoothFailed {
+                            path, operation, ..
+                        } if retry => {
+                            self.bt_busy = self
+                                .bluetooth
+                                .devices
+                                .iter()
+                                .find(|d| d.path == path)
+                                .map(|d| {
+                                    (
+                                        path.clone(),
+                                        d.name.clone(),
+                                        operation.clone(),
+                                        Instant::now(),
+                                    )
+                                });
+                            Effect::BluetoothDevice { path, operation }
+                        }
+                        _ => Effect::None,
+                    }
+                }
+                _ => Effect::None,
+            });
+        }
+        if self.usb_overlay(m) {
+            return match action {
+                Action::Back | Action::Home | Action::Select | Action::ContextMenu => {
+                    self.usb_dismissed = true;
+                    Some(Effect::None)
+                }
+                Action::WheelClockwise(_)
+                | Action::WheelCounterClockwise(_)
+                | Action::NavigateUp
+                | Action::NavigateDown => Some(Effect::None),
+                _ => None,
+            };
+        }
+        None
+    }
+
+    fn dismiss_alert(&mut self, m: &AppModel) {
+        if self.alert == Some(Alert::BatteryLow) {
+            self.battery_acked = match m.platform.battery.level {
+                LowBattery::Low => 1,
+                LowBattery::Critical => 2,
+                _ => 3,
+            };
+        }
+        self.alert = None;
+        self.alert_focus = 0;
     }
 
     /// The turn-off hold completed: the effect to run, once.
@@ -923,6 +1132,9 @@ impl Ui {
         if m.screen_off {
             return Effect::None;
         }
+        if let Some(effect) = self.overlay_action(m, action) {
+            return effect;
+        }
         if self.pairing.is_some() {
             return match action {
                 Action::Select => {
@@ -1341,10 +1553,15 @@ impl Ui {
             Self::open_modal(m, Modal::ContextMenu);
             return Effect::None;
         }
-        Effect::BluetoothDevice {
-            path: device.path.clone(),
-            operation: device.operation().into(),
+        let (path, name, operation) = (
+            device.path.clone(),
+            device.name.clone(),
+            device.operation().to_owned(),
+        );
+        if matches!(operation.as_str(), "pair" | "connect") {
+            self.bt_busy = Some((path.clone(), name, operation.clone(), Instant::now()));
         }
+        Effect::BluetoothDevice { path, operation }
     }
 
     fn wifi_select(&mut self, m: &mut AppModel, key: &str) -> Effect {

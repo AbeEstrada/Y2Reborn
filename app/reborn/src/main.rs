@@ -2652,7 +2652,7 @@ fn run() -> Result<(), String> {
         }
         rt.wifi_idle_tick();
         log.heartbeat("ui", 10);
-        if rt.ui.expire_notice() || rt.ui.animating() {
+        if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
             rt.dirty.mark_render();
         }
         if let Some(effect) = rt.ui.power_hold_complete() {
@@ -2838,6 +2838,9 @@ fn run() -> Result<(), String> {
                             elapsed_ms: stats.elapsed_ms,
                         }));
                     rt.ui.flash(match stats.discovered {
+                        _ if stats.rescanned > 0 && stats.discovered > 1 => {
+                            format!("{} new songs added", stats.rescanned.min(stats.discovered))
+                        }
                         0 => "Scan finished. No music found.".to_owned(),
                         1 => "Scan finished. 1 song in your library.".to_owned(),
                         n => format!("Scan finished. {n} songs in your library."),
@@ -3258,6 +3261,9 @@ fn run() -> Result<(), String> {
                     }
                     for s in &old {
                         if !sources.iter().any(|v| v.id == s.id) {
+                            if matches!(s.kind, reborn_core::MediaSource::SdCard(_)) {
+                                rt.ui.flash("SD card removed");
+                            }
                             log.add("sd_removals", 1.);
                             log.emit(
                                 Level::Info,

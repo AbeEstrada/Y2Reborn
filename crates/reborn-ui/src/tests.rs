@@ -1419,3 +1419,168 @@ fn accent_follows_the_cover_and_defaults_before_one_is_known() {
     ui.accent = 0xFF965AFF;
     assert_eq!(ui.accent(), 0xFF965AFF);
 }
+
+#[test]
+fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
+    let mut ui = radios();
+    let mut m = app(Screen::Albums);
+    m.platform.snapshot.usb = UsbTransfer::Ready;
+    assert!(
+        !ui.usb_overlay(&m),
+        "nothing before the state has been observed"
+    );
+    assert!(ui.observe(&m) || ui.usb_overlay(&m));
+    assert!(ui.usb_overlay(&m));
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(text.contains("Connected to a computer"), "{text}");
+    // The wheel does nothing underneath; Back dismisses it; volume still works.
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(1)),
+        Effect::None
+    );
+    assert_eq!(m.navigation.focus, 0);
+    assert_eq!(
+        ui.model_action(&mut m, Action::VolumeUp),
+        Effect::AdjustVolume(2)
+    );
+    assert!(ui.usb_overlay(&m));
+    ui.model_action(&mut m, Action::Back);
+    assert!(!ui.usb_overlay(&m));
+    // Copying starting brings it back; unplugging and plugging in again too.
+    m.platform.snapshot.usb = UsbTransfer::Copying;
+    ui.observe(&m);
+    assert!(ui.usb_overlay(&m));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Copying files"));
+    assert!(ui.animating(), "the ring sweeps while copying");
+    ui.model_action(&mut m, Action::Back);
+    m.platform.snapshot.usb = UsbTransfer::Disconnected;
+    ui.observe(&m);
+    m.platform.snapshot.usb = UsbTransfer::Ready;
+    ui.observe(&m);
+    assert!(ui.usb_overlay(&m));
+    m.screen_off = true;
+    assert!(!ui.usb_overlay(&m));
+}
+
+#[test]
+fn low_battery_raises_one_dialog_per_level_and_ok_acknowledges_it() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    ui.observe(&m);
+    assert_eq!(ui.alert, None);
+    m.platform.battery.level = LowBattery::Low;
+    ui.observe(&m);
+    assert_eq!(ui.alert, Some(Alert::BatteryLow));
+    assert_eq!(
+        focus_target_count(&ui.draw(&m, &m.library.tracks, false)),
+        1
+    );
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(ui.alert, None);
+    ui.observe(&m);
+    assert_eq!(ui.alert, None, "not raised again at the same level");
+    m.platform.battery.level = LowBattery::Critical;
+    ui.observe(&m);
+    assert_eq!(
+        ui.alert,
+        Some(Alert::BatteryLow),
+        "a worse level warns again"
+    );
+    ui.model_action(&mut m, Action::Back);
+    m.platform.battery.level = LowBattery::Normal;
+    ui.observe(&m);
+    m.platform.battery.level = LowBattery::Low;
+    ui.observe(&m);
+    assert_eq!(ui.alert, Some(Alert::BatteryLow), "recharged and low again");
+}
+
+#[test]
+fn bluetooth_pairing_shows_progress_and_a_failure_offers_try_again() {
+    let mut ui = radios();
+    ui.bluetooth.devices.push(BluetoothDeviceView {
+        path: "/bt/new".into(),
+        address: "NN".into(),
+        name: "New Speaker".into(),
+        ..Default::default()
+    });
+    let mut m = app(Screen::Bluetooth);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "bt_device:/bt/new"),
+        Effect::BluetoothDevice {
+            path: "/bt/new".into(),
+            operation: "pair".into()
+        }
+    );
+    assert_eq!(ui.bluetooth_busy(), Some(("New Speaker", "pair")));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Pairing with New Speaker"));
+    ui.observe(&m);
+    assert!(ui.alert.is_none(), "still waiting");
+    // The request fails.
+    ui.bluetooth.problem = Some("Couldn't complete that.".into());
+    ui.bt_busy.as_mut().unwrap().3 = Instant::now() - Duration::from_secs(2);
+    ui.observe(&m);
+    assert!(matches!(ui.alert, Some(Alert::BluetoothFailed { .. })));
+    assert!(ui.bluetooth_busy().is_none());
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Couldn't connect"));
+    // Cancel is the first button; Try again repeats the same operation.
+    assert_eq!(ui.alert_focus(), 1);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert!(ui.alert.is_none());
+    ui.alert = Some(Alert::BluetoothFailed {
+        path: "/bt/new".into(),
+        name: "New Speaker".into(),
+        operation: "pair".into(),
+    });
+    ui.alert_focus = 1;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::BluetoothDevice {
+            path: "/bt/new".into(),
+            operation: "pair".into()
+        }
+    );
+    assert_eq!(ui.bluetooth_busy(), Some(("New Speaker", "pair")));
+}
+
+#[test]
+fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentage() {
+    let mut ui = radios();
+    ui.spin_fixed = Some(0.3);
+    let mut m = app(Screen::Update);
+    m.platform.snapshot.update.phase = UpdatePhase::Downloading;
+    ui.observe(&m);
+    assert!(ui.animating());
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        text.contains("Downloading update") && !text.contains('%'),
+        "{text}"
+    );
+    let mut m = app(Screen::Albums);
+    m.library.tracks.clear();
+    m.library.scanning = true;
+    ui.observe(&m);
+    assert!(ui.animating());
+    assert!(drawn_text(&ui.draw(&m, &[], false)).contains("Finding your music"));
+    m.library.scanning = false;
+    m.platform.snapshot.update.phase = UpdatePhase::UpToDate;
+    ui.observe(&m);
+    ui.volume_until = None;
+    assert!(!ui.animating());
+}
+
+#[test]
+fn crossfade_gets_its_own_option_icon() {
+    let ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    m.settings.gapless_enabled = false;
+    let count = |m: &AppModel| {
+        ui.draw(m, &m.library.tracks, false)
+            .iter()
+            .filter(|q| q.src == maskdata::CROSSFADE)
+            .count()
+    };
+    assert_eq!(count(&m), 0);
+    m.settings.crossfade_ms = 6_000;
+    assert_eq!(count(&m), 1);
+}

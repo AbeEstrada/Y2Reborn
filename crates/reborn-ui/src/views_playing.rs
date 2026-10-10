@@ -177,6 +177,9 @@ fn status_icons(c: &mut Canvas, m: &AppModel, x: f32, cy: f32, accent: u32) {
     if s.gapless_enabled {
         icons.push(Icon::Gapless);
     }
+    if s.crossfade_ms > 0 {
+        icons.push(Icon::Crossfade);
+    }
     if s.eq_enabled {
         icons.push(Icon::Eq);
     }

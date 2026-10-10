@@ -691,8 +691,12 @@ fn songs_under(tracks: &[Track], key: &str) -> usize {
 fn empty(c: &mut Canvas, ui: &Ui, m: &AppModel, interactive: bool) {
     let accent = ui.accent();
     let (title, body, action) = empty_copy(m);
-    c.ring(240., 128., 44., 1.5, color::GLASS);
-    c.ring(240., 128., 13., 1.5, color::GLASS_STRONG);
+    if m.library.scanning {
+        c.spinner(240., 128., 44., accent, color::RING_TRACK, ui.spin_phase());
+    } else {
+        c.ring(240., 128., 44., 1.5, color::GLASS);
+        c.ring(240., 128., 13., 1.5, color::GLASS_STRONG);
+    }
     c.text_center(
         240.,
         206. + Face::S20.mid_offset(),

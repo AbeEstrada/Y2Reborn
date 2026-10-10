@@ -273,13 +273,41 @@ fn radio(
         }
         return;
     }
+    let busy = ui.bluetooth_busy().filter(|_| kind == Radio::Bluetooth);
+    let top = if busy.is_some() { 164. } else { 100. };
+    if let Some((name, operation)) = busy {
+        let verb = if operation == "pair" {
+            "Pairing with"
+        } else {
+            "Connecting to"
+        };
+        c.rrect(10., 100., WIDTH - 20., 56., 14., alpha(accent, 34));
+        c.rrect_outline(10., 100., WIDTH - 20., 56., 14., 1., alpha(accent, 110));
+        c.spinner(36., 128., 12., accent, color::RING_TRACK, ui.spin_phase());
+        c.text_mid(
+            60.,
+            120.,
+            WIDTH - 90.,
+            &format!("{verb} {name}…"),
+            Face::S15,
+            color::TEXT,
+        );
+        c.text_mid(
+            60.,
+            140.,
+            WIDTH - 90.,
+            "Keep the headphones close.",
+            Face::R11,
+            color::MUTED,
+        );
+    }
     let rest: Vec<(usize, &Item)> = page.rows.iter().enumerate().skip(1).collect();
-    let visible = 4usize;
+    let visible = if busy.is_some() { 3usize } else { 4usize };
     let start = focus
         .saturating_sub(visible)
         .min(rest.len().saturating_sub(visible));
     for (slot, (index, row)) in rest.iter().skip(start).take(visible).enumerate() {
-        let y = 100. + slot as f32 * 56.;
+        let y = top + slot as f32 * 56.;
         let selected = interactive && *index == focus && row.enabled;
         if selected {
             components::glass_row(c, 10., y, WIDTH - 20., 52.);
@@ -618,6 +646,33 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
         UpdatePhase::Failed(_) => (color::WARNING, Icon::Warning),
         _ => (color::MUTED, Icon::Info),
     };
+    let downloading = *phase == UpdatePhase::Downloading
+        || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage);
+    if downloading {
+        c.spinner(240., 124., 44., accent, color::RING_TRACK, ui.spin_phase());
+        c.text_center(
+            240.,
+            204. + Face::S20.mid_offset(),
+            "Downloading update…",
+            Face::S20,
+            color::TEXT,
+        );
+        c.text_center(
+            240.,
+            230. + Face::R13.mid_offset(),
+            "Keep Wi-Fi on and the player charging.",
+            Face::R13,
+            color::MUTED,
+        );
+        c.text_center(
+            240.,
+            320. + Face::R11.mid_offset(),
+            "Back to continue in the background",
+            Face::R11,
+            color::DIM,
+        );
+        return;
+    }
     let (title, body) = page
         .hero
         .as_ref()
@@ -638,7 +693,6 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
             color::MUTED,
         );
     }
-    let _ = accent;
     let start_rows = 138.;
     let visible = (((HEIGHT - 10. - start_rows) / 50.).floor() as usize).max(1);
     let first = focus

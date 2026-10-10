@@ -31,6 +31,8 @@ pub mod color {
     pub const SCRIM: u32 = 0x000000A0;
     pub const SCRIM_STRONG: u32 = 0x000000E1;
     pub const SHEET: u32 = 0x0E1014FA;
+    /// The opaque colour of a spinner's ring over `BG`.
+    pub const RING_TRACK: u32 = 0x1E2023FF;
 }
 
 /// `color` with its alpha replaced.

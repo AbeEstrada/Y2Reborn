@@ -6,7 +6,7 @@ use crate::{
     components::{self, SheetRow, Tone},
     text::{self, Face},
     theme::{color, HEIGHT, WIDTH},
-    views_library, views_playing, views_settings, views_system, Item, Ui,
+    views_library, views_playing, views_settings, views_system, Alert, Item, Ui,
 };
 use reborn_core::{platform::LowBattery, AppModel, Modal, Screen, Track};
 use reborn_graphics::Quad;
@@ -35,7 +35,15 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
     if m.screen_off {
         return c.finish();
     }
-    let interactive = m.navigation.modal.is_none() && ui.pairing.is_none() && !ui.text_entry;
+    let interactive = m.navigation.modal.is_none()
+        && ui.pairing.is_none()
+        && !ui.text_entry
+        && ui.alert.is_none();
+    if ui.usb_overlay(m) {
+        views_system::usb(&mut c, ui, m);
+        overlays(&mut c, ui, m, tracks);
+        return c.finish();
+    }
     match m.screen {
         Screen::NowPlaying if m.current().is_some() => {
             views_playing::now_playing(&mut c, ui, m, tracks, has_art, interactive)
@@ -67,7 +75,32 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
 /// The sheet, dialog or entry surface above the screen, then toasts and the
 /// volume line.
 fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
-    if let Some(pair) = &ui.pairing {
+    if let Some(alert) = &ui.alert {
+        let ok = |label| SheetRow {
+            label,
+            detail: "",
+            enabled: true,
+        };
+        match alert {
+            Alert::BluetoothFailed { name, .. } => components::dialog(
+                c,
+                "Couldn't connect",
+                &format!("{name} did not answer. Check that it is on and in range."),
+                &[ok("Cancel"), ok("Try again")],
+                ui.alert_focus(),
+                false,
+            ),
+            Alert::BatteryLow => {
+                let body = m
+                    .platform
+                    .battery
+                    .percent
+                    .map(|p| format!("{p}% left. Charge soon to keep playing."))
+                    .unwrap_or_else(|| "Charge soon to keep playing.".into());
+                components::dialog(c, "Battery low", &body, &[ok("OK")], 0, false);
+            }
+        }
+    } else if let Some(pair) = &ui.pairing {
         components::dialog(
             c,
             "Pair with this device?",

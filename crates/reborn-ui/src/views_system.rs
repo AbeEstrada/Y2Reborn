@@ -86,3 +86,96 @@ fn value_detail(c: &mut Canvas, m: &AppModel, interactive: bool) {
         c.mark_focus(at);
     }
 }
+
+/// The computer connection: what to do when it is ready, and a calm
+/// "copying" state with a sweeping ring (no progress is claimed).
+pub fn usb(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    use crate::canvas::Icon;
+    use reborn_core::platform::{SdCard, UsbTransfer};
+    components::status_bar(c, ui, m, "COMPUTER", false);
+    let copying = m.platform.snapshot.usb == UsbTransfer::Copying;
+    if copying {
+        c.spinner(
+            240.,
+            124.,
+            44.,
+            ui.accent(),
+            color::RING_TRACK,
+            ui.spin_phase(),
+        );
+        c.text_center(
+            240.,
+            204. + Face::S20.mid_offset(),
+            "Copying files…",
+            Face::S20,
+            color::TEXT,
+        );
+        c.text_center(
+            240.,
+            230. + Face::R13.mid_offset(),
+            "Keep the cable connected until your computer finishes.",
+            Face::R13,
+            color::MUTED,
+        );
+        c.text_center(
+            240.,
+            300. + Face::R11.mid_offset(),
+            "Don't unplug until it finishes.",
+            Face::R11,
+            color::WARNING,
+        );
+        return;
+    }
+    c.text_center(
+        240.,
+        84. + Face::S25.mid_offset(),
+        "Connected to a computer",
+        Face::S25,
+        color::TEXT,
+    );
+    c.text_center(
+        240.,
+        112. + Face::R13.mid_offset(),
+        "Copy music to the drives that appear.",
+        Face::R13,
+        color::MUTED,
+    );
+    let storage = &m.platform.snapshot.storage;
+    let free = |space: &reborn_core::platform::VolumeSpace| {
+        space
+            .free_bytes
+            .map(|f| format!("{} free", reborn_core::platform::human_bytes(f)))
+            .unwrap_or_default()
+    };
+    let cards = [
+        (
+            "Internal Storage",
+            Icon::Folder,
+            0x6EA0FFFFu32,
+            free(&storage.internal),
+        ),
+        (
+            "SD Card",
+            Icon::Sd,
+            0x3CC878FF,
+            match &storage.sd {
+                SdCard::Ready(space) => free(space),
+                _ => "No SD card".into(),
+            },
+        ),
+    ];
+    for (i, (name, icon, tint, detail)) in cards.into_iter().enumerate() {
+        let x = 28. + i as f32 * 212.;
+        components::card(c, x, 148., 196., 96.);
+        c.icon(icon, x + 30., 178., 26., tint);
+        c.text_mid(x + 18., 214., 168., name, Face::S15, color::TEXT);
+        c.text_mid(x + 18., 232., 168., &detail, Face::R11, color::MUTED);
+    }
+    c.text_center(
+        240.,
+        316. + Face::R11.mid_offset(),
+        "Your player keeps charging while connected.",
+        Face::R11,
+        color::DIM,
+    );
+}

@@ -408,10 +408,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             level: LowBattery::Critical,
         };
     });
-    case!("40-usb-connected", at(Screen::PcTransfer, ""));
-    case!("41-usb-copying", at(Screen::PcTransfer, ""), |_, m| {
-        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
+    case!("40-usb-connected", at(Screen::Home, ""), |ui, m| {
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Ready;
+        ui.observe(m);
     });
+    case!("41-usb-copying", at(Screen::Home, ""), |ui, m| {
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
+        ui.observe(m);
+    });
+    case!("42-computer-page", at(Screen::PcTransfer, ""));
+    case!(
+        "21b-bluetooth-pairing-progress",
+        at(Screen::Bluetooth, ""),
+        |ui, m| {
+            m.navigation.focus = 3;
+            ui.model_action(m, Action::Select);
+        }
+    );
+    case!("22-bluetooth-failed", at(Screen::Bluetooth, ""), |ui, _| {
+        ui.alert = Some(reborn_ui::Alert::BluetoothFailed {
+            path: "/bt/c".into(),
+            name: "Kopfhörer Ü2".into(),
+            operation: "pair".into(),
+        });
+    });
+    case!("34-update-downloading", at(Screen::Update, ""), |_, m| {
+        m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Downloading;
+    });
+    case!(
+        "14c-now-playing-crossfade",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.settings.crossfade_ms = 6000;
+            m.settings.shuffle = true;
+        }
+    );
+    case!(
+        "38b-battery-low-dialog",
+        at(Screen::Home, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.platform.battery = BatteryState {
+                percent: Some(10),
+                estimated: true,
+                charging: ChargingState::OnBattery,
+                level: LowBattery::Low,
+            };
+            ui.observe(m);
+        }
+    );
+    case!("43-sd-removed", at(Screen::Albums, ""), |ui, _| ui
+        .flash("SD card removed"));
+    case!("44-songs-added", at(Screen::Tracks, ""), |ui, _| ui
+        .flash("12 new songs added"));
     case!("45-empty-library", at(Screen::Albums, ""), |_, m| {
         m.library.tracks.clear();
         m.queue.clear();
@@ -458,6 +508,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut home = vec![];
     for (name, mut m, setup) in cases {
         let mut ui = ui();
+        ui.spin_fixed = Some(0.45);
         setup(&mut ui, &mut m);
         ui.set_resident_thumbs(keys.clone());
         let tracks = std::mem::take(&mut m.library.tracks);
@@ -533,6 +584,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0,
     )?;
     write("94-shutdown-final-black", &reborn_ui::black_frame(), 0)?;
+    for (name, turn, title, hint) in [
+        ("39-charging-off", 0.42, 0, 0),
+        ("39b-charged-off", 1.0, 1, 0),
+        ("39c-charging-paused-off", 0.0, 2, 2),
+    ] {
+        write(name, &reborn_ui::charge::charge_frame(turn, title, hint), 0)?;
+        manifest.push(name.into());
+    }
     for name in [
         "01-boot-splash",
         "01b-boot-25",
@@ -585,6 +644,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "labels": texts.iter().map(|(text, y)| json!({
                 "text": text, "y": y, "quads": reborn_ui::boot_label_frame(text, *y),
             })).collect::<Vec<_>>(),
+        }))?,
+    )?;
+    // The charging screen drawn by the rescue charger: base image, text lines
+    // and the ring geometry. Consumed by Y2Linux `tools/graphics/make-charge-art.py`.
+    fs::write(
+        output.join("charge-layout.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema": "org.reborn.charge-layout/v1",
+            "width": 480, "height": 360,
+            "background": reborn_ui::charge::CHARGE_BG,
+            "ring": {"cx": reborn_ui::charge::CHARGE_CX, "cy": reborn_ui::charge::CHARGE_CY,
+                     "outer": reborn_ui::charge::CHARGE_RING_OUTER, "inner": reborn_ui::charge::CHARGE_RING_INNER,
+                     "track": reborn_ui::charge::CHARGE_TRACK, "lit": reborn_ui::charge::CHARGE_LIT},
+            "base": reborn_ui::charge::charge_base_frame(),
+            "titles": reborn_ui::charge::CHARGE_TITLES.iter().map(|t| json!({
+                "text": t, "quads": reborn_ui::charge::charge_label_frame(t, reborn_ui::charge::CHARGE_TITLE_Y)})).collect::<Vec<_>>(),
+            "hints": reborn_ui::charge::CHARGE_HINTS.iter().map(|t| json!({
+                "text": t, "quads": reborn_ui::charge::charge_label_frame(t, reborn_ui::charge::CHARGE_HINT_Y)})).collect::<Vec<_>>(),
         }))?,
     )?;
     manifest.sort();

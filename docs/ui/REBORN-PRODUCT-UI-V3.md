@@ -1,6 +1,6 @@
 # Reborn Product UI v3
 
-Reborn 0.3.0, 2026-10-10. A visual and navigation redesign of Product UI v2
+Reborn 0.3.0, 2026-10-10 (candidate 11 adds the screens listed under *System*). A visual and navigation redesign of Product UI v2
 for the 480×360 panel. Source-complete, unit-tested and previewed on the host;
 **not yet observed on hardware** (see *Not verified*). The state machine, the
 library, audio, platform and boot-handoff code are unchanged except where this
@@ -38,7 +38,15 @@ runtime font loader. Details: `assets/fonts/README.md`.
 * **Settings** — Bluetooth, Wi-Fi, Sound (equalizer presets, normalise volume,
   gapless, crossfade, output), Display (brightness, screen-off delay), Storage,
   About & Updates (update status, version, reset).
-* **System** — the Power button: a short press turns the screen off or on; a
+* **System** — the player raises these itself: **Connected to a computer**
+  (Internal Storage and SD cards with free space, then a sweeping ring and
+  "Don't unplug until it finishes" while copying; Back dismisses it, it returns
+  on a new connection), a **Battery low** dialog (once per level), the
+  **Bluetooth pairing** card ("Pairing with … Keep the headphones close.") and a
+  **Couldn't connect** dialog with *Try again*, an **update download** ring, a
+  scanning ring, and *SD card removed* / *N new songs added* toasts. Rings sweep
+  because no progress figure exists; no percentage is ever invented. Crossfade
+  has its own option icon on Now Playing. The Power button: a short press turns the screen off or on; a
   **hold** fills a ring ("Hold to turn off"), release cancels. There is no menu.
 
 Removed from the normal UI: Diagnostics, maintenance/rebuild, codec and LDAC
@@ -100,8 +108,16 @@ hold feel, and the shutdown timing. The previews are rendered by
 `tools/preview/render_previews.py`, which mirrors the renderer; they are not
 screenshots of the device.
 
+## Charging screen
+
+While the player is off and charging, Y2Linux's rescue charger
+(`offline-charge.c`) shows a ring with a bolt, *Charging* / *Charged* /
+*Charging paused* and *Hold Power to turn on*. Its static images are rendered
+here (`charge.rs`, exported as `previews/v3/charge-layout.json`); only the
+sweeping segment is drawn by the charger. It shows no percentage and no time to
+full: the battery estimate is provisional and time-to-full is not computed.
+
 ## Open product questions
 
-Where the output device belongs (bottom-left today), whether crossfade needs its
-own Now Playing icon, a search screen, playlists, and the wording of
-*Saving your place*.
+Where the output device belongs (bottom-left today), a search screen, playlists
+(Reborn has none) and the wording of *Saving your place*.

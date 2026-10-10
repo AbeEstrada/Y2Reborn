@@ -460,6 +460,11 @@ def ic_disc(p):
     p.ellipse(16, 16, 3.5)
 
 
+def ic_crossfade(p):
+    p.ellipse(12, 16, 8.5, outline=True, width=2.2)
+    p.ellipse(20, 16, 8.5, outline=True, width=2.2)
+
+
 def ic_person(p):
     p.ellipse(16, 11, 6)
     p.arc(16, 30, 12, 195, 345, 5)
@@ -478,7 +483,7 @@ ICONS = [
     ('headphones', 32, ic_headphones), ('sd', 32, ic_sd), ('usb', 32, ic_usb), ('warning', 32, ic_warning),
     ('info', 32, ic_info), ('sun', 32, ic_sun), ('drive', 32, ic_drive), ('power', 32, ic_power),
     ('download', 32, ic_download), ('refresh', 32, ic_refresh), ('search', 32, ic_search),
-    ('vinyl', 32, ic_disc), ('person', 32, ic_person),
+    ('vinyl', 32, ic_disc), ('person', 32, ic_person), ('crossfade', 32, ic_crossfade),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96
