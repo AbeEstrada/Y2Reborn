@@ -347,12 +347,58 @@ fn mounted_uuid(device: &str, mount: Option<u64>) -> Option<String> {
         .probe(key, || super::filesystem_uuid(device))
 }
 
+/// Y2Media: the internal user-media partition (eMMC p8), mounted by the platform.
+pub const INTERNAL_MEDIA: &str = "/media/internal";
+const INTERNAL_MEDIA_MUSIC: &str = "/media/internal/music";
+const LEGACY_MUSIC: &str = "/data/music";
+
+/// The mount that backs an internal music directory: Y2Media for its own folder, Y2DATA otherwise.
+pub fn internal_mount(music: &Path) -> &'static str {
+    if music.starts_with(INTERNAL_MEDIA) {
+        INTERNAL_MEDIA
+    } else {
+        "/data"
+    }
+}
+
+/// Choose the internal music directory from what the platform has recorded. Pure so the
+/// decision is testable: Y2Media only while its Ready record names this boot and this very mount.
+fn choose_internal_music(marker: &str, boot_id: &str, mountinfo: &[(u64, PathBuf)]) -> PathBuf {
+    let claim = serde_json::from_str::<serde_json::Value>(marker).unwrap_or_default();
+    let current = mountinfo
+        .iter()
+        .filter(|(_, path)| path == Path::new(INTERNAL_MEDIA))
+        .collect::<Vec<_>>();
+    let ready = claim["state"] == "Ready"
+        && !boot_id.is_empty()
+        && claim["boot_id"] == boot_id
+        && current.len() == 1
+        && claim["mount_id"].as_u64() == Some(current[0].0);
+    PathBuf::from(if ready {
+        INTERNAL_MEDIA_MUSIC
+    } else {
+        LEGACY_MUSIC
+    })
+}
+
+/// Internal music lives on Y2Media once the platform has mounted it, and on Y2DATA before that
+/// (an image or device that has not been provisioned yet keeps working).
+pub fn internal_music_directory() -> PathBuf {
+    choose_internal_music(
+        &fs::read_to_string("/run/y2/internal-media.json").unwrap_or_default(),
+        fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .unwrap_or_default()
+            .trim(),
+        &parse_mountinfo(&fs::read_to_string("/proc/self/mountinfo").unwrap_or_default()),
+    )
+}
+
 pub fn sources(music: &Path) -> Vec<Source> {
     let m = mounts();
     let mountinfo =
         parse_mountinfo(&fs::read_to_string("/proc/self/mountinfo").unwrap_or_default());
     let mut result = vec![];
-    for (mount_path, internal) in [("/data", true), ("/media/sd", false)] {
+    for (mount_path, internal) in [(internal_mount(music), true), ("/media/sd", false)] {
         if let Some(m) = m.iter().find(|m| m.path == Path::new(mount_path)) {
             if !internal && !Path::new(&m.device).exists() {
                 continue;
@@ -712,6 +758,55 @@ mod tests {
         );
         assert_eq!(m[0].path, Path::new("/data"));
         assert_eq!(m[1].device, "/dev/mmcblk0p1");
+    }
+    #[test]
+    fn internal_music_uses_y2media_only_while_the_platform_record_matches_the_live_mount() {
+        let mounted = vec![
+            (9, PathBuf::from("/data")),
+            (12, PathBuf::from("/media/internal")),
+        ];
+        let ready = r#"{"state":"Ready","boot_id":"b1","mount_id":12}"#;
+        assert_eq!(
+            choose_internal_music(ready, "b1", &mounted),
+            Path::new("/media/internal/music")
+        );
+        // A remount (new id), another boot, a failed record, no record or a missing mount fall back.
+        let legacy = Path::new("/data/music");
+        assert_eq!(choose_internal_music(ready, "b2", &mounted), legacy);
+        assert_eq!(choose_internal_music(ready, "", &mounted), legacy);
+        assert_eq!(
+            choose_internal_music(
+                r#"{"state":"Ready","boot_id":"b1","mount_id":13}"#,
+                "b1",
+                &mounted
+            ),
+            legacy
+        );
+        assert_eq!(
+            choose_internal_music(
+                r#"{"state":"Failed","boot_id":"b1","mount_id":12}"#,
+                "b1",
+                &mounted
+            ),
+            legacy
+        );
+        assert_eq!(choose_internal_music("", "b1", &mounted), legacy);
+        assert_eq!(choose_internal_music("not json", "b1", &mounted), legacy);
+        assert_eq!(choose_internal_music(ready, "b1", &mounted[..1]), legacy);
+        let stacked = vec![
+            (12, PathBuf::from("/media/internal")),
+            (13, PathBuf::from("/media/internal")),
+        ];
+        assert_eq!(choose_internal_music(ready, "b1", &stacked), legacy);
+    }
+    #[test]
+    fn the_internal_source_is_backed_by_the_mount_that_holds_its_music() {
+        assert_eq!(
+            internal_mount(Path::new("/media/internal/music")),
+            "/media/internal"
+        );
+        assert_eq!(internal_mount(Path::new("/data/music")), "/data");
+        assert_eq!(internal_mount(Path::new("/media/internalx/music")), "/data");
     }
     #[test]
     fn escaped_mount() {

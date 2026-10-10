@@ -329,7 +329,11 @@ fn space(v: &Value) -> VolumeSpace {
 }
 
 pub fn storage(status: &Value) -> StorageState {
-    let internal = volume(status, "/data")
+    // Internal storage is the Y2Media partition once the platform reports it Ready; before
+    // that (an unprovisioned device) it is the Y2DATA volume that holds the music folder.
+    let internal = volume(status, "/media/internal")
+        .filter(|v| v["state"] == "Ready")
+        .or_else(|| volume(status, "/data"))
         .map(|v| space(&v))
         .unwrap_or_default();
     let sd = match volume(status, "/media/sd") {
@@ -645,7 +649,8 @@ fn diagnostics(s: &Value, caps: &Value) -> Vec<DiagnosticSection> {
     // Storage
     let mut storage = vec![];
     for (path, label) in [
-        ("/data", "Internal"),
+        ("/media/internal", "Internal"),
+        ("/data", "System data"),
         ("/media/sd", "SD card"),
         ("/", "System"),
     ] {
@@ -1103,6 +1108,26 @@ mod tests {
         // Engineering details live only in Diagnostics.
         let usb = s.section("usb").unwrap();
         assert!(usb.facts.iter().any(|f| f.value.contains("10.42.0.1")));
+    }
+
+    #[test]
+    fn internal_storage_is_y2media_when_ready_and_y2data_before_provisioning() {
+        let data = json!({"path":"/data","state":"Ready","space_state":"Normal","available_bytes":200_u64,"total_bytes":800_u64});
+        let media = |state: &str| json!({"path":"/media/internal","state":state,"space_state":"Normal","available_bytes":5_000_u64,"total_bytes":5_400_u64});
+        let status = |volumes: Vec<Value>| json!({"storage":{"volumes":volumes}});
+        let ready = storage(&status(vec![data.clone(), media("Ready")]));
+        assert_eq!(ready.internal.free_bytes, Some(5_000));
+        assert_eq!(ready.internal.total_bytes, Some(5_400));
+        // Not provisioned, failed or absent: the Y2DATA music folder still backs internal storage.
+        for volumes in [
+            vec![data.clone()],
+            vec![data.clone(), media("Failed")],
+            vec![data.clone(), media("Unavailable")],
+        ] {
+            let fallback = storage(&status(volumes));
+            assert_eq!(fallback.internal.free_bytes, Some(200));
+            assert_eq!(fallback.internal.total_bytes, Some(800));
+        }
     }
 
     #[test]

@@ -2293,9 +2293,19 @@ fn run() -> Result<(), String> {
     let mut initial_platform_ready = false;
     if let Some(m) = option(&args, "--music-dir") {
         model.settings.music_directory = m.into();
+    } else if !headless && storage::platform_manages_media() {
+        // The platform decides where internal music lives (Y2Media once mounted, else Y2DATA),
+        // whatever an older settings file recorded.
+        model.settings.music_directory = storage::internal_music_directory();
     }
-    if !headless && !model.settings.music_directory.starts_with("/data/") {
-        return Err("internal music must live under Y2DATA".into());
+    if !headless
+        && !model.settings.music_directory.starts_with("/data/")
+        && !model
+            .settings
+            .music_directory
+            .starts_with("/media/internal/")
+    {
+        return Err("internal music must live under Y2DATA or Y2Media".into());
     }
     fs::create_dir_all(&model.settings.music_directory).map_err(|e| e.to_string())?;
     if !headless && storage::sd_present() && !storage::platform_manages_media() {
