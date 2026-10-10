@@ -249,6 +249,87 @@ static GLuint mask_texture(int w, int h, const uint8_t *a8) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   return t;
 }
+/* Compile the program and create every texture; separate from the DRM/GBM/EGL
+ * bring-up so a host test can exercise it on any GLES2 context. */
+static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
+                    const int font_heights[3], const uint8_t *masks, int mask_w,
+                    int mask_h) {
+  const char *vs =
+      "attribute vec2 p;attribute vec2 uv;attribute vec4 color;"
+      "varying vec2 t;varying vec4 tint;void main(){"
+      "gl_Position=vec4(p,0.,1.);t=uv;tint=color;}";
+  const char *fs =
+      "precision mediump float;varying vec2 t;varying vec4 tint;"
+      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t)*tint;}";
+  GLuint v = make_shader(GL_VERTEX_SHADER, vs),
+         f = make_shader(GL_FRAGMENT_SHADER, fs);
+  if (!v || !f) {
+    if (v)
+      glDeleteShader(v);
+    if (f)
+      glDeleteShader(f);
+    return -EIO;
+  }
+  g->program = glCreateProgram();
+  glAttachShader(g->program, v);
+  glAttachShader(g->program, f);
+  glBindAttribLocation(g->program, 0, "p");
+  glBindAttribLocation(g->program, 1, "uv");
+  glBindAttribLocation(g->program, 2, "color");
+  glLinkProgram(g->program);
+  glDeleteShader(v);
+  glDeleteShader(f);
+  GLint ok;
+  glGetProgramiv(g->program, GL_LINK_STATUS, &ok);
+  if (!ok)
+    return -EIO;
+  glUseProgram(g->program);
+  glUniform1i(glGetUniformLocation(g->program, "tex"), 0);
+  glGenBuffers(1, &g->vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void *)0);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
+                        (void *)(2 * sizeof(GLfloat)));
+  glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
+                        (void *)(4 * sizeof(GLfloat)));
+  glEnableVertexAttribArray(0);
+  glEnableVertexAttribArray(1);
+  glEnableVertexAttribArray(2);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glViewport(0, 0, g->width, g->height);
+  uint8_t white[] = {255, 255, 255, 255};
+  g->tex[0] = texture(1, 1, white);
+  g->tex_w[0] = g->tex_h[0] = 1;
+  for (int i = 0; i < 3; i++) {
+    g->tex[1 + i] = mask_texture(1024, font_heights[i], font_pages[i]);
+    g->tex_w[1 + i] = 1024;
+    g->tex_h[1 + i] = font_heights[i];
+  }
+  g->tex[4] = mask_texture(mask_w, mask_h, masks);
+  g->tex_w[4] = mask_w;
+  g->tex_h[4] = mask_h;
+  /* Album art is also used as a full-screen backdrop by the product UI;
+   * linear filtering keeps that treatment photographic instead of blocky. */
+  g->tex[5] = texture(1, 1, white);
+  g->tex[6] = texture(1, 1, white);
+  g->tex_w[5] = g->tex_h[5] = g->tex_w[6] = g->tex_h[6] = 1;
+  /* Thumbnails: RGBA slots uploaded one at a time by rb_graphics_thumb. */
+  g->tex[7] = texture(RB_THUMB_W, RB_THUMB_H, NULL);
+  g->tex_w[7] = RB_THUMB_W;
+  g->tex_h[7] = RB_THUMB_H;
+  for (int i = 5; i < 8; i++) {
+    glBindTexture(GL_TEXTURE_2D, g->tex[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  }
+  for (int i = 0; i < 8; i++)
+    if (!g->tex[i])
+      return -EIO;
+  if (glGetError() != GL_NO_ERROR)
+    return -EIO;
+  return 0;
+}
 int rb_graphics_open(RbGraphics **out, const uint8_t *const font_pages[3],
                      const int font_heights[3], const uint8_t *masks,
                      int mask_w, int mask_h) {
@@ -380,79 +461,7 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *const font_pages[3],
            eglQueryString(g->display, EGL_VERSION), renderer,
            glGetString(GL_VERSION));
   eglSwapInterval(g->display, 0);
-  const char *vs =
-      "attribute vec2 p;attribute vec2 uv;attribute vec4 color;"
-      "varying vec2 t;varying vec4 tint;void main(){"
-      "gl_Position=vec4(p,0.,1.);t=uv;tint=color;}";
-  const char *fs =
-      "precision mediump float;varying vec2 t;varying vec4 tint;"
-      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t)*tint;}";
-  GLuint v = make_shader(GL_VERTEX_SHADER, vs),
-         f = make_shader(GL_FRAGMENT_SHADER, fs);
-  if (!v || !f) {
-    if (v)
-      glDeleteShader(v);
-    if (f)
-      glDeleteShader(f);
-    goto fail;
-  }
-  g->program = glCreateProgram();
-  glAttachShader(g->program, v);
-  glAttachShader(g->program, f);
-  glBindAttribLocation(g->program, 0, "p");
-  glBindAttribLocation(g->program, 1, "uv");
-  glBindAttribLocation(g->program, 2, "color");
-  glLinkProgram(g->program);
-  glDeleteShader(v);
-  glDeleteShader(f);
-  GLint ok;
-  glGetProgramiv(g->program, GL_LINK_STATUS, &ok);
-  if (!ok)
-    goto fail;
-  glUseProgram(g->program);
-  glUniform1i(glGetUniformLocation(g->program, "tex"), 0);
-  glGenBuffers(1, &g->vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void *)0);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
-                        (void *)(2 * sizeof(GLfloat)));
-  glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
-                        (void *)(4 * sizeof(GLfloat)));
-  glEnableVertexAttribArray(0);
-  glEnableVertexAttribArray(1);
-  glEnableVertexAttribArray(2);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glViewport(0, 0, g->width, g->height);
-  uint8_t white[] = {255, 255, 255, 255};
-  g->tex[0] = texture(1, 1, white);
-  g->tex_w[0] = g->tex_h[0] = 1;
-  for (int i = 0; i < 3; i++) {
-    g->tex[1 + i] = mask_texture(1024, font_heights[i], font_pages[i]);
-    g->tex_w[1 + i] = 1024;
-    g->tex_h[1 + i] = font_heights[i];
-  }
-  g->tex[4] = mask_texture(mask_w, mask_h, masks);
-  g->tex_w[4] = mask_w;
-  g->tex_h[4] = mask_h;
-  /* Album art is also used as a full-screen backdrop by the product UI;
-   * linear filtering keeps that treatment photographic instead of blocky. */
-  g->tex[5] = texture(1, 1, white);
-  g->tex[6] = texture(1, 1, white);
-  g->tex_w[5] = g->tex_h[5] = g->tex_w[6] = g->tex_h[6] = 1;
-  /* Thumbnails: RGBA slots uploaded one at a time by rb_graphics_thumb. */
-  g->tex[7] = texture(RB_THUMB_W, RB_THUMB_H, NULL);
-  g->tex_w[7] = RB_THUMB_W;
-  g->tex_h[7] = RB_THUMB_H;
-  for (int i = 5; i < 8; i++) {
-    glBindTexture(GL_TEXTURE_2D, g->tex[i]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  }
-  for (int i = 0; i < 8; i++)
-    if (!g->tex[i])
-      goto fail;
-  if (glGetError() != GL_NO_ERROR)
+  if (gl_setup(g, font_pages, font_heights, masks, mask_w, mask_h) < 0)
     goto fail;
   *out = g;
   return 0;

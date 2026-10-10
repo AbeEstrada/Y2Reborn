@@ -83,6 +83,15 @@ the same pinned, freshness-checked cover loader as before, and cached in
 1500 files, emptied by *Clear cache*). Until a cover is ready the row shows a
 calm placeholder. The accent is computed from the 160×160 now-playing cover.
 
+## Host verification of the GL path
+
+`tools/preview/gles_compare.py` renders every preview quad list through the
+production GL code (`graphics.c`, via `gl_setup`) on a host GLES2 context (Mesa,
+EGL surfaceless) and compares each frame with the Python rasteriser: all 62
+frames match (mean difference < 1.5/255). It validates the luminance-alpha
+textures, tinting, UV mapping, thumbnails and artwork; it cannot show behaviour
+on the Mali-400.
+
 ## Not verified
 
 On-device rendering (GLES2 luminance-alpha textures on the Mali-400), frame
