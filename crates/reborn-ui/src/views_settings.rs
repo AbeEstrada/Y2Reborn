@@ -686,7 +686,7 @@ pub fn password_entry(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     let label = |index: usize| -> String {
         if index < crate::LETTERS.len() {
             if crate::LETTERS[index] == b' ' {
-                "␣".into()
+                "_".into()
             } else {
                 (crate::LETTERS[index] as char).to_string()
             }
@@ -701,8 +701,11 @@ pub fn password_entry(c: &mut Canvas, ui: &Ui, m: &AppModel) {
             let at = c.draw.len();
             c.rrect(cx - 26., 158., 52., 76., 16., 0xF2F3F5FF);
             c.mark_focus(at);
-            let words = ui.letter >= crate::LETTERS.len();
-            let text = if words {
+            let space = ui.letter < crate::LETTERS.len() && crate::LETTERS[ui.letter] == b' ';
+            let words = ui.letter >= crate::LETTERS.len() || space;
+            let text = if space {
+                "Space".to_owned()
+            } else if words {
                 ["Delete", "Connect", "Cancel"][ui.letter - crate::LETTERS.len()].to_owned()
             } else {
                 label(index)

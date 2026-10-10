@@ -143,7 +143,8 @@ impl Canvas {
         }
     }
     fn masked(&mut self, src: [u16; 4], x: f32, y: f32, w: f32, h: f32, color: u32) {
-        if w > 0. && h > 0. && color & 0xFF != 0 {
+        // A sprite the atlas does not have (zero-sized) draws nothing.
+        if w > 0. && h > 0. && src[2] > 0 && src[3] > 0 && color & 0xFF != 0 {
             self.draw
                 .push(Quad::masked(Tex::Mask, src, x, y, w, h, color));
         }

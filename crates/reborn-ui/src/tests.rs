@@ -1296,3 +1296,126 @@ fn power_short_sleeps_when_paused_and_blanks_during_playback() {
     );
     assert!(ui.power_hold.is_some());
 }
+
+#[test]
+fn now_playing_shows_icons_only_for_options_that_are_on_and_never_a_volume_number() {
+    use reborn_graphics::Tex;
+    let ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    m.settings.volume = 77;
+    m.settings.gapless_enabled = false;
+    let icons = |m: &AppModel| -> usize {
+        ui.draw(m, &m.library.tracks, false)
+            .iter()
+            .filter(|q| {
+                q.tex == Tex::Mask
+                    && [
+                        maskdata::SHUFFLE,
+                        maskdata::REPEAT,
+                        maskdata::REPEAT_ONE,
+                        maskdata::GAPLESS,
+                        maskdata::EQ,
+                        maskdata::NORM,
+                    ]
+                    .contains(&q.src)
+            })
+            .count()
+    };
+    assert_eq!(icons(&m), 0, "all options off: no icons");
+    m.settings.shuffle = true;
+    m.settings.repeat = RepeatMode::Track;
+    assert_eq!(icons(&m), 2);
+    m.settings.gapless_enabled = true;
+    m.settings.eq_enabled = true;
+    m.settings.replay_gain = reborn_core::ReplayGainMode::Track;
+    assert_eq!(icons(&m), 5);
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        !text.contains("77") && !text.to_lowercase().contains("vol"),
+        "{text}"
+    );
+}
+
+#[test]
+fn volume_is_a_bare_line_that_fades_and_carries_no_text() {
+    use reborn_graphics::Tex;
+    let mut ui = radios();
+    let mut m = app(Screen::Albums);
+    m.settings.volume = 64;
+    let plain = ui.draw(&m, &m.library.tracks, false).len();
+    ui.show_volume();
+    assert!(ui.volume_visibility() > 0.99);
+    let shown = ui.draw(&m, &m.library.tracks, false);
+    assert!(shown.len() > plain, "the line is drawn on any screen");
+    assert!(!drawn_text(&shown).contains("64"));
+    // The line is thin, near the right edge, and rises with the volume.
+    let line: Vec<_> = shown
+        .iter()
+        .filter(|q| q.tex == Tex::Solid && q.w <= 4. && q.x > 440. && q.h > 20.)
+        .collect();
+    assert!(!line.is_empty());
+    ui.volume_until = Some(Instant::now() - Duration::from_millis(1));
+    assert_eq!(ui.volume_visibility(), 0.);
+    assert!(ui.expire_notice());
+    assert_eq!(ui.draw(&m, &m.library.tracks, false).len(), plain);
+}
+
+#[test]
+fn covers_are_requested_while_missing_and_drawn_once_resident() {
+    use reborn_graphics::Tex;
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    for t in &mut m.library.tracks {
+        t.artwork = true;
+    }
+    let tracks = m.library.tracks.clone();
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(!quads.iter().any(|q| matches!(q.tex, Tex::Thumb(_))));
+    let wanted = ui.take_wanted_thumbs();
+    assert!(!wanted.is_empty() && wanted.len() <= 64);
+    let keys: Vec<u64> = tracks.iter().map(art_key).collect();
+    assert!(wanted
+        .iter()
+        .all(|(key, index)| keys.contains(key) && *index < tracks.len()));
+    // Tracks of one album share one cover.
+    assert_eq!(art_key(&tracks[0]), art_key(&tracks[1]));
+    assert_ne!(art_key(&tracks[0]), art_key(&tracks[3]));
+    ui.set_resident_thumbs(keys);
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(quads.iter().any(|q| matches!(q.tex, Tex::Thumb(_))));
+    assert!(ui.take_wanted_thumbs().is_empty());
+}
+
+#[test]
+fn album_page_plays_and_shuffles_and_artist_page_lists_albums() {
+    let mut ui = radios();
+    let mut m = app(Screen::Album);
+    m.navigation.filter = "album:Élodie · Μουσική · Музыка · 音楽\u{1f}Album 0".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].key, "play:collection");
+    assert_eq!(rows[1].key, "shuffle:collection");
+    assert!(matches!(
+        select_key(&mut ui, &mut m, "shuffle:collection"),
+        Effect::PlayCollection { shuffle: true, .. }
+    ));
+    let mut m = app(Screen::Artist);
+    m.navigation.filter = "artist:Élodie · Μουσική · Музыка · 音楽".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].key, "play:collection");
+    let albums: Vec<_> = rows.iter().skip(1).collect();
+    assert_eq!(albums.len(), 3, "one row per album, not per song");
+    assert!(albums
+        .iter()
+        .all(|r| r.key.starts_with("album:") && r.art.is_some()));
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+}
+
+#[test]
+fn accent_follows_the_cover_and_defaults_before_one_is_known() {
+    let mut ui = radios();
+    assert_eq!(ui.accent(), theme::color::ACCENT);
+    ui.accent = 0xFF965AFF;
+    assert_eq!(ui.accent(), 0xFF965AFF);
+}
