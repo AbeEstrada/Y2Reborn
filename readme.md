@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 0.3.0, part of Y2Linux Baseline 13 (2026-10-11), developer preview.**
-> Git tag `baseline-13` in both repositories. Reborn has no installer of its own.
+> **Status: 0.3.0, part of Y2Linux Baseline 15 (2026-10-12), developer preview.**
+> Git tag `baseline-15` in both repositories. Reborn has no installer of its own.
 > It is built into the Y2Linux image. To run it on a Y2, follow Y2Linux's
 > [BUILDING](https://github.com/SchulzCode/Y2Linux/blob/main/docs/BUILDING.md) and
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guides.
@@ -29,7 +29,7 @@ have not been checked on hardware.
 
 ## Development
 
-Use Rust **1.90.0**. `rust-toolchain.toml` pins it together with the
+Use Rust **1.99.0**. `rust-toolchain.toml` pins it together with the
 `armv7-unknown-linux-gnueabihf` target. All crates are vendored in `vendor/`,
 so builds work offline. Host builds link the system's development libraries
 through `pkg-config`: FFmpeg (`libavformat`, `libavcodec`, `libavutil`,

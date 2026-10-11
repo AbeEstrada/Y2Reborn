@@ -1,6 +1,6 @@
 # Reborn documentation
 
-Reborn 0.3.0 is the player in **Y2Linux Baseline 13** (2026-10-11, tag `baseline-13`).
+Reborn 0.3.0 is the player in **Y2Linux Baseline 15** (2026-10-12, tag `baseline-15`), built with Rust 1.99.
 Start with [current Reborn state](CURRENT_REBORN_STATE.md), the
 [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md) design and the paired
 [Y2Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).

@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## Baseline 13 — 2026-10-11 (latest)
+## Baseline 15 — 2026-10-12 (latest)
+
+Reborn 0.3.0 `f68e088` is the player in Y2Linux Baseline 15 (POWER-FINAL-15, tag `baseline-15`). The only change since
+13 is the move to Rust 1.99.0 with its stricter Clippy (`as_chunks`, `try_update`, a pointer cast for the signal
+handler, a zipped queue counter); behaviour is unchanged. 362 workspace tests, fmt and strict Clippy pass on 1.99. On
+the device it runs against Mesa 26.2.4, FFmpeg 9.0.2, BlueZ 5.87 and bluez-alsa 5.0.0; the owner confirmed display,
+audio, Bluetooth and library after the flash.
+
+## Baseline 13 — 2026-10-11
 
 Reborn 0.3.0 `71ddb0d` is the player in Y2Linux Baseline 13 (POWER-FINAL-13, tag `baseline-13`). The Product UI v3
 and the remaining screens (computer connection and copying, Bluetooth pairing, update download, scanning,
