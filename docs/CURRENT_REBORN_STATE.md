@@ -1,5 +1,16 @@
 # Current Reborn state on the Y2
 
+## Baseline 13 — 2026-10-11 (latest)
+
+Reborn 0.3.0 `71ddb0d` is the player in Y2Linux Baseline 13 (POWER-FINAL-13, tag `baseline-13`). The Product UI v3
+and the remaining screens (computer connection and copying, Bluetooth pairing, update download, scanning,
+low battery, SD removed, songs added) have run on the owner's Y2 since POWER-FINAL-10/11. Reborn was unchanged from 11
+to 13; those candidates changed the platform (sleep, charging, stock power settings). Host checks at `71ddb0d`:
+`cargo fmt`, `cargo test --workspace --locked --offline` and strict Clippy pass. Not checked on hardware: crossfade
+end-of-track blend, EQ, native high-rate output, non-SBC Bluetooth codecs. Platform issues that affect the player
+(software-restart dark panel, USB after deep sleep) are listed in the
+[Y2Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).
+
 ## Product UI v3 — 2026-10-10
 
 Reborn 0.3.0 redesigns the UI (see [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md)): Open Sans exact-size type, cover-driven accent, cover thumbnails with a disk cache, a bare volume line, option icons on Now Playing, a flatter Settings tree, hold-to-turn-off without menus, a hidden service menu and new startup/shutdown screens. Host tests, fmt and strict Clippy pass; it is **not yet observed on hardware**. Dated sections below describe earlier applications.
@@ -19,20 +30,20 @@ is separate from compiled source. Earlier current/next labels are historical.
 
 ## Sealed Platform 1.0 software integration — 2026-10-04
 
-**READY_FOR_PLATFORM_V1_PHYSICAL_QUALIFICATION**. Compiled Reborn `dd73dcc3243045cd33e319dda2f76918ed37ea31`/Linux `4c72466f2f27ddf9f0ca18ba8ddc4d89c52599d2`; actual package/application0.2.0.324tests/fmt/strict Clippy, fresh pinned ARM/QEMU/software/package gates PASS. One candidate `/home/luca/Dokumente/Code/worktrees/platform-v1-integration/Y2Linux/out/y2linux-platform-v1-integration-candidate`. Integrated physical/endurance NOT_RUN and public distribution blocked; current installed stock remains Baseline02/b71 after temporary source-bound benchmarks. See [master](../../Y2Linux/docs/release/Y2-PLATFORM-V1-MASTER.md) and [software receipt](../../Y2Linux/docs/validation/Y2-PLATFORM-V1-INTEGRATION.md). Dated progress/physical sections below remain history.
+**READY_FOR_PLATFORM_V1_PHYSICAL_QUALIFICATION**. Compiled Reborn `dd73dcc3243045cd33e319dda2f76918ed37ea31`/Linux `4c72466f2f27ddf9f0ca18ba8ddc4d89c52599d2`; actual package/application0.2.0.324tests/fmt/strict Clippy, fresh pinned ARM/QEMU/software/package gates PASS. One candidate `/home/luca/Dokumente/Code/worktrees/platform-v1-integration/Y2Linux/out/y2linux-platform-v1-integration-candidate`. Integrated physical/endurance NOT_RUN and public distribution blocked; current installed stock remains Baseline02/b71 after temporary source-bound benchmarks. See [master](https://github.com/SchulzCode/Y2Linux/blob/main/docs/release/Y2-PLATFORM-V1-MASTER.md) and [software receipt](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-PLATFORM-V1-INTEGRATION.md). Dated progress/physical sections below remain history.
 
 ## Platform 1.0 integration — 2026-10-04
 
 Selected source from all eleven finished handoffs is composed on `codex/platform-v1-integration`. All 324 workspace tests, formatting and strict Clippy pass. Fresh production ARM and one integrated physical campaign remain pending. Canonical source/card claims, bounded TEMP scanner, source-aware zero-FD cover cache, one observation worker, sleep quiescence and durable USB refresh share one runtime. Native wired hardware remains S16/44.1/48; wider AFE admission and Bluetooth peer/codecs require evidence.
 
-Installed owner receipts identify Baseline02 Linux `8584ccd8` / Reborn `b71b4688`, boot `88b85fa3` after the failed RTC wake; temporary optimized binary tests are separate from installed stock and the new integrated image. The [master](../../Y2Linux/docs/release/Y2-PLATFORM-V1-MASTER.md), [source ledger](validation/REBORN-PLATFORM-V1-INTEGRATION.md) and [physical plan](../../Y2Linux/docs/release/Y2-PLATFORM-V1-PHYSICAL-QUALIFICATION.md) are current; the dated observations below retain their original scope.
+Installed owner receipts identify Baseline02 Linux `8584ccd8` / Reborn `b71b4688`, boot `88b85fa3` after the failed RTC wake; temporary optimized binary tests are separate from installed stock and the new integrated image. The [master](https://github.com/SchulzCode/Y2Linux/blob/main/docs/release/Y2-PLATFORM-V1-MASTER.md), [source ledger](validation/REBORN-PLATFORM-V1-INTEGRATION.md) and [physical plan](https://github.com/SchulzCode/Y2Linux/blob/main/docs/release/Y2-PLATFORM-V1-PHYSICAL-QUALIFICATION.md) are current; the dated observations below retain their original scope.
 
 Updated 2026-10-01. **Software candidate (not flashed, not physically
 qualified):** Reborn **Product UI v2** (0.2.0) on the CPU Final Fix03
 platform. Smaller product surface, typed platform boundary, one-detent wheel,
 Reborn boot mark and dark shutdown. See [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md),
 the [pass record](review/REBORN-PRODUCT-PASS-V2.md) and the
-[Y2Linux receipt](../../Y2Linux/docs/validation/Y2-REBORN-PRODUCT-UI-V2.md).
+[Y2Linux receipt](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-REBORN-PRODUCT-UI-V2.md).
 Everything below describes the last physically observed application.
 Updated 2026-10-04. The observed installed application is **Product UI v2**
 (0.2.0), Reborn `b71b468860233faa0a42b8448ec5777fa952b8e3`, on
@@ -53,15 +64,15 @@ The final tested temporary source is `069415a`; installed Reborn remains
 1,000 wheel steps match and sampled static screens produce zero idle redraws.
 See [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md), the
 [product pass](review/REBORN-PRODUCT-PASS-V2.md), and the paired
-[current platform state](../../Y2Linux/docs/CURRENT_PLATFORM_STATE.md).
+[current platform state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).
 
 The dated Fix01 observations below are retained as historical evidence. They
 describe that image, rather than the installed Baseline02 or performance candidate.
 
 Physical observation from the 2026-09-27 CPU Final Fix01 run. This page
 describes the exact already-flashed application, not a new image or software
-build. The [paired Linux state](../../Y2Linux/docs/CURRENT_PLATFORM_STATE.md)
-and [physical report](../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
+build. The [paired Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md)
+and [physical report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
 are the authority for hardware/platform results.
 
 | Identity | Historical Fix01 physical observation |
@@ -98,7 +109,7 @@ passed. No claim about actual Bluetooth peer playback, visual legibility,
 analog fidelity, battery life, full wake or public release is made here.
 
 Current software ownership remains [media](architecture/reborn-audio-stack-ffmpeg9.md),
-[live volume](architecture/live-volume.md), [platform API](../../Y2Linux/docs/architecture/platform-api-v1.md),
+[live volume](architecture/live-volume.md), [platform API](https://github.com/SchulzCode/Y2Linux/blob/main/docs/architecture/platform-api-v1.md),
 and [UI v1](ui/REBORN-UI-V1.md). The [Luna correctness closure](validation/LUNA-CORRECTNESS-CLOSURE-01.md),
 [UI candidate report](ui/REBORN-UI-V1-REPORT.md) and
 [older system audit](audit/current-system/00_SCOPE_AND_EVIDENCE.md) are dated

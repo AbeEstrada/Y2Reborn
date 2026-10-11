@@ -4,7 +4,7 @@
 events, semantic Interactive/Artwork/Playback/Scan leases and bounded playback,
 but it was not a visual-legibility, analog-listening or full UI endurance review.
 See [current Reborn state](../CURRENT_REBORN_STATE.md) and the
-[physical report](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md).
+[physical report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md).
 
 Owner-review software candidate for the 480×360 Y2 and frozen Y2Linux Platform
 v1. This is a native GLES application with a wheel and physical buttons. It has

@@ -44,11 +44,11 @@ they were not counted as product defects or test failures.
 
 | Question | Authoritative source |
 | --- | --- |
-| Image package selection | [defconfig](../../../../Y2Linux/buildroot/configs/y2_production_defconfig), [input lock](../../../../Y2Linux/buildroot/inputs.lock.json) |
-| Actual Bluetooth service | [connectivity service](../../../../Y2Linux/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity): both launch/restart use `/usr/bin/bluealsa -p a2dp-source --loglevel=warning` |
-| Connection retry owner | [reconnect.c](../../../../Y2Linux/tools/connectivity/reconnect.c): trusted preferred AudioSink, intentional-disconnect handling, 45-s call timeout, rate-limited recurring retries |
-| Controller identity/quirk and data path | [hci.c](../../../../Y2Linux/kernel/platform/connectivity/hci.c): `setup`, `controller_quirks`, `send`, `y2_hci_receive`; [STP](../../../../Y2Linux/kernel/platform/connectivity/stp.c), [BTIF](../../../../Y2Linux/kernel/platform/connectivity/btif.c) |
-| Firmware and private calibration | [firmware.c](../../../../Y2Linux/kernel/platform/connectivity/firmware.c), [factory.c](../../../../Y2Linux/tools/connectivity/factory.c), [inventory](../../../../Y2Linux/docs/knowledge/evidence/m5-firmware-inventory.json) |
+| Image package selection | [defconfig](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/configs/y2_production_defconfig), [input lock](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/inputs.lock.json) |
+| Actual Bluetooth service | [connectivity service](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity): both launch/restart use `/usr/bin/bluealsa -p a2dp-source --loglevel=warning` |
+| Connection retry owner | [reconnect.c](https://github.com/SchulzCode/Y2Linux/blob/main/tools/connectivity/reconnect.c): trusted preferred AudioSink, intentional-disconnect handling, 45-s call timeout, rate-limited recurring retries |
+| Controller identity/quirk and data path | [hci.c](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/hci.c): `setup`, `controller_quirks`, `send`, `y2_hci_receive`; [STP](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/stp.c), [BTIF](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/btif.c) |
+| Firmware and private calibration | [firmware.c](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/firmware.c), [factory.c](https://github.com/SchulzCode/Y2Linux/blob/main/tools/connectivity/factory.c), [inventory](https://github.com/SchulzCode/Y2Linux/blob/main/docs/knowledge/evidence/m5-firmware-inventory.json) |
 | Current app observation | [bluetooth.rs](../../../crates/reborn-platform/src/bluetooth.rs): `Status::playback_rate`, `status`, tests; no GetCodecs/SelectCodec/typed codec policy |
 | Current Bluetooth PCM format | [native.rs](../../../crates/reborn-audio/src/native.rs): `output_name`, `AlsaSink::plan_named`; S16 preference for Bluetooth |
 | Shared media precision | [media.c](../../../crates/reborn-media/native/media.c): `canonical_swr`, `output_swr`, graph and crossfade paths |
@@ -73,10 +73,10 @@ Source: `Y2Linux/evidence-private/20260917-m5-protocol/connectivity08-hci-baseli
 The independently retained `y2-hci-quirk-capped.txt` reports the same capabilities
 after the diagnostic feature-page correction. That does not mean its tainted
 diagnostic boot was production-qualified. The
-[CONNECTIVITY-09 public summary](../../../../Y2Linux/docs/hardware-evidence/2026-09-17-m5-connectivity09/adapter-result.json)
+[CONNECTIVITY-09 public summary](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-17-m5-connectivity09/adapter-result.json)
 records durable native-quirk power-on with no diagnostic module, taint 0 and
 zero errors/recoveries. The
-[CONNECTIVITY-10 summary](../../../../Y2Linux/docs/hardware-evidence/2026-09-17-m5-connectivity10/adapter-result.json)
+[CONNECTIVITY-10 summary](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-17-m5-connectivity10/adapter-result.json)
 records scans with both radios powered, not A2DP data.
 
 The raw HCI features settle **advertised capability**, not the controller's
@@ -294,7 +294,7 @@ clock jumps, device changes and service restarts—not only happy-path ranking.
 ### Entry gates and test identity
 
 Follow Y2Linux's
-[standing milestone audit rule](../../../../Y2Linux/docs/planning/roadmap-gap-audit.md#standing-milestone-boundary-rule)
+[standing milestone audit rule](https://github.com/SchulzCode/Y2Linux/blob/main/docs/planning/roadmap-gap-audit.md#standing-milestone-boundary-rule)
 before expanding codec/production scope. Use owner-authorized installation and
 radio actions. An outstanding power/thermal/suspend safety gate is not waived
 by this plan. Do not conduct unbounded heat/battery stress on an unqualified
@@ -453,7 +453,7 @@ that fact; do not invent the remote capability list.
 ### Later owner-controlled qualification/install sequence
 
 1. Confirm current recovery arrangement and platform safety gates. The existing
-   [installation overview](../../../../Y2Linux/docs/architecture/production-install.md)
+   [installation overview](https://github.com/SchulzCode/Y2Linux/blob/main/docs/architecture/production-install.md)
    distinguishes first initialization from preserve-data updates and warns about
    historical coordinate errors. Use the **chosen candidate package's** verified
    install/recovery metadata, not historical addresses or a generic scatter/flash

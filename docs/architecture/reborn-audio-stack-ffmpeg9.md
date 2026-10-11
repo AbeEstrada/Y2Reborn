@@ -4,7 +4,7 @@
 decode/filter/resample path. The later [live-volume contract](live-volume.md)
 adds a bounded integer sink-stage gain after that path; the older statement
 below that Rust has no integer volume stage is superseded. The
-[Fix01 physical run](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
+[Fix01 physical run](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
 passed bounded S16 44.1 and 24/96 -> 48 silent fixtures with zero XRUN/decode/
 filter errors. Analog quality, native S24/S32 and end-of-track crossfade remain
 unqualified by that run. The graph below describes FFmpeg processing before

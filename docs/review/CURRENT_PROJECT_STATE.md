@@ -5,7 +5,7 @@
 software defects were later corrected and real Fix01 workload/playback behavior
 was tested; the overall CPU platform still fails acceptance. Use
 [current Reborn state](../CURRENT_REBORN_STATE.md) and the paired
-[Linux state](../../../Y2Linux/docs/CURRENT_PLATFORM_STATE.md) for today's
+[Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md) for today's
 status. The original review conclusions remain available as dated evidence.
 
 **Review date: 2026-09-22. Read-only engineering review; documentation is the only change.**
@@ -38,7 +38,7 @@ All intervening changes were examined: Linux 13 files, +267/−33; Reborn 15 fil
 
 The package labels itself release `0.1.0-premium.3`, rootfs `2025.02.18-premium.3`, with layout/data schema 1. Reborn's application label is `0.1.0-premium.01`; its session schema is 2 and library DB schema is 1. These separate version domains should not be confused with hardware acceptance.
 
-Primary inputs were all 16 [current-system audit files](../audit/current-system/00_SCOPE_AND_EVIDENCE.md), the [codec architecture](../architecture/bluetooth-codecs.md), its [evidence](../audit/bluetooth-codecs/2026-09-22-evidence-and-tests.md), [Luna's report](../validation/LUNA-SOFTWARE-MODERNIZATION-01.md), actual before/after source, generated package configuration, ELF files and retained raw validation output. Luna's report is a claim source, not acceptance evidence. This review activates/closes no milestone and authorizes no hardware, memory or production-scope change; the [standing roadmap audit rule](../../../Y2Linux/docs/planning/roadmap-gap-audit.md#standing-milestone-boundary-rule) still applies before those decisions.
+Primary inputs were all 16 [current-system audit files](../audit/current-system/00_SCOPE_AND_EVIDENCE.md), the [codec architecture](../architecture/bluetooth-codecs.md), its [evidence](../audit/bluetooth-codecs/2026-09-22-evidence-and-tests.md), [Luna's report](../validation/LUNA-SOFTWARE-MODERNIZATION-01.md), actual before/after source, generated package configuration, ELF files and retained raw validation output. Luna's report is a claim source, not acceptance evidence. This review activates/closes no milestone and authorizes no hardware, memory or production-scope change; the [standing roadmap audit rule](https://github.com/SchulzCode/Y2Linux/blob/main/docs/planning/roadmap-gap-audit.md#standing-milestone-boundary-rule) still applies before those decisions.
 
 ## 2. Luna change review
 
@@ -157,7 +157,7 @@ Status labels: **WORKING / PHYSICALLY EVIDENCED** refers to the stated older mea
 | Wi-Fi | WORKING / PHYSICALLY EVIDENCED | Registration, power cycling and scans. Association/DHCP/DNS/traffic and saved reconnect have no retained acceptance. |
 | Bluetooth | PARTIAL | Controller/adapter power and discovery established. No retained paired-peer/SBC playback qualification, including on BlueALSA 5. |
 
-Principal physical receipts: [GPU/audio/runtime-PM and failed suspend, September 18](../../../Y2Linux/docs/hardware-evidence/2026-09-18-gpu01/README.md), [connectivity scans, September 17](../../../Y2Linux/docs/hardware-evidence/2026-09-17-m5-connectivity10/README.md), [installed Reborn inspection, September 18](../validation/2026-09-18-radio-inspection.md). Historical milestone wording inside those receipts is historical, not this review's current project status.
+Principal physical receipts: [GPU/audio/runtime-PM and failed suspend, September 18](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-18-gpu01/README.md), [connectivity scans, September 17](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-17-m5-connectivity10/README.md), [installed Reborn inspection, September 18](../validation/2026-09-18-radio-inspection.md). Historical milestone wording inside those receipts is historical, not this review's current project status.
 
 ## 5. Audio overview
 
@@ -242,7 +242,7 @@ Earlier 70-mA observations showed falling battery voltage under load; they do no
 
 ## 9. Current dependency stack
 
-These are **selected/built versions**, checked against transformed Buildroot recipes, actual build directories, generated configuration and installed ELF/library names. The source authorities are the [Buildroot lock](../../../Y2Linux/buildroot/inputs.lock.json), [package adapter](../../../Y2Linux/tools/production/modernize_buildroot.py), [FFmpeg adapter](../../../Y2Linux/tools/production/ffmpeg9.py) and [Rust toolchain](../../rust-toolchain.toml). Upstream release freshness was not re-audited here.
+These are **selected/built versions**, checked against transformed Buildroot recipes, actual build directories, generated configuration and installed ELF/library names. The source authorities are the [Buildroot lock](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/inputs.lock.json), [package adapter](https://github.com/SchulzCode/Y2Linux/blob/main/tools/production/modernize_buildroot.py), [FFmpeg adapter](https://github.com/SchulzCode/Y2Linux/blob/main/tools/production/ffmpeg9.py) and [Rust toolchain](../../rust-toolchain.toml). Upstream release freshness was not re-audited here.
 
 | Component | Current version | Held/upgraded rationale and expected work |
 |---|---|---|

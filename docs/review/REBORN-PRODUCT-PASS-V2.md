@@ -4,12 +4,12 @@
 > **Scoped record, 2026-10-01.** Software pass on the CPU Final Fix03 base
 > (Linux `76a5d41`/`aef3ab8`, Reborn `77cf83e`). Built and validated, not
 > flashed or physically qualified. Exact candidate identity and hashes are
-> in the [Y2Linux receipt](../../../Y2Linux/docs/validation/Y2-REBORN-PRODUCT-UI-V2.md).
+> in the [Y2Linux receipt](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-REBORN-PRODUCT-UI-V2.md).
 
 Design: [Product UI v2](../ui/REBORN-PRODUCT-UI-V2.md) ·
 [navigation](../ui/REBORN-PRODUCT-NAVIGATION-V2.md) ·
 [platform boundary](../architecture/platform-api-boundary.md) ·
-[previews](../ui/previews/v2/contact-sheet.png).
+previews (v2, since replaced by the [v3 previews](../ui/previews/v3/)).
 
 ## 1. Product simplification
 

@@ -31,7 +31,7 @@ MT6582 Boot ROM
 
 `Y2ROOT` reuses stock ANDROID; `Y2DATA` reuses USRDATA. The tested addressing contract distinguishes scatter coordinates from native eMMC coordinates. Linux's Y2-specific stock-logical translation is essential; it is not generic eMMC behavior. Preloader/LK/partition tables/NVRAM/calibration are not update targets. `Y2DATA.img` is an initialization seed, not an update payload. A/B slots and automatic rollback are not implemented.
 
-Evidence: [production init](../../../../Y2Linux/initramfs/production/init), [layout](../../../../Y2Linux/tools/production/layout.py), [package](../../../../Y2Linux/tools/production/package.py), [storage translation patch](../../../../Y2Linux/kernel/patches/0023-y2-stock-emmc-capacity.patch), [data startup](../../../../Y2Linux/buildroot/board/y2/production-overlay/etc/init.d/S02y2-data).
+Evidence: [production init](https://github.com/SchulzCode/Y2Linux/blob/main/initramfs/production/init), [layout](https://github.com/SchulzCode/Y2Linux/blob/main/tools/production/layout.py), [package](https://github.com/SchulzCode/Y2Linux/blob/main/tools/production/package.py), [storage translation patch](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/patches/0023-y2-stock-emmc-capacity.patch), [data startup](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/etc/init.d/S02y2-data).
 
 ## Hardware ownership map
 
@@ -54,7 +54,7 @@ Linux 6.18 + canonical Y2 DT + hashed patch/overlay manifest
        `-- standard HCI -> BlueZ
 ```
 
-Canonical files: [DT](../../../../Y2Linux/kernel/dts/innioasis-y2.dts), [platform drivers](../../../../Y2Linux/kernel/platform), [audio drivers](../../../../Y2Linux/kernel/audio), [patch manifest](../../../../Y2Linux/kernel/patches/manifest.json). The production DTS includes the common DTS; there is not an independent second hardware design. Low-level register constants often originate in vendor/donor evidence; their named policy wrappers improve reviewability but do not independently validate electrical assumptions.
+Canonical files: [DT](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/dts/innioasis-y2.dts), [platform drivers](https://github.com/SchulzCode/Y2Linux/tree/main/kernel/platform), [audio drivers](https://github.com/SchulzCode/Y2Linux/tree/main/kernel/audio), [patch manifest](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/patches/manifest.json). The production DTS includes the common DTS; there is not an independent second hardware design. Low-level register constants often originate in vendor/donor evidence; their named policy wrappers improve reviewability but do not independently validate electrical assumptions.
 
 Memory intent is 0x3e000000 bytes in DT (992 MiB), minus reserved regions, kernel and other allocations—not a freely available 1 GiB heap. The historical LK gap is reserved, as is connectivity-owned high memory. HIGHMEM, a 3G/1G split, 100-Hz tick and NO_HZ_IDLE are configured; CMA is disabled. The audit does not propose changing these boundaries.
 
@@ -89,7 +89,7 @@ BusyBox init
 /media/sd: explicit y2-media-managed removable music source
 ```
 
-Evidence: [Reborn packaging and services](../../../../Y2Linux/buildroot/package/reborn), [connectivity service](../../../../Y2Linux/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity), [SSH configuration](../../../../Y2Linux/buildroot/board/y2/overlay/etc/default/dropbear), [media mount helper](../../../../Y2Linux/buildroot/board/y2/production-overlay/usr/sbin/y2-media).
+Evidence: [Reborn packaging and services](https://github.com/SchulzCode/Y2Linux/tree/main/buildroot/package/reborn), [connectivity service](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity), [SSH configuration](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/overlay/etc/default/dropbear), [media mount helper](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/usr/sbin/y2-media).
 
 Reborn starts before optional radios; workers must tolerate unavailable providers. Screen blanking is not deep suspend. `y2-suspend` independently enforces activity/radio policy; playback/radio activity leases prevent inappropriate suspend. There is no evidence that merely sleeping the UI implements a complete battery standby policy.
 

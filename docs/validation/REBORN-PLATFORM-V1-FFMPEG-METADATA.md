@@ -14,8 +14,8 @@ Existing Luca author/committer identity was reused without changing Git settings
 [Compact measured evidence](evidence/platform-v1-ffmpeg-metadata.json) preserves
 samples, phases, RSS, component versions and fixture hashes. Raw local receipts
 are in ignored `out/media-pass/`. Admission and database-extension audits are in
-the paired [roadmap audit](../../../Y2Linux/docs/planning/roadmap-gap-audit.md).
-Retained [UART01](../../../Y2Linux/docs/validation/Y2-CPU-C3-UART-PHYSICAL.md)
+the paired [roadmap audit](https://github.com/SchulzCode/Y2Linux/blob/main/docs/planning/roadmap-gap-audit.md).
+Retained [UART01](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-C3-UART-PHYSICAL.md)
 hardware evidence identifies Linux `e9e8d63`, Reborn `b71b4688`, boot
 `fd955840-35d9-47db-83e0-ff47d6bb2d2b`, taint 0. It proves bounded installed
 playback/storage/CPU behavior, not this candidate's library throughput. The

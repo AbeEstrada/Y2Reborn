@@ -2,7 +2,7 @@
 
 **Historical software candidate.** The pair below remains exact for that build,
 not the Fix01 image. [Current Reborn state](../CURRENT_REBORN_STATE.md) and the
-[Fix01 physical report](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
+[Fix01 physical report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
 now show all eight real workload producers and bounded wired playback, while the
 paired CPU platform fails deeper idle, high-OPP and suspend acceptance.
 
@@ -122,8 +122,8 @@ semantic Actions and bounded workers remain. Optional codec preferences UI,
 target library/performance budgets and physical validation remain follow-up
 application/owner work; unsupported platform features must stay explicit.
 
-See Y2Linux's [completion ledger](../../../Y2Linux/docs/validation/PLATFORM-V1-COMPLETION.md)
-and [owner qualification sessions](../../../Y2Linux/docs/validation/PLATFORM-V1-OWNER-QUALIFICATION.md)
+See Y2Linux's [completion ledger](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/PLATFORM-V1-COMPLETION.md)
+and [owner qualification sessions](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/PLATFORM-V1-OWNER-QUALIFICATION.md)
 for separate software, ARM/image and physical/endurance evidence. Return general
 application development here after the owner qualifies the advertised core;
 do not reopen gated hardware scope as incidental application work.

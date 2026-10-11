@@ -23,8 +23,8 @@ gated Auto control, while normal radio launch keeps optional endpoints disabled.
 This supersedes the audit's "no source/binary integration" statement **only for
 the later candidate**. Fix01 physically demonstrates a bounded CONSYS retry,
 not peer codec audio. [Current application state](../CURRENT_REBORN_STATE.md),
-[current platform contract](../../../Y2Linux/docs/architecture/platform-bluetooth-v1.md),
-and [later codec source work](../../../Y2Linux/docs/validation/Y2-HARDWARE-FINAL-RADIO-AUDIO.md)
+[current platform contract](https://github.com/SchulzCode/Y2Linux/blob/main/docs/architecture/platform-bluetooth-v1.md),
+and [later codec source work](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-HARDWARE-FINAL-RADIO-AUDIO.md)
 separate those scopes. The recommendation below is not implementation authority.
 
 Date: 2026-09-22. Scope: Y2Linux and Y2Reborn as one product.
@@ -115,13 +115,13 @@ Five findings determine the next work:
 | Controller quirk | Exact chip/HVR/FVR guard applies `HCI_QUIRK_BROKEN_LOCAL_EXT_FEATURES_PAGE_2`. It does **not** mask EDR/LE capabilities or force Basic Rate |
 | Sustainable throughput | UNKNOWN. Advertising 3 Mbps is not 3 Mbps of usable A2DP payload, and says nothing about losses with Wi-Fi traffic |
 
-Sources: [HCI driver](../../../Y2Linux/kernel/platform/connectivity/hci.c),
-[core](../../../Y2Linux/kernel/platform/connectivity/core.c),
-[BTIF](../../../Y2Linux/kernel/platform/connectivity/btif.c),
-[STP](../../../Y2Linux/kernel/platform/connectivity/stp.c),
-[bounded protocol](../../../Y2Linux/kernel/platform/connectivity/protocol.h),
-[own controller summary](../../../Y2Linux/docs/hardware-evidence/2026-09-17-m5-connectivity08/adapter-result.json),
-[durable quirk validation](../../../Y2Linux/docs/hardware-evidence/2026-09-17-m5-connectivity09/adapter-result.json).
+Sources: [HCI driver](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/hci.c),
+[core](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/core.c),
+[BTIF](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/btif.c),
+[STP](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/stp.c),
+[bounded protocol](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/protocol.h),
+[own controller summary](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-17-m5-connectivity08/adapter-result.json),
+[durable quirk validation](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-17-m5-connectivity09/adapter-result.json).
 Sanitized raw-response fields and their exact private-source line locations are
 in the companion evidence document; no addresses, keys or calibration are copied.
 
@@ -131,8 +131,8 @@ The checked firmware set includes `mt6572_82_patch_e1_0_hdr.bin`,
 `mt6572_82_patch_e1_1_hdr.bin`, `WMT_SOC.cfg`, Wi-Fi's `WIFI_RAM_CODE_MT6582`,
 and `modem_1_2g_n.img` for cold RF calibration. This is a shared bootstrap,
 not five Bluetooth codecs or an Android audio-offload engine.
-[Firmware checks](../../../Y2Linux/kernel/platform/connectivity/firmware.c) and
-[inventory](../../../Y2Linux/docs/knowledge/evidence/m5-firmware-inventory.json)
+[Firmware checks](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/connectivity/firmware.c) and
+[inventory](https://github.com/SchulzCode/Y2Linux/blob/main/docs/knowledge/evidence/m5-firmware-inventory.json)
 identify exact owner-supplied files; every relevant redistribution permission is
 still recorded as unestablished. Preserve private calibration and existing
 firmware validation; never transplant another unit's records.
@@ -172,9 +172,9 @@ Historical donor Basic Rate workarounds are not this unit's qualified policy.
 | A2DP codec enabled | SBC; default `sbc_quality = SBC_QUALITY_HIGH` |
 | Disabled optional codecs | AAC, aptX, aptX HD, LDAC, FastStream, LC3plus, Opus, MPEG/MP3; mSBC/LC3-SWB also not enabled |
 
-Evidence: [production defconfig](../../../Y2Linux/buildroot/configs/y2_production_defconfig),
-[input lock](../../../Y2Linux/buildroot/inputs.lock.json),
-[service](../../../Y2Linux/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity).
+Evidence: [production defconfig](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/configs/y2_production_defconfig),
+[input lock](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/inputs.lock.json),
+[service](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/usr/libexec/y2/connectivity).
 The companion ledger identifies the ignored retained build tree and exact
 generated files. Its ARM executable links `libsbc.so.1` and no optional codec
 library; configuration/source inspection also excludes static optional codecs.
@@ -766,7 +766,7 @@ today's nonexistent Auto implementation; test vectors are in the companion file.
 
 ### Connection retry and audio recovery must not fight
 
-[Y2 reconnect helper](../../../Y2Linux/tools/connectivity/reconnect.c) is already
+[Y2 reconnect helper](https://github.com/SchulzCode/Y2Linux/blob/main/tools/connectivity/reconnect.c) is already
 the preferred-device connection owner; BlueZ built-in reconnect is disabled.
 It makes bounded-rate requests but can keep trying once per minute indefinitely.
 Do not add another independent Device1.Connect loop inside CodecPolicy.

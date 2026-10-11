@@ -1,40 +1,40 @@
-# Reborn
+# Y2Reborn
 
-Native Rust/FFmpeg music player for the Innioasis Y2 on
-[Y2Linux](https://github.com/SchulzCode/Y2Linux). Both repositories' `main`
-branches carry the latest published development source and documentation.
+The native music player for the **Innioasis Y2** running
+[Y2Linux](https://github.com/SchulzCode/Y2Linux). It is written in Rust, decodes
+with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
+through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-**Latest physically observed application:** Reborn
-`36db1869c6bab1ad2d00b7d8e7807ea6ef5b3803` paired with Y2Linux
-`0de6e951b438bf0f2d701e23e476d2b2405ba3c6`, kernel
-`6.18.0-y2linux-cpu-final-fix01`, root `2025.02.18-platform-v1.7`.
-The 2026-09-27 CPU Final Fix01 run confirms real Idle, PlaybackNormal,
-PlaybackHeavy, Interactive, ArtworkDecode, LibraryScan, NetworkTransfer and
-Maintenance leases. Bounded S16 44.1 and 24/96 -> 48 wired fixtures have zero
-XRUN/decode/filter errors. Real input boost and immediate screen-off release work.
-This is not a full player/audio/endurance acceptance. The paired platform still
-fails SLIDLE, high-OPP admission, staged recovery and loaded USB reliability.
+> **Status: 0.3.0, part of Y2Linux Baseline 13 (2026-10-11), developer preview.**
+> Git tag `baseline-13` in both repositories. Reborn has no installer of its own.
+> It is built into the Y2Linux image. To run it on a Y2, follow Y2Linux's
+> [BUILDING](https://github.com/SchulzCode/Y2Linux/blob/main/docs/BUILDING.md) and
+> [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guides.
 
-Start with [current Reborn state](docs/CURRENT_REBORN_STATE.md), the
-[physical report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md),
-and [documentation index](docs/README.md). Earlier Platform v1, Luna and UI
-candidate reports retain their original software/evidence scope.
+## What it does
 
-Reborn owns UI state, one SQLite library writer, FFmpeg decode/DSP, ALSA/BlueALSA
-sink lifetime and semantic workload leases. The kernel/schedutil retains CPU
-frequency authority. The production media path uses FFmpeg **9.0.2**; preferred
-wired output is S16 stereo at enabled 44.1/48 kHz. High-rate sources may be
-decoded and converted; native wide/high-rate Y2 output remains gated.
-Crossfade-configured playback produces a heavy lease, but an actual end-of-track
-blend and independent EQ run were not physically qualified by Fix01.
+- Library of artists, albums and songs from the internal music storage and the SD card,
+  with cover art (thumbnails cached in `/data/reborn/cache`).
+- Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
+  Bluetooth playback with SBC.
+- Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
+  settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
+  connection and copying, Bluetooth pairing, update download and low battery.
+- Works with the platform: sleep/wake preparation, workload hints to the CPU governor,
+  `rebornctl` and a control socket at `/run/reborn/control.sock`.
 
-Normal Bluetooth endpoints remain SBC-only. Private optional encoder sources
-can be compiled, but AAC/aptX/aptX-HD/LDAC and Auto selection remain under
-runtime, peer, distribution and physical gates. Fix01 confirmed an isolated
-CONSYS retry and controller service, not peer playback after full resume.
+Known limits (details in [current state](docs/CURRENT_REBORN_STATE.md)): native
+high-rate output is gated, and only SBC is enabled for Bluetooth. Crossfade and EQ
+have not been checked on hardware.
 
-For host development use Rust **1.90.0**, matching native libraries and pinned
-`Cargo.lock`/`vendor/`:
+## Development
+
+Use Rust **1.90.0**. `rust-toolchain.toml` pins it together with the
+`armv7-unknown-linux-gnueabihf` target. All crates are vendored in `vendor/`,
+so builds work offline. Host builds link the system's development libraries
+through `pkg-config`: FFmpeg (`libavformat`, `libavcodec`, `libavutil`,
+`libavfilter`, `libswresample`, `libswscale`), ALSA, D-Bus, SQLite, libdrm, GBM,
+EGL and GLES v2.
 
 ```sh
 cargo fmt --all -- --check
@@ -42,8 +42,30 @@ cargo test --workspace --locked --offline
 cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 ```
 
-An ARM release needs the paired Buildroot SDK and the recorded image/source
-pair; see [source reconstruction](https://github.com/SchulzCode/Y2Linux/blob/main/docs/build/platform-v1-reconstruction.md).
-The player uses `/data/reborn`, `/data/music` and `/run/reborn/control.sock`.
-Host/headless tests do not establish physical Y2 rendering, audio quality or
-recovery. No firmware, keys, bonds or private evidence belong in this repo.
+UI previews render the production drawing code on the host
+(`tools/preview/render_previews.py`, output in `docs/ui/previews/v3/`).
+
+The ARM binary is built only through Y2Linux's Buildroot, which provides the
+cross toolchain, sysroot, FFmpeg, SQLite, ALSA, D-Bus and Mesa. Check out this
+repository **next to** Y2Linux (`../Y2Reborn`). `tools/build/cross.sh` is
+what the Buildroot recipe calls. Host tests don't prove anything about the real Y2:
+display, audio and power behaviour need the device.
+
+| Path | Contents |
+| --- | --- |
+| `app/reborn` | The player binary, `rebornctl` and `reborn-bench` |
+| `crates/` | `reborn-core` (state), `reborn-ui`, `reborn-graphics`, `reborn-audio`, `reborn-media` (FFmpeg membrane), `reborn-library` (SQLite), `reborn-platform` (Y2Linux API), `reborn-control`, `reborn-observability` |
+| `assets/` | Fonts, UI art and media test fixtures |
+| `tools/` | Cross build, previews, asset generation, qualification helpers |
+| `vendor/` | Vendored, checksummed crate sources |
+| `docs/` | Documentation; start at [docs/README.md](docs/README.md) |
+
+On the device the player uses `/data/reborn` for its state, plays music from
+`/media/internal/music` (or `/data/music` before the internal music partition is
+set up) and `/media/sd`.
+
+## Licence
+
+MIT (see [LICENSE](LICENSE)). The Open Sans glyph data is under the SIL Open Font
+Licence (`assets/fonts/OpenSans-OFL.txt`). No firmware, keys, Bluetooth bonds or
+private device data belong in this repository.

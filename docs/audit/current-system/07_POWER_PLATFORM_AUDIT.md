@@ -9,7 +9,7 @@
 
 **Unattended charging and current integrated suspend safety are UNKNOWN.** This is not a claim that the device has been proven unsafe; it is a refusal to infer electrical/cell safety from a policy simulator, a voltage reading or an older owner acceptance. Do not change charging thresholds, rail voltages or memory reservations on the basis of this audit.
 
-Sources: [charger policy](../../../../Y2Linux/kernel/platform/charger-policy.h), [charger driver](../../../../Y2Linux/kernel/platform/mt6323-charger.c), [source policy](../../../../Y2Linux/kernel/platform/source-policy.h), [USB PHY](../../../../Y2Linux/kernel/platform/phy-mt6582.c), [thermal](../../../../Y2Linux/kernel/platform/thermal.c), [SPM](../../../../Y2Linux/kernel/platform/spm.c), [DT](../../../../Y2Linux/kernel/dts/innioasis-y2.dts), [offline charging](../../../../Y2Linux/tools/production/offline-charge.c), [suspend helper](../../../../Y2Linux/buildroot/board/y2/production-overlay/usr/sbin/y2-suspend).
+Sources: [charger policy](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/charger-policy.h), [charger driver](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/mt6323-charger.c), [source policy](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/source-policy.h), [USB PHY](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/phy-mt6582.c), [thermal](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/thermal.c), [SPM](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/platform/spm.c), [DT](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/dts/innioasis-y2.dts), [offline charging](https://github.com/SchulzCode/Y2Linux/blob/main/tools/production/offline-charge.c), [suspend helper](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/usr/sbin/y2-suspend).
 
 ## Charging/source ownership: F16
 
@@ -36,7 +36,7 @@ Completion is not absent: policy stops at target and uses multiple spaced engine
 
 ### Physical evidence must be version-specific
 
-[70-mA baseline result](../../../../Y2Linux/docs/hardware-evidence/2026-09-14-m4-70ma-baseline/result.json) explicitly reports failure of useful sustained charge gain: same-boot endpoints fell ~39.990 mV over ~1015.808 s; subsequent observation was after charging had already been inhibited. It explicitly does not claim calibrated current/energy. This is valuable adverse evidence, not a passed charge test.
+[70-mA baseline result](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-14-m4-70ma-baseline/result.json) explicitly reports failure of useful sustained charge gain: same-boot endpoints fell ~39.990 mV over ~1015.808 s; subsequent observation was after charging had already been inhibited. It explicitly does not claim calibrated current/energy. This is valuable adverse evidence, not a passed charge test.
 
 `out/m4-owner-acceptance.md` records owner acceptance of POWER-03/source `16875c4...`, not a newly measured charging/thermal/SPM series. Later commit `3dc0a8b` changes deep-recovery current policy to 450 mA. Neither the older 70-mA observation nor the earlier generic acceptance qualifies that new behavior. A current policy-to-image-to-measurement receipt is needed before broader public or unattended use.
 
@@ -54,7 +54,7 @@ The MFG generic power domain, G3D gate and Lima ownership are cleanly separated.
 
 `y2-suspend` takes an exclusive activity lease, temporarily quiesces radios, checks shared connectivity state and attempts memory suspend with restoration logic. Audio and radio shared leases inhibit it. This is a sensible first policy for a player; do not bypass those checks to make a suspend test pass.
 
-Physical [GPU01 suspend evidence](../../../../Y2Linux/docs/hardware-evidence/2026-09-18-gpu01/README.md) records a failed real attempt and a staged CPU3 shutdown timeout. Status changed at bit 9 while code waited for bit 13; CPU restart was correctly refused after the ambiguous transition. A later source correction addresses the observed mismatch, but the retained record leaves same-boot suspend/resume qualification open. **PARTIAL / HIGH.** “M4 accepted” cannot erase a subsequently observed integrated failure.
+Physical [GPU01 suspend evidence](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-18-gpu01/README.md) records a failed real attempt and a staged CPU3 shutdown timeout. Status changed at bit 9 while code waited for bit 13; CPU restart was correctly refused after the ambiguous transition. A later source correction addresses the observed mismatch, but the retained record leaves same-boot suspend/resume qualification open. **PARTIAL / HIGH.** “M4 accepted” cannot erase a subsequently observed integrated failure.
 
 Required evidence for offered deep sleep: bounded CPU-off/on before full entry; same boot ID after Power/RTC wake; balanced PMIC IRQ/clock state; eMMC persistence; display/Lima reopen; audio and radio service restoration; repeated cycles and suspend refusal during active playback. Do not describe suspend-during-playback as seamless if the intended policy is to refuse it. Both successful refusal and subsequent idle suspend are meaningful tests.
 

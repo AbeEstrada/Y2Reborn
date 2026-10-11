@@ -9,7 +9,7 @@
 
 The shared FFmpeg architecture is the right foundation. Current wired production output is **S16_LE, stereo, 44.1 kHz**. High-resolution source decoding exists; a genuine 24/32-bit wired output path does not. Ordinary playback controls, queue mutation, native allocation lifetime and crossfade delivery have release-relevant defects. Two-file FLAC gapless has meaningful host evidence, but sample-accurate general playback is not established.
 
-Evidence is anchored in [media.c](../../../crates/reborn-media/native/media.c), [media Rust wrapper](../../../crates/reborn-media/src/native.rs), [playback worker](../../../app/reborn/src/playback.rs), [runtime](../../../app/reborn/src/main.rs), [ALSA C boundary](../../../crates/reborn-audio/native/audio.c), [ALSA Rust boundary](../../../crates/reborn-audio/src/native.rs), [AFE](../../../../Y2Linux/kernel/audio/mt6582-afe.c), [card](../../../../Y2Linux/kernel/audio/y2-cs43131.c), and the [qualification profile](../../../../Y2Linux/buildroot/board/y2/production-overlay/etc/y2linux/audio-qualified.json).
+Evidence is anchored in [media.c](../../../crates/reborn-media/native/media.c), [media Rust wrapper](../../../crates/reborn-media/src/native.rs), [playback worker](../../../app/reborn/src/playback.rs), [runtime](../../../app/reborn/src/main.rs), [ALSA C boundary](../../../crates/reborn-audio/native/audio.c), [ALSA Rust boundary](../../../crates/reborn-audio/src/native.rs), [AFE](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/audio/mt6582-afe.c), [card](https://github.com/SchulzCode/Y2Linux/blob/main/kernel/audio/y2-cs43131.c), and the [qualification profile](https://github.com/SchulzCode/Y2Linux/blob/main/buildroot/board/y2/production-overlay/etc/y2linux/audio-qualified.json).
 
 ## 1. Actual FFmpeg version and compiled surface
 
@@ -68,7 +68,7 @@ ALSA planning prefers S32, but wired profile checks allow only S16/44100. Runtim
 
 The sink configures a 512-frame period, 4096-frame buffer, and nonblocking writes; recovery handles underrun/suspend error returns. A shared activity lock prevents deep suspend while the sink owns audio. Hardware Master volume is set to -24 dB and headphone output enabled; prior mixer values are restored on close. Software volume/RG occur before ALSA. There is no demonstrated click-free gain ramp for repeated sink teardown/reopen.
 
-**Physical evidence:** [GPU01 audio capture](../../../../Y2Linux/docs/hardware-evidence/2026-09-18-gpu01/audio.txt) and owner observations record clean two-channel S16/44100 tones without observed XRUNs/clicks, using aplay with period 1024/buffer 8192. This is valuable hardware baseline evidence, **not** qualification of current Reborn's different buffering, seek/volume transitions, mixed-rate queue, decoder or long-session behavior.
+**Physical evidence:** [GPU01 audio capture](https://github.com/SchulzCode/Y2Linux/blob/main/docs/hardware-evidence/2026-09-18-gpu01/audio.txt) and owner observations record clean two-channel S16/44100 tones without observed XRUNs/clicks, using aplay with period 1024/buffer 8192. This is valuable hardware baseline evidence, **not** qualification of current Reborn's different buffering, seek/volume transitions, mixed-rate queue, decoder or long-session behavior.
 
 ## 3. Exact current precision trace: F10
 

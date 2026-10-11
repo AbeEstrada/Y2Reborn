@@ -166,6 +166,6 @@ Now Playing changes volume by a fixed step. See
 
 ## Previews
 
-The 480×360 previews of every state are in
-[previews/v2](previews/v2/contact-sheet.png), rendered from the production
+The 480×360 previews of every state were in `previews/v2/` (replaced by the
+[v3 previews](previews/v3/) in Reborn 0.3.0), rendered from the production
 UI code by `reborn-preview` and `tools/preview/render_previews.py`.

@@ -6,7 +6,7 @@ Start with the current-state page; a historical
 report records its own build/session, not the presently installed image.
 Raw hardware and build evidence is preserved unchanged. The catalogs
 document links, rather than relocating or deleting proof. See the
-[shared knowledge rules](../../Y2Linux/docs/KNOWLEDGE_BASE.md)
+[shared knowledge rules](https://github.com/SchulzCode/Y2Linux/blob/main/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
 Indexed pages: **63**. Explicit historical/contract scope notices:
@@ -45,6 +45,7 @@ Indexed pages: **59**. Explicit historical/contract scope notices:
 | [Platform v1 application integration](validation/PLATFORM-V1-INTEGRATION.md) | Scoped validation record |
 | [Platform 1.0 FFmpeg, metadata and library ingest](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) | Scoped validation record |
 | [Reborn Platform 1.0 performance and responsiveness](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) | Scoped validation record |
+| [Physical Y2 wired precision completion](validation/REBORN-Y2-WIRED-PRECISION-COMPLETION.md) | Scoped validation record |
 | [REBORN-BASELINE-01 — first implementation handoff](validation/REBORN-BASELINE-01.md) | Scoped validation record |
 | [REBORN-RADIO-UI-01 — scan feedback correction](validation/REBORN-RADIO-UI-01.md) | Scoped validation record |
 | [REBORN-SPLASH-01](validation/REBORN-SPLASH-01.md) | Scoped validation record |
@@ -119,7 +120,5 @@ Indexed pages: **59**. Explicit historical/contract scope notices:
 | Page | Scope |
 | --- | --- |
 | [Platform 1.0 input ownership](architecture/platform-v1-input.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
-| [Reborn Platform 1.0: FFmpeg, metadata and library ingest](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
 | [Platform 1.0 paired integration](validation/REBORN-PLATFORM-V1-INTEGRATION.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
 | [Reborn Platform 1.0 library/database performance pass](validation/REBORN-PLATFORM-V1-LIBRARY-DB.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |
-| [Reborn Platform 1.0 performance and responsiveness](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) | Source-bound owner handoff or current master plan; physical scope remains explicit |

@@ -456,7 +456,7 @@ samples are checked in alongside the host results.
 
 ## Hardware boundary and remaining limitations
 
-Entry audit used retained real [UART01 evidence](../../../Y2Linux/docs/validation/Y2-CPU-C3-UART-PHYSICAL.md).
+Entry audit used retained real [UART01 evidence](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-CPU-C3-UART-PHYSICAL.md).
 The closing audit/roadmap now use the installed Baseline02 identity above and
 actual private Y2 measurements. This supersedes the earlier database NOT_RUN
 label only. It does not supersede UART01 CPU/suspend authority or qualify a

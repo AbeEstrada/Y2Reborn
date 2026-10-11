@@ -2,7 +2,7 @@
 
 <!-- knowledge-base-scope: source-contract -->
 > **Source-contract scope.** Ownership in the Reborn 0.2.0 source. The
-> platform side is [Platform API v1](../../../Y2Linux/docs/architecture/platform-api-v1.md).
+> platform side is [Platform API v1](https://github.com/SchulzCode/Y2Linux/blob/main/docs/architecture/platform-api-v1.md).
 
 ```
 reborn-ui (pages, diagnostics, screens)   ← typed models only, no I/O
