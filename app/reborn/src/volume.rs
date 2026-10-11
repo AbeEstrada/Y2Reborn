@@ -90,8 +90,10 @@ mod tests {
         sample.to_le_bytes().repeat(frames * 2)
     }
     fn values(data: &[u8]) -> Vec<i16> {
-        data.chunks_exact(2)
-            .map(|s| i16::from_le_bytes(s.try_into().unwrap()))
+        data.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|s| i16::from_le_bytes(*s))
             .collect()
     }
     #[test]
@@ -99,7 +101,7 @@ mod tests {
         let mut ramp = VolumeRamp::new(100, 48_000);
         ramp.target(0);
         let data = values(&ramp.render(&stereo16(24_000, 480), PcmFormat::S16LE));
-        for (i, pair) in data.chunks_exact(2).enumerate() {
+        for (i, pair) in data.as_chunks::<2>().0.iter().enumerate() {
             assert_eq!(pair[0], pair[1]);
             assert_eq!(pair[0], (24_000 - 100 * (i as i32 + 1)).max(0) as i16);
         }
@@ -144,8 +146,10 @@ mod tests {
             assert_eq!(VolumeRamp::new(100, 44_100).render(&input, format), input);
             let scaled = VolumeRamp::new(50, 44_100).render(&input, format);
             let samples = scaled
-                .chunks_exact(4)
-                .map(|s| i32::from_le_bytes(s.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|s| i32::from_le_bytes(*s))
                 .collect::<Vec<_>>();
             assert_eq!(samples, [18_641, -18_641]);
         }

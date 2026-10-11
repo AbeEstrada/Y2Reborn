@@ -10,8 +10,14 @@ extern "C" fn signal_handler(_: i32) {
 pub fn install_signals() {
     // SAFETY: signal handler performs only a lock-free atomic store and has static lifetime.
     unsafe {
-        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
+        libc::signal(
+            libc::SIGTERM,
+            signal_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            signal_handler as *const () as libc::sighandler_t,
+        );
     }
 }
 pub fn stop_requested() -> bool {

@@ -12,7 +12,7 @@ pub fn accent_from_rgba(pixels: &[u8]) -> u32 {
     const BUCKETS: usize = 12;
     let mut weight = [0f32; BUCKETS];
     let mut sum = [[0f32; 3]; BUCKETS];
-    for px in pixels.chunks_exact(4).step_by(3) {
+    for px in pixels.as_chunks::<4>().0.iter().step_by(3) {
         if px[3] < 128 {
             continue;
         }

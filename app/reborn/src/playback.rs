@@ -1192,7 +1192,7 @@ impl Playback {
                                 generation: g,
                                 mut block,
                             }) => {
-                                ab.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                                ab.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                                     Some(v.saturating_sub(block.frames))
                                 })
                                 .ok();
@@ -1665,7 +1665,7 @@ mod tests {
             let n = (s.len() / 8).min(128);
             if let Some(samples) = &self.samples {
                 let mut samples = samples.lock().unwrap();
-                for frame in s.chunks_exact(8).take(n) {
+                for frame in s.as_chunks::<8>().0.iter().take(n) {
                     samples.push(i32::from_le_bytes(frame[..4].try_into().unwrap()));
                 }
             }
@@ -1855,7 +1855,7 @@ mod tests {
                 thread::sleep(Duration::from_millis(1));
             }
             let mut captured = self.captured.lock().unwrap();
-            captured.extend(data.chunks_exact(8).take(count).map(|frame| {
+            captured.extend(data.as_chunks::<8>().0.iter().take(count).map(|frame| {
                 let left = i32::from_le_bytes(frame[..4].try_into().unwrap());
                 let right = i32::from_le_bytes(frame[4..].try_into().unwrap());
                 assert_eq!(left, right);
@@ -2038,7 +2038,9 @@ mod tests {
     }
     fn indexed_samples(pcm: &Pcm) -> Vec<i32> {
         pcm.data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|frame| i32::from_le_bytes(frame[..4].try_into().unwrap()))
             .collect()
     }

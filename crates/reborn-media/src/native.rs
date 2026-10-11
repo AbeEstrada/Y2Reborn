@@ -915,8 +915,8 @@ mod tests {
                         output.extend_from_slice(&block.data);
                     }
                     assert_eq!(output.len(), values.len() * 4);
-                    for (sample, expected) in output.chunks_exact(4).zip(&values) {
-                        let word = i32::from_le_bytes(sample.try_into().unwrap());
+                    for (sample, expected) in output.as_chunks::<4>().0.iter().zip(&values) {
+                        let word = i32::from_le_bytes(*sample);
                         let signed24 = if format == PcmFormat::S32LE {
                             word >> 8
                         } else {
@@ -951,10 +951,10 @@ mod tests {
             .flat_map(|(word, _)| [*word, *word].into_iter().flat_map(i32::to_le_bytes))
             .collect();
         let output = convert_pcm(&input, 48_000, PcmFormat::S32LE, PcmFormat::S24LE).unwrap();
-        for (frame, (_, expected)) in output.chunks_exact(8).zip(cases) {
-            for sample in frame.chunks_exact(4) {
+        for (frame, (_, expected)) in output.as_chunks::<8>().0.iter().zip(cases) {
+            for sample in frame.as_chunks::<4>().0 {
                 assert_eq!(sample[3], 0);
-                let signed = (i32::from_le_bytes(sample.try_into().unwrap()) << 8) >> 8;
+                let signed = (i32::from_le_bytes(*sample) << 8) >> 8;
                 assert_eq!(signed, expected);
             }
         }
@@ -982,9 +982,9 @@ mod tests {
             .flat_map(|(word, _)| [*word, *word].into_iter().flat_map(i32::to_le_bytes))
             .collect();
         let output = convert_pcm(&input, 44_100, PcmFormat::S32LE, PcmFormat::S16LE).unwrap();
-        for (frame, (_, expected)) in output.chunks_exact(4).zip(cases) {
-            for sample in frame.chunks_exact(2) {
-                assert_eq!(i16::from_le_bytes(sample.try_into().unwrap()), expected);
+        for (frame, (_, expected)) in output.as_chunks::<4>().0.iter().zip(cases) {
+            for sample in frame.as_chunks::<2>().0 {
+                assert_eq!(i16::from_le_bytes(*sample), expected);
             }
         }
     }
@@ -1035,12 +1035,14 @@ mod tests {
                 output.extend_from_slice(&block.data);
             }
             let words: Vec<i32> = output
-                .chunks_exact(4)
-                .map(|p| i32::from_le_bytes(p.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| i32::from_le_bytes(*p))
                 .collect();
             assert_eq!(words.len(), values.len());
             assert_ne!(words, values);
-            for pair in words.chunks_exact(4) {
+            for pair in words.as_chunks::<4>().0 {
                 assert_eq!(pair[0], pair[2]);
                 assert_eq!(pair[1], pair[3]);
             }
@@ -1170,9 +1172,8 @@ mod tests {
         assert!(decoder.metadata.applied_gain_db < 0.0);
         let mut peak = 0i64;
         while let Some(block) = decoder.read().unwrap() {
-            for sample in block.data.chunks_exact(4) {
-                peak =
-                    peak.max(i32::from_le_bytes(sample.try_into().unwrap()).unsigned_abs() as i64);
+            for sample in block.data.as_chunks::<4>().0 {
+                peak = peak.max(i32::from_le_bytes(*sample).unsigned_abs() as i64);
             }
         }
         assert!(peak <= (i32::MAX as f64 * 0.981) as i64);
@@ -1255,8 +1256,10 @@ mod tests {
 
         let output = convert_pcm(&input, 48_000, PcmFormat::S24LE, PcmFormat::S32LE).unwrap();
         let samples = output
-            .chunks_exact(4)
-            .map(|word| i32::from_le_bytes(word.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| i32::from_le_bytes(*word))
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -1296,9 +1299,15 @@ mod tests {
 
         assert_eq!(output.len(), frames * PcmFormat::S24LE.bytes_per_frame());
         assert!(output
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|sample| sample[..3] != [0, 0, 0]));
-        assert!(output.chunks_exact(4).all(|sample| sample[3] == 0));
+        assert!(output
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|sample| sample[3] == 0));
     }
     #[test]
     fn decoded_fltp_to_s24_rounds_q31_and_keeps_exact_frame_count() {
@@ -1328,15 +1337,19 @@ mod tests {
         assert_eq!(s32.len() % PcmFormat::S32LE.bytes_per_frame(), 0);
         assert_eq!(s24.len() % PcmFormat::S24LE.bytes_per_frame(), 0);
         assert_eq!(s24.len(), s32.len());
-        assert!(s32.chunks_exact(4).any(|sample| sample != [0, 0, 0, 0]));
+        assert!(s32
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|sample| *sample != [0, 0, 0, 0]));
 
-        for (source, destination) in s32.chunks_exact(4).zip(s24.chunks_exact(4)) {
-            let q31 = i32::from_le_bytes(source.try_into().unwrap());
+        for (source, destination) in s32.as_chunks::<4>().0.iter().zip(s24.as_chunks::<4>().0) {
+            let q31 = i32::from_le_bytes(*source);
             let value = (f64::from(q31) / 256.0)
                 .round_ties_even()
                 .clamp(-8_388_608.0, 8_388_607.0) as i32;
             assert_eq!(
-                destination,
+                *destination,
                 [value as u8, (value >> 8) as u8, (value >> 16) as u8, 0]
             );
         }
@@ -1481,7 +1494,10 @@ mod artwork_tests {
             assert!(d.metadata.artwork, "{name}");
             let pixels = d.artwork().unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(pixels.len(), 160 * 160 * 4);
-            assert!(pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}");
+            assert!(
+                pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0),
+                "{name}"
+            );
             assert!(d.read().unwrap().is_some());
         }
     }
@@ -1497,7 +1513,10 @@ mod artwork_tests {
                 .join(name);
             let pixels = external_artwork(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(pixels.len(), 160 * 160 * 4);
-            assert!(pixels.chunks_exact(4).any(|p| p[3] != 0), "{name}");
+            assert!(
+                pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0),
+                "{name}"
+            );
         }
     }
     #[test]
@@ -1713,7 +1732,7 @@ mod metadata_tests {
         for name in ["metadata/large.jpg", "artwork-external.jpg"] {
             let pixels = external_artwork(&path(name)).unwrap();
             assert_eq!(pixels.len(), 160 * 160 * 4);
-            assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
+            assert!(pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
             assert!(pixels.iter().any(|&v| v > 0));
         }
     }

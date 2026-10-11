@@ -979,14 +979,13 @@ impl Runtime {
                 if self.model.queue.len().saturating_add(tracks.len()) > reborn_core::MAX_QUEUE {
                     return Err("queue is full".into());
                 }
-                let mut insert_at = if was_empty {
+                let start = if was_empty {
                     0
                 } else {
                     (self.model.queue_position + 1).min(self.model.queue.len())
                 };
-                for track in tracks {
+                for (insert_at, track) in (start..).zip(tracks) {
                     self.model.insert_queue_entry(insert_at, track)?;
-                    insert_at += 1;
                 }
                 self.model.queue_position = if was_empty {
                     0
@@ -1040,10 +1039,9 @@ impl Runtime {
                     return Err("queue is full".into());
                 }
                 let was_empty = self.model.queue.is_empty();
-                let mut insert_at = self.model.queue.len();
-                for track in tracks {
+                let start = self.model.queue.len();
+                for (insert_at, track) in (start..).zip(tracks) {
                     self.model.insert_queue_entry(insert_at, track)?;
-                    insert_at += 1;
                 }
                 if was_empty {
                     self.model.queue_position = 0;
