@@ -70,11 +70,13 @@ pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool
         c.icon(Icon::Back, 22., 18., 20., color::MUTED);
     }
     if !title.is_empty() {
+        // The clock sits left of the radios; long titles stop short of it.
+        let room = if ui.clock(m).is_some() { 180. } else { 250. };
         let mut shown = title.to_owned();
-        while shown.chars().count() > 1 && text::width_tracked(Face::S10, &shown, 1.7) > 250. {
+        while shown.chars().count() > 1 && text::width_tracked(Face::S10, &shown, 1.7) > room {
             shown.pop();
             shown = shown.trim_end().to_owned();
-            if text::width_tracked(Face::S10, &shown, 1.7) <= 250. {
+            if text::width_tracked(Face::S10, &shown, 1.7) <= room {
                 shown.push('…');
                 break;
             }
@@ -144,6 +146,17 @@ pub(crate) fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
             18.,
             16.,
             if connected { color::TEXT } else { color::DIM },
+        );
+        right -= 20.;
+    }
+    if let Some(time) = ui.clock(m) {
+        let w = text::width(Face::S10, &time);
+        c.text(
+            right - w - 2.,
+            18. + Face::S10.mid_offset(),
+            &time,
+            Face::S10,
+            tint,
         );
     }
 }

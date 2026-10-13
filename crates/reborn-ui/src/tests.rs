@@ -589,6 +589,42 @@ fn settings_switches_toggle_in_place() {
 }
 
 #[test]
+fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
+    let mut ui = radios();
+    // 2026-10-12 09:41 UTC.
+    ui.clock_fixed = Some(1_791_798_060);
+    let mut m = app(Screen::SettingsDisplay);
+    let row = |ui: &Ui, m: &AppModel| {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .find(|r| r.key == "time_zone")
+            .unwrap()
+    };
+    assert_eq!(row(&ui, &m).secondary, "UTC");
+    let draw = ui.draw(&m, &m.library.tracks, false);
+    assert!(drawn_text(&draw).contains("09:41"));
+
+    m.settings.time_zone = "Asia/Tokyo".into();
+    assert_eq!(row(&ui, &m).secondary, "Tokyo");
+    select_key(&mut ui, &mut m, "time_zone");
+    assert_eq!(m.screen, Screen::TimeZone);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let focused = &rows[m.navigation.focus];
+    assert_eq!(focused.key, "tz_set:Asia/Tokyo");
+    assert_eq!(focused.kind, RowKind::Check(true));
+    assert_eq!(focused.secondary, "Asia · UTC+9");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "tz_set:America/Chicago"),
+        Effect::SetTimeZone("America/Chicago".into())
+    );
+    m.settings.time_zone = "America/Chicago".into();
+    let draw = ui.draw(&m, &m.library.tracks, false);
+    assert!(drawn_text(&draw).contains("4:41"), "12-hour, daylight time");
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::SettingsDisplay);
+}
+
+#[test]
 fn sound_pickers_set_exact_values_and_show_the_current_one() {
     let mut ui = radios();
     let mut m = app(Screen::Crossfade);
