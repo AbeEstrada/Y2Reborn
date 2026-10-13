@@ -1842,22 +1842,30 @@ impl Runtime {
         }
     }
 }
+/// The shortest start-to-start gap between two frames. Presentation waits
+/// for the page flip, so while Cover Flow glides (or the cover flies) the
+/// panel's vblank (~63 Hz) paces the frames; the 12-ms floor only guards
+/// against a flip that returns early. Everything else stays at ~30 fps.
+fn frame_gap(gliding: bool) -> Duration {
+    if gliding {
+        Duration::from_millis(12)
+    } else {
+        Duration::from_millis(34)
+    }
+}
+
 /// Input readiness wakes immediately; the bounded timeout services asynchronous
 /// workers. Dirty frames use a start-to-start budget rather than adding the
-/// entire GPU/presentation cost to a fresh 34-ms delay. A running animation
-/// (Cover Flow's glide, the cover's flight) asks for the next frame at the
-/// panel's rate; presentation itself waits for the page flip.
+/// entire GPU/presentation cost to a fresh delay.
 fn main_loop_interval(
     screen_off: bool,
     dirty: bool,
-    animating: bool,
+    gliding: bool,
     playing: bool,
     since_frame: Duration,
 ) -> Duration {
-    if animating && !screen_off {
-        Duration::from_micros(16_667).saturating_sub(since_frame)
-    } else if dirty && !screen_off {
-        Duration::from_millis(34).saturating_sub(since_frame)
+    if (dirty || gliding) && !screen_off {
+        frame_gap(gliding).saturating_sub(since_frame)
     } else if playing {
         Duration::from_millis(50)
     } else if screen_off {
@@ -2692,6 +2700,11 @@ fn run() -> Result<(), String> {
         if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
             rt.dirty.mark_render();
         }
+        // A glide continues after the last wheel detent; keep the short
+        // interactive CPU lease alive until it rests.
+        if rt.ui.gliding() && !rt.model.screen_off {
+            rt.interaction_hints.interactive();
+        }
         if let Some(effect) = rt.ui.power_hold_complete() {
             if let Err(error) = rt.effect(effect) {
                 rt.fail("power", error);
@@ -3400,7 +3413,7 @@ fn run() -> Result<(), String> {
         }
         if rt.dirty.render
             && !rt.model.screen_off
-            && render_time.elapsed() >= Duration::from_millis(34)
+            && render_time.elapsed() >= frame_gap(rt.ui.gliding())
         {
             render_time = Instant::now();
             let frame_started = Instant::now();
@@ -3516,7 +3529,7 @@ fn run() -> Result<(), String> {
         let interval = main_loop_interval(
             rt.model.screen_off,
             rt.dirty.render,
-            rt.ui.animating(),
+            rt.ui.gliding(),
             matches!(
                 rt.model.playback,
                 PlaybackState::Playing | PlaybackState::Buffering
@@ -4193,16 +4206,18 @@ mod loop_interval_tests {
             main_loop_interval(false, true, false, false, Duration::from_millis(40)),
             Duration::ZERO
         );
-        // An animation keeps frames coming at the panel's rate, even with
-        // nothing marked dirty yet (Cover Flow measured ~10 fps without this).
+        // A glide keeps frames coming, even with nothing marked dirty yet
+        // (Cover Flow measured ~10 fps without this), and the page flip paces
+        // them rather than the calm 34-ms budget (27 fps measured on 24).
         assert_eq!(
             main_loop_interval(false, false, true, false, Duration::from_millis(6)),
-            Duration::from_micros(10_667)
+            Duration::from_millis(6)
         );
         assert_eq!(
-            main_loop_interval(false, false, true, true, Duration::ZERO),
-            Duration::from_micros(16_667)
+            main_loop_interval(false, true, true, true, Duration::from_millis(16)),
+            Duration::ZERO
         );
+        assert!(super::frame_gap(true) < Duration::from_micros(15_800));
         // Screen off never animates.
         assert_eq!(
             main_loop_interval(true, false, true, false, Duration::ZERO),

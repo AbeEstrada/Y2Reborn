@@ -51,6 +51,8 @@ pub fn focus_target_count(quads: &[Quad]) -> usize {
 
 /// Library size stamp and the artist, album and song counts for it.
 type CountsCache = Option<((usize, usize), [usize; 4])>;
+/// Library identity, album filter key and its detail line.
+type DetailCache = Option<((usize, usize), String, String)>;
 
 /// How a settings-style row presents its value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -263,6 +265,8 @@ pub struct Ui {
     pub collection_art: std::cell::Cell<Option<u64>>,
     /// The centre cover the last frame wants at full resolution.
     cover_request: std::cell::Cell<Option<(u64, usize)>>,
+    /// The last album detail line.
+    detail: RefCell<DetailCache>,
 }
 
 /// A dialog the player raises by itself.
@@ -365,6 +369,27 @@ impl Ui {
             || self.spinning
             || self.flow.borrow().moving()
             || self.transition_progress().is_some()
+    }
+
+    /// Motion that wants the panel's full frame rate: Cover Flow's glide and
+    /// the cover's flight. Spinners and fades stay at the calm rate.
+    pub fn gliding(&self) -> bool {
+        self.flow.borrow().moving() || self.transition_progress().is_some()
+    }
+
+    /// "9 songs · 38 min" for the album with filter `key`, computed once per
+    /// album and library rather than on every animation frame.
+    pub(crate) fn album_detail(&self, m: &AppModel, tracks: &[Track], key: &str) -> String {
+        let library = (tracks.as_ptr() as usize, tracks.len());
+        let mut detail = self.detail.borrow_mut();
+        if let Some((l, k, text)) = detail.as_ref() {
+            if *l == library && k == key {
+                return text.clone();
+            }
+        }
+        let text = views_library::album_detail(m, tracks, key);
+        *detail = Some((library, key.to_owned(), text.clone()));
+        text
     }
 
     /// Cover Flow's fractional centre for this frame, advanced in time.

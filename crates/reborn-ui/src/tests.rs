@@ -1717,3 +1717,31 @@ fn cover_flow_glides_opens_with_a_flight_and_asks_for_the_sharp_cover_at_rest() 
         .iter()
         .any(|q| q.tex == reborn_graphics::Tex::CollectionArt));
 }
+
+#[test]
+fn album_detail_shows_short_albums_in_seconds_and_follows_the_library() {
+    let ui = radios();
+    let m = app(Screen::Albums);
+    let mut tracks = library();
+    let key = album_filter(&tracks[0]);
+    assert_eq!(ui.album_detail(&m, &tracks, &key), "3 songs · 10 min");
+    for t in &mut tracks {
+        t.duration_ms = 14_000;
+    }
+    // A different library (a rescan) is never answered from the old line.
+    let short: Vec<Track> = tracks.clone();
+    assert_eq!(ui.album_detail(&m, &short, &key), "3 songs · 0:42");
+    assert_eq!(ui.album_detail(&m, &short[..1], &key), "1 song · 0:14");
+}
+
+#[test]
+fn only_cover_flow_motion_asks_for_the_panel_rate() {
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    assert!(!ui.gliding());
+    m.navigation.focus = 2;
+    ui.draw(&m, &tracks, false);
+    assert!(ui.gliding() && ui.animating());
+}

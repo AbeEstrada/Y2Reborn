@@ -8,7 +8,6 @@ use crate::{
     screens::screen_title,
     text::{self, Face},
     theme::{alpha, color, mix, HEIGHT, WIDTH},
-    views_library::album_detail,
     Ui,
 };
 use reborn_core::{AppModel, Track};
@@ -154,7 +153,7 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             c.text_center(
                 240.,
                 312. + Face::R11.mid_offset(),
-                &album_detail(m, tracks, &row.key),
+                &ui.album_detail(m, tracks, &row.key),
                 Face::R11,
                 accent,
             );

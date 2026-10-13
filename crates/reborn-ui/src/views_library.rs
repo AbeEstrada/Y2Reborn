@@ -338,7 +338,7 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             Face::R13,
             color::MUTED,
         );
-        let detail = album_detail(m, tracks, &row.key);
+        let detail = ui.album_detail(m, tracks, &row.key);
         c.text_center(
             240.,
             338. + Face::R11.mid_offset(),
@@ -349,17 +349,22 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
     }
 }
 
-/// "9 songs · 38 min" for the album with filter `key`.
+/// "9 songs · 38 min" for the album with filter `key`; an album shorter than
+/// a minute shows its length as "0:42" rather than "0 min".
 pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String {
     let _ = m;
-    let members: Vec<&Track> = tracks
+    let (songs, ms) = tracks
         .iter()
         .filter(|t| crate::track_matches(t, key))
-        .collect();
-    let minutes = members.iter().map(|t| t.duration_ms).sum::<u64>() / 60_000;
-    match members.len() {
-        1 => format!("1 song · {minutes} min"),
-        n => format!("{n} songs · {minutes} min"),
+        .fold((0, 0u64), |(n, ms), t| (n + 1, ms + t.duration_ms));
+    let length = if ms < 60_000 {
+        components::time(ms)
+    } else {
+        format!("{} min", ms / 60_000)
+    };
+    match songs {
+        1 => format!("1 song · {length}"),
+        n => format!("{n} songs · {length}"),
     }
 }
 
