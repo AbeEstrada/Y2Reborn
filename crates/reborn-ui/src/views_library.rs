@@ -296,7 +296,7 @@ fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus:
 
 fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "ALBUMS", true);
+    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let focus_row = focus / 4;

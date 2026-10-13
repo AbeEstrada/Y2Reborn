@@ -1745,3 +1745,18 @@ fn only_cover_flow_motion_asks_for_the_panel_rate() {
     ui.draw(&m, &tracks, false);
     assert!(ui.gliding() && ui.animating());
 }
+
+#[test]
+fn the_album_grid_of_a_genre_is_titled_with_the_genre() {
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    for t in m.library.tracks.iter_mut() {
+        t.genre = "Jazz".into();
+    }
+    let tracks = m.library.tracks.clone();
+    assert!(drawn_text(&ui.draw(&m, &tracks, false)).contains("ALBUMS"));
+    m.navigation.filter = "genre:Jazz".into();
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("JAZZ") && !text.contains("ALBUMS"), "{text}");
+}
