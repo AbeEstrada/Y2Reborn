@@ -1844,14 +1844,19 @@ impl Runtime {
 }
 /// Input readiness wakes immediately; the bounded timeout services asynchronous
 /// workers. Dirty frames use a start-to-start budget rather than adding the
-/// entire GPU/presentation cost to a fresh 34-ms delay.
+/// entire GPU/presentation cost to a fresh 34-ms delay. A running animation
+/// (Cover Flow's glide, the cover's flight) asks for the next frame at the
+/// panel's rate; presentation itself waits for the page flip.
 fn main_loop_interval(
     screen_off: bool,
     dirty: bool,
+    animating: bool,
     playing: bool,
     since_frame: Duration,
 ) -> Duration {
-    if dirty && !screen_off {
+    if animating && !screen_off {
+        Duration::from_micros(16_667).saturating_sub(since_frame)
+    } else if dirty && !screen_off {
         Duration::from_millis(34).saturating_sub(since_frame)
     } else if playing {
         Duration::from_millis(50)
@@ -3511,6 +3516,7 @@ fn run() -> Result<(), String> {
         let interval = main_loop_interval(
             rt.model.screen_off,
             rt.dirty.render,
+            rt.ui.animating(),
             matches!(
                 rt.model.playback,
                 PlaybackState::Playing | PlaybackState::Buffering
@@ -4172,20 +4178,35 @@ mod loop_interval_tests {
     #[test]
     fn screen_off_wakes_less_but_stays_responsive() {
         assert_eq!(
-            main_loop_interval(false, false, false, Duration::ZERO),
+            main_loop_interval(false, false, false, false, Duration::ZERO),
             Duration::from_millis(250)
         );
         assert_eq!(
-            main_loop_interval(true, true, false, Duration::ZERO),
+            main_loop_interval(true, true, false, false, Duration::ZERO),
             Duration::from_secs(1)
         );
         assert_eq!(
-            main_loop_interval(false, true, false, Duration::from_millis(16)),
+            main_loop_interval(false, true, false, false, Duration::from_millis(16)),
             Duration::from_millis(18)
         );
         assert_eq!(
-            main_loop_interval(false, true, false, Duration::from_millis(40)),
+            main_loop_interval(false, true, false, false, Duration::from_millis(40)),
             Duration::ZERO
+        );
+        // An animation keeps frames coming at the panel's rate, even with
+        // nothing marked dirty yet (Cover Flow measured ~10 fps without this).
+        assert_eq!(
+            main_loop_interval(false, false, true, false, Duration::from_millis(6)),
+            Duration::from_micros(10_667)
+        );
+        assert_eq!(
+            main_loop_interval(false, false, true, true, Duration::ZERO),
+            Duration::from_micros(16_667)
+        );
+        // Screen off never animates.
+        assert_eq!(
+            main_loop_interval(true, false, true, false, Duration::ZERO),
+            Duration::from_secs(1)
         );
     }
 }
