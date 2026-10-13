@@ -288,6 +288,7 @@ fn root_is_a_small_music_player_menu() {
             "Now Playing",
             "Artists",
             "Albums",
+            "Genres",
             "Songs",
             "Folders",
             "Settings"
@@ -1583,4 +1584,57 @@ fn crossfade_gets_its_own_option_icon() {
     assert_eq!(count(&m), 0);
     m.settings.crossfade_ms = 6_000;
     assert_eq!(count(&m), 1);
+}
+
+#[test]
+fn genres_open_their_albums_then_all_songs_or_one_album() {
+    let ui = Ui::default();
+    let mut m = app(Screen::Genres);
+    // Albums 0 and 1 are Jazz, album 2 has no genre tag.
+    for t in m.library.tracks.iter_mut() {
+        t.genre = if t.id < 6 { "Jazz".into() } else { String::new() };
+    }
+    let tracks = m.library.tracks.clone();
+    let genres = ui.rows(&m, &tracks);
+    assert_eq!(
+        genres.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+        ["Jazz", "No Genre"]
+    );
+    assert_eq!(genres[0].secondary, "2 albums · 6 songs");
+    assert_eq!(genres[1].key, "genre:");
+    assert_eq!(ui.library_counts(&tracks)[3], 2);
+    // Jazz -> its albums, headed by All Songs.
+    let mut ui = ui;
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!((m.screen, m.navigation.filter.as_str()), (Screen::Albums, "genre:Jazz"));
+    assert_eq!(screens::screen_title(&m), "Jazz");
+    let albums = ui.rows(&m, &tracks);
+    assert_eq!(
+        albums.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+        ["All Songs", "Album 0", "Album 1"]
+    );
+    assert_eq!(albums[0].secondary, "6 songs");
+    // All Songs -> the genre's six songs.
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!((m.screen, m.navigation.filter.as_str()), (Screen::Tracks, "genre:Jazz"));
+    assert_eq!(ui.row_count(&m, &tracks), 6);
+    // Back, then one album -> its page.
+    ui.action(&mut m, &tracks, Action::Back);
+    m.navigation.focus = 2;
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+    assert!(m.navigation.filter.ends_with("Album 1"));
+}
+
+#[test]
+fn home_with_genres_fits_the_screen() {
+    let ui = radios();
+    let m = app(Screen::Home);
+    for focus in 0..7 {
+        let mut m = m.clone();
+        m.navigation.focus = focus;
+        let quads = ui.draw(&m, &m.library.tracks, false);
+        // Every menu label ends above the bottom edge.
+        assert!(quads.iter().all(|q| q.y + q.h <= crate::theme::HEIGHT + 0.5), "focus {focus}");
+    }
 }

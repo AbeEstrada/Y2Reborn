@@ -251,6 +251,9 @@ pub struct Track {
     pub bitrate: u64,
     pub artwork: bool,
     pub online: bool,
+    /// Genre tag as read from the file; empty when the file has none.
+    #[serde(default)]
+    pub genre: String,
 }
 
 /* A queue occurrence is a playback identity, not a library identity. Two
@@ -328,6 +331,8 @@ pub enum Screen {
     Music,
     Artists,
     Albums,
+    /// Genres from the files' tags; each opens its albums.
+    Genres,
     Tracks,
     Folders,
     Album,

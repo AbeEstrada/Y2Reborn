@@ -48,7 +48,7 @@ pub fn focus_target_count(quads: &[Quad]) -> usize {
 }
 
 /// Library size stamp and the artist, album and song counts for it.
-type CountsCache = Option<((usize, usize), [usize; 3])>;
+type CountsCache = Option<((usize, usize), [usize; 4])>;
 
 /// How a settings-style row presents its value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -544,7 +544,7 @@ impl Ui {
     }
 
     /// Artists, albums and songs in the library, recounted only when it changes.
-    pub(crate) fn library_counts(&self, tracks: &[Track]) -> [usize; 3] {
+    pub(crate) fn library_counts(&self, tracks: &[Track]) -> [usize; 4] {
         let stamp = (tracks.as_ptr() as usize, tracks.len());
         if let Some((seen, counts)) = *self.counts.borrow() {
             if seen == stamp {
@@ -553,13 +553,15 @@ impl Ui {
         }
         let mut artists = std::collections::BTreeSet::new();
         let mut albums = std::collections::BTreeSet::new();
+        let mut genres = std::collections::BTreeSet::new();
         let mut songs = 0;
         for t in tracks.iter().filter(|t| t.online) {
             artists.insert(t.artist.as_str());
             albums.insert((t.album.as_str(), t.album_artist.as_str()));
+            genres.insert(t.genre.as_str());
             songs += 1;
         }
-        let counts = [artists.len(), albums.len(), songs];
+        let counts = [artists.len(), albums.len(), songs, genres.len()];
         *self.counts.borrow_mut() = Some((stamp, counts));
         counts
     }
@@ -691,6 +693,7 @@ impl Ui {
         match m.screen {
             Screen::Artists
             | Screen::Albums
+            | Screen::Genres
             | Screen::Folders
             | Screen::Artist
             | Screen::Album
@@ -752,6 +755,7 @@ impl Ui {
             s,
             Screen::Albums
                 | Screen::Artists
+                | Screen::Genres
                 | Screen::Folders
                 | Screen::Album
                 | Screen::Artist
@@ -875,7 +879,7 @@ impl Ui {
             ];
         }
         match m.screen {
-            Screen::Albums | Screen::Artists => vec![],
+            Screen::Albums | Screen::Artists | Screen::Genres => vec![],
             Screen::Queue => {
                 let Some(i) = self.queue_target(m, key) else {
                     return vec![];
@@ -1381,6 +1385,11 @@ impl Ui {
         }
         match m.screen {
             Screen::Artists => Self::go(m, Screen::Artist, key),
+            Screen::Genres => Self::go(m, Screen::Albums, key),
+            // A genre's albums start with all of its songs.
+            Screen::Albums if key == "all_songs" => {
+                Self::go(m, Screen::Tracks, m.navigation.filter.clone())
+            }
             Screen::Albums => Self::go(m, Screen::Album, key),
             Screen::Folders if !key.starts_with("track:") => Self::go(m, Screen::Folders, key),
             Screen::Artist if key.starts_with("album:") => Self::go(m, Screen::Album, key),
@@ -1846,6 +1855,7 @@ fn route(key: &str) -> Option<Screen> {
         "settings" => Screen::Settings,
         "albums" => Screen::Albums,
         "artists" => Screen::Artists,
+        "genres" => Screen::Genres,
         "tracks" => Screen::Tracks,
         "folders" => Screen::Folders,
         "wifi" => Screen::Wifi,
@@ -2047,6 +2057,9 @@ fn track_matches(track: &Track, filter: &str) -> bool {
     }
     if let Some(value) = filter.strip_prefix("artist:") {
         return track.artist == value;
+    }
+    if let Some(value) = filter.strip_prefix("genre:") {
+        return track.genre == value;
     }
     if let Some(value) = filter.strip_prefix("album:") {
         if let Some((artist, album)) = value.split_once('\u{1f}') {

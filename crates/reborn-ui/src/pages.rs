@@ -75,6 +75,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Now Playing", "now_playing", ""),
             row("Artists", "artists", ""),
             row("Albums", "albums", ""),
+            row("Genres", "genres", ""),
             row("Songs", "tracks", ""),
             row("Folders", "folders", ""),
             row("Settings", "settings", ""),
@@ -82,6 +83,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Music => Page::rows(vec![
             Item::new("Albums", "albums"),
             Item::new("Artists", "artists"),
+            Item::new("Genres", "genres"),
             Item::new("Songs", "tracks"),
             Item::new("Folders", "folders"),
         ]),

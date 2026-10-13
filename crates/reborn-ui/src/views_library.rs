@@ -74,10 +74,12 @@ pub fn home(
     let rows = ui.rows(m, tracks);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let counts = ui.library_counts(tracks);
+    // Seven rows (with Genres) must still end above the screen's bottom edge.
+    let step = (296. / rows.len().max(1) as f32).min(44.).floor();
     let mut y = 50.;
     for (i, row) in rows.iter().enumerate() {
         let selected = i == focus;
-        let cy = y + if selected { 25. } else { 22. };
+        let cy = y + if selected { step / 2. + 3. } else { step / 2. };
         if selected {
             let at = c.draw.len();
             c.rrect(26., y + 8., 4., 34., 2., accent);
@@ -104,12 +106,13 @@ pub fn home(
             "artists" => Some(counts[0]),
             "albums" => Some(counts[1]),
             "tracks" => Some(counts[2]),
+            "genres" => Some(counts[3]),
             _ => None,
         };
         if let Some(n) = count.filter(|n| *n > 0) {
             c.text_mid_right(222., cy + 2., &count_label(n), Face::R11, color::DIM);
         }
-        y += if selected { 50. } else { 44. };
+        y += if selected { step + 6. } else { step };
     }
 }
 

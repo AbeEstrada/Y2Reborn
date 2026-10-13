@@ -17,7 +17,7 @@ pub fn visible_rows_for(screen: Screen) -> usize {
         Screen::Albums => 8,
         Screen::Album | Screen::Artist => 5,
         Screen::Folders | Screen::Queue => 5,
-        Screen::Tracks | Screen::Artists => 6,
+        Screen::Tracks | Screen::Artists | Screen::Genres => 6,
         _ => 6,
     }
 }
@@ -51,6 +51,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         Screen::Home => views_library::home(&mut c, ui, m, tracks, has_art, interactive),
         Screen::Albums
         | Screen::Artists
+        | Screen::Genres
         | Screen::Tracks
         | Screen::Folders
         | Screen::Album
@@ -214,7 +215,12 @@ pub fn screen_title(m: &AppModel) -> String {
     match m.screen {
         Screen::Home => String::new(),
         Screen::Music => "Music".into(),
-        Screen::Albums => "Albums".into(),
+        Screen::Albums => match m.navigation.filter.strip_prefix("genre:") {
+            Some("") => "No Genre".into(),
+            Some(genre) => genre.into(),
+            None => "Albums".into(),
+        },
+        Screen::Genres => "Genres".into(),
         Screen::Artists => "Artists".into(),
         Screen::Tracks => "Songs".into(),
         Screen::Folders => {

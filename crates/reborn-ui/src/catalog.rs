@@ -63,8 +63,53 @@ impl Catalog {
                         .entry((t.album.as_str(), t.album_artist.as_str()))
                         .or_insert((i, t));
                 }
+                // A genre's album view opens with all of its songs.
+                if m.navigation.filter.starts_with("genre:") && !albums.is_empty() {
+                    let songs = tracks
+                        .iter()
+                        .filter(|t| track_matches(t, &m.navigation.filter))
+                        .count();
+                    self.push(Item::new("All Songs", "all_songs").with_secondary(match songs {
+                        1 => "1 song".to_owned(),
+                        n => format!("{n} songs"),
+                    }));
+                }
                 for ((album, artist), (i, t)) in albums {
                     self.push(album_item(album, artist, i, t));
+                }
+            }
+            Screen::Genres => {
+                // genre -> (cover track, albums, songs, cover has art)
+                let mut genres: BTreeMap<&str, (usize, BTreeSet<(&str, &str)>, usize, bool)> =
+                    BTreeMap::new();
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.online) {
+                    let entry = genres
+                        .entry(t.genre.as_str())
+                        .or_insert((i, BTreeSet::new(), 0, t.artwork));
+                    entry.1.insert((t.album.as_str(), t.album_artist.as_str()));
+                    entry.2 += 1;
+                    if !entry.3 && t.artwork {
+                        entry.0 = i;
+                        entry.3 = true;
+                    }
+                }
+                // Untagged songs go last, under one honest name.
+                let (named, untagged): (Vec<_>, Vec<_>) =
+                    genres.into_iter().partition(|(genre, _)| !genre.is_empty());
+                for (genre, (i, albums, songs, _)) in named.into_iter().chain(untagged) {
+                    let label = if genre.is_empty() { "No Genre" } else { genre };
+                    let albums = match albums.len() {
+                        1 => "1 album".to_owned(),
+                        n => format!("{n} albums"),
+                    };
+                    let songs = match songs {
+                        1 => "1 song".to_owned(),
+                        n => format!("{n} songs"),
+                    };
+                    let mut item = Item::new(label, format!("genre:{genre}"))
+                        .with_secondary(format!("{albums} · {songs}"));
+                    item.art = Some(i);
+                    self.push(item);
                 }
             }
             Screen::Artists => {
