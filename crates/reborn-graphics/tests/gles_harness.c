@@ -69,6 +69,23 @@ int main(int argc, char **argv) {
       int tex, sx, sy, sw, sh;
       if (sscanf(line + 1, "%f %f %f %f %u %d %d %d %d %d", &x, &y, &w, &h, &color, &tex, &sx, &sy, &sw, &sh) == 10)
         rb_graphics_quad(g, x, y, w, h, color, tex, sx, sy, sw, sh);
+    } else if (line[0] == 'W') {
+      float c[8];
+      unsigned k[4];
+      int tex, sx, sy, sw, sh;
+      if (sscanf(line + 1, "%f %f %f %f %f %f %f %f %u %u %u %u %d %d %d %d %d", &c[0], &c[1], &c[2], &c[3], &c[4],
+                 &c[5], &c[6], &c[7], &k[0], &k[1], &k[2], &k[3], &tex, &sx, &sy, &sw, &sh) == 17) {
+        const uint32_t colors[4] = {k[0], k[1], k[2], k[3]};
+        rb_graphics_quad_warp(g, c, colors, tex, sx, sy, sw, sh);
+      }
+    } else if (line[0] == 'C') {
+      char file[400];
+      if (sscanf(line + 1, "%399s", file) == 1) {
+        size_t size;
+        uint8_t *art = slurp(file, &size);
+        if (rb_graphics_art(g, art, 1) < 0) return 8;
+        free(art);
+      }
     } else if (line[0] == 'T') {
       int cx, cy;
       char file[400];

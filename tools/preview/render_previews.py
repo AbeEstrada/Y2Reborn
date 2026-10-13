@@ -62,6 +62,22 @@ def cover(seed: int, size: int = 160, rounded: float = 0.085) -> Image.Image:
     return im
 
 
+def solve(rows: list[list[float]], rhs: list[float]) -> list[float] | None:
+    """Gaussian elimination for the 8x8 perspective system."""
+    n = len(rhs)
+    m = [row[:] + [b] for row, b in zip(rows, rhs)]
+    for c in range(n):
+        pivot = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[pivot][c]) < 1e-9:
+            return None
+        m[c], m[pivot] = m[pivot], m[c]
+        for r in range(n):
+            if r != c:
+                f = m[r][c] / m[c][c]
+                m[r] = [a - f * b for a, b in zip(m[r], m[c])]
+    return [m[r][n] / m[r][r] for r in range(n)]
+
+
 class Rasterizer:
     def __init__(self, root: Path):
         self.regular = mask_page(root / "assets/fonts/reborn-regular.a8", 1024)
@@ -75,7 +91,55 @@ class Rasterizer:
             self.covers[key] = cover(key >> 8 if key else 0)
         return self.covers[key].resize((size, size), Image.Resampling.BILINEAR)
 
+    def source(self, quad: dict, size: int) -> Image.Image:
+        """The untinted texture region a quad samples, as RGBA."""
+        tex = quad.get("tex", "Solid")
+        if tex == "Solid":
+            return Image.new("RGBA", (size, size), (255, 255, 255, 255))
+        if tex in ("Art", "CollectionArt"):
+            return self.cover_for(0, 160)
+        if isinstance(tex, dict) and "Thumb" in tex:
+            return self.cover_for(tex["Thumb"], 96)
+        page = (self.regular, self.semibold, self.fallback)[tex["Font"]] if isinstance(tex, dict) else self.masks
+        sx, sy, sw, sh = quad["src"]
+        layer = Image.new("RGBA", (sw, sh), (255, 255, 255, 255))
+        layer.putalpha(page.crop((sx, sy, sx + sw, sy + sh)))
+        return layer
+
+    def draw_warp(self, canvas: Image.Image, quad: dict) -> None:
+        """A textured quadrilateral with per-corner tints (Cover Flow)."""
+        src = self.source(quad, 64)
+        sw, sh = src.size
+        # Per-corner tints as a bilinear gradient in texture space.
+        tl, tr, br, bl = (rgba(c) for c in quad["warp"]["colors"])
+        grad = Image.new("RGBA", (sw, sh))
+        px = grad.load()
+        for j in range(sh):
+            fy = j / max(1, sh - 1)
+            left = [a + (b - a) * fy for a, b in zip(tl, bl)]
+            right = [a + (b - a) * fy for a, b in zip(tr, br)]
+            for i in range(sw):
+                fx = i / max(1, sw - 1)
+                px[i, j] = tuple(round(a + (b - a) * fx) for a, b in zip(left, right))
+        tinted = ImageChops.multiply(src, grad)
+        # Output pixel -> source pixel projective map from the four corners.
+        dst = quad["warp"]["corners"]
+        srcpts = [(0, 0), (sw, 0), (sw, sh), (0, sh)]
+        rows, rhs = [], []
+        for (X, Y), (u, v) in zip(dst, srcpts):
+            rows.append([X, Y, 1, 0, 0, 0, -u * X, -u * Y]); rhs.append(u)
+            rows.append([0, 0, 0, X, Y, 1, -v * X, -v * Y]); rhs.append(v)
+        coeffs = solve(rows, rhs)
+        if coeffs is None:
+            return
+        layer = tinted.transform((WIDTH, HEIGHT), Image.Transform.PERSPECTIVE, coeffs,
+                                 Image.Resampling.BILINEAR, fillcolor=(0, 0, 0, 0))
+        canvas.alpha_composite(layer)
+
     def draw(self, canvas: Image.Image, quad: dict) -> None:
+        if quad.get("warp"):
+            self.draw_warp(canvas, quad)
+            return
         x, y = round(quad["x"]), round(quad["y"])
         w, h = max(1, round(quad["w"])), max(1, round(quad["h"]))
         tint = rgba(quad["color"])

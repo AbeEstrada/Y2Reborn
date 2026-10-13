@@ -39,7 +39,7 @@ def cell_bytes(image: Image.Image) -> bytes:
 
 def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Path) -> Image.Image:
     lines, cells = [], {}
-    art = False
+    art = collection = False
     for q in quads:
         tex = q.get("tex", "Solid")
         if isinstance(tex, dict) and "Thumb" in tex:
@@ -61,6 +61,16 @@ def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Pa
                 path.write_bytes(raster.cover_for(0, 160).tobytes())
                 lines.insert(0, f"A {path}")
                 art = True
+            if kind == 6 and not collection:
+                path = work / "collection.rgba"
+                path.write_bytes(raster.cover_for(0, 160).tobytes())
+                lines.insert(0, f"C {path}")
+                collection = True
+        if q.get("warp"):
+            corners = " ".join(f"{v}" for point in q["warp"]["corners"] for v in point)
+            colors = " ".join(str(c) for c in q["warp"]["colors"])
+            lines.append(f"W {corners} {colors} {kind} {src[0]} {src[1]} {src[2]} {src[3]}")
+            continue
         lines.append("Q {x} {y} {w} {h} {color} {kind} {s0} {s1} {s2} {s3}".format(
             x=q["x"], y=q["y"], w=q["w"], h=q["h"], color=q["color"], kind=kind,
             s0=src[0], s1=src[1], s2=src[2], s3=src[3]))

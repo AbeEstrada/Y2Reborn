@@ -38,6 +38,16 @@ unsafe extern "C" {
         sw: c_int,
         sh: c_int,
     );
+    fn rb_graphics_quad_warp(
+        p: *mut c_void,
+        corners: *const f32,
+        colors: *const u32,
+        tex: c_int,
+        sx: c_int,
+        sy: c_int,
+        sw: c_int,
+        sh: c_int,
+    );
     fn rb_graphics_thumb(p: *mut c_void, cx: c_int, cy: c_int, rgba: *const u8) -> c_int;
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
@@ -212,6 +222,20 @@ impl Renderer {
                         }
                     },
                 };
+                if let Some(warp) = &q.warp {
+                    let corners = warp.corners.as_flattened();
+                    rb_graphics_quad_warp(
+                        self.raw.as_ptr(),
+                        corners.as_ptr(),
+                        warp.colors.as_ptr(),
+                        tex,
+                        c_int::from(src[0]),
+                        c_int::from(src[1]),
+                        c_int::from(src[2]),
+                        c_int::from(src[3]),
+                    );
+                    continue;
+                }
                 rb_graphics_quad(
                     self.raw.as_ptr(),
                     q.x,

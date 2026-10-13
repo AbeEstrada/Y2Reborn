@@ -1471,6 +1471,10 @@ impl Ui {
             "shuffle" => Effect::SetShuffle(!m.settings.shuffle),
             "repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
+            "album_view" => Effect::SetAlbumView(match m.settings.album_view {
+                reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
+                reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,
+            }),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {
                 0 => 3_000,
                 3_000 => 6_000,

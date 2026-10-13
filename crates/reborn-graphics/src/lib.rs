@@ -38,6 +38,18 @@ pub struct Quad {
     /// Presentation metadata used by deterministic UI validation. Native
     /// rendering intentionally ignores this field.
     pub focus_target: bool,
+    /// Draw into an arbitrary quadrilateral instead of the `x/y/w/h` box,
+    /// with perspective-correct texturing and per-corner tints (Cover Flow).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warp: Option<Warp>,
+}
+/// Corners in screen pixels, clockwise from top-left: TL, TR, BR, BL. The
+/// texture's top-left maps to TL. `colors` tint each corner (RGBA), which
+/// fades a reflection without a separate gradient texture.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Warp {
+    pub corners: [[f32; 2]; 4],
+    pub colors: [u32; 4],
 }
 impl Quad {
     pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Self {
@@ -50,6 +62,7 @@ impl Quad {
             tex: Tex::Solid,
             src: [0; 4],
             focus_target: false,
+            warp: None,
         }
     }
     /// A tinted region of a coverage-mask texture.

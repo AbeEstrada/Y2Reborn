@@ -496,6 +496,24 @@ pub struct Settings {
     /// Backlight level in percent of the panel maximum.
     #[serde(default = "default_brightness")]
     pub brightness: u8,
+    /// How Albums presents its covers.
+    #[serde(default)]
+    pub album_view: AlbumView,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AlbumView {
+    #[default]
+    CoverFlow,
+    Grid,
+}
+impl AlbumView {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CoverFlow => "Cover Flow",
+            Self::Grid => "Grid",
+        }
+    }
 }
 fn default_true() -> bool {
     true
@@ -528,6 +546,7 @@ impl Default for Settings {
             shuffle: false,
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
+            album_view: AlbumView::CoverFlow,
         }
     }
 }
@@ -616,6 +635,7 @@ pub enum Effect {
     SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),
+    SetAlbumView(AlbumView),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),

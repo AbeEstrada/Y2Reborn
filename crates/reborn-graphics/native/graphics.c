@@ -30,6 +30,8 @@ double rb_graphics_thread_cpu_seconds(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 #include "splash-handoff.h"
+/* Floats per vertex: position xy, projective uv (u*q, v*q, q), tint rgba. */
+#define RB_VERTEX 9
 struct fb {
   uint32_t id;
   int fd;
@@ -120,7 +122,7 @@ typedef struct {
   int tex_w[8], tex_h[8];
   struct flip flip;
   /* Bounded adjacent-texture batching, preserving the original draw order. */
-  GLfloat vertices[256 * 6 * 8];
+  GLfloat vertices[256 * 6 * RB_VERTEX];
   unsigned vertices_used, draw_calls;
   GLuint batch_texture;
   char info[1024];
@@ -255,12 +257,14 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
                     const int font_heights[3], const uint8_t *masks, int mask_w,
                     int mask_h) {
   const char *vs =
-      "attribute vec2 p;attribute vec2 uv;attribute vec4 color;"
-      "varying vec2 t;varying vec4 tint;void main(){"
+      "attribute vec2 p;attribute vec3 uv;attribute vec4 color;"
+      "varying vec3 t;varying vec4 tint;void main(){"
       "gl_Position=vec4(p,0.,1.);t=uv;tint=color;}";
+  /* uv carries (u*q, v*q, q): q=1 for boxes; warped quads use projective q
+   * so a tilted cover is textured with correct perspective. */
   const char *fs =
-      "precision mediump float;varying vec2 t;varying vec4 tint;"
-      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t)*tint;}";
+      "precision mediump float;varying vec3 t;varying vec4 tint;"
+      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t.xy/t.z)*tint;}";
   GLuint v = make_shader(GL_VERTEX_SHADER, vs),
          f = make_shader(GL_FRAGMENT_SHADER, fs);
   if (!v || !f) {
@@ -287,11 +291,11 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
   glUniform1i(glGetUniformLocation(g->program, "tex"), 0);
   glGenBuffers(1, &g->vbo);
   glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void *)0);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, RB_VERTEX * sizeof(GLfloat), (void *)0);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, RB_VERTEX * sizeof(GLfloat),
                         (void *)(2 * sizeof(GLfloat)));
-  glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat),
-                        (void *)(4 * sizeof(GLfloat)));
+  glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, RB_VERTEX * sizeof(GLfloat),
+                        (void *)(5 * sizeof(GLfloat)));
   glEnableVertexAttribArray(0);
   glEnableVertexAttribArray(1);
   glEnableVertexAttribArray(2);
@@ -478,7 +482,7 @@ static void flush_batch(RbGraphics *g) {
   if (!g->vertices_used) return;
   glBindTexture(GL_TEXTURE_2D, g->batch_texture);
   glBindBuffer(GL_ARRAY_BUFFER, g->vbo);
-  glBufferData(GL_ARRAY_BUFFER, g->vertices_used * 8 * sizeof(GLfloat),
+  glBufferData(GL_ARRAY_BUFFER, g->vertices_used * RB_VERTEX * sizeof(GLfloat),
                g->vertices, GL_STREAM_DRAW);
   glDrawArrays(GL_TRIANGLES, 0, g->vertices_used);
   g->draw_calls++;
@@ -495,23 +499,82 @@ void rb_graphics_begin(RbGraphics *g) {
 /* `tex` selects the texture (0 white, 1..3 glyph pages, 4 masks, 5 artwork,
  * 6 collection artwork, 7 thumbnails); (sx, sy, sw, sh) is the source rectangle
  * in texels of a mask/glyph/thumbnail texture and is ignored otherwise. */
-void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
-                      uint32_t color, int tex, int sx, int sy, int sw,
-                      int sh) {
+/* Texture-space source rectangle (u, v, uw, vh) for `tex`. */
+static void source_uv(RbGraphics *g, int tex, int sx, int sy, int sw, int sh,
+                      float uv[4]) {
+  uv[0] = 0; uv[1] = 0; uv[2] = 1; uv[3] = 1;
+  if ((tex >= 1 && tex <= 4) || tex == 7) {
+    uv[0] = (float)sx / g->tex_w[tex];
+    uv[1] = (float)sy / g->tex_h[tex];
+    uv[2] = (float)sw / g->tex_w[tex];
+    uv[3] = (float)sh / g->tex_h[tex];
+  }
+}
+static int begin_quad(RbGraphics *g, int tex) {
   if (tex < 0 || tex > 7)
-    return;
+    return 0;
   GLuint t = g->tex[tex];
   if (g->vertices_used &&
       (g->batch_texture != t || g->vertices_used + 6 > 256 * 6))
     flush_batch(g);
   g->batch_texture = t;
-  float u = 0, v = 0, uw = 1, vh = 1;
-  if ((tex >= 1 && tex <= 4) || tex == 7) {
-    u = (float)sx / g->tex_w[tex];
-    v = (float)sy / g->tex_h[tex];
-    uw = (float)sw / g->tex_w[tex];
-    vh = (float)sh / g->tex_h[tex];
+  return 1;
+}
+static void put_vertex(RbGraphics *g, float x, float y, float u, float v,
+                       float q, uint32_t color) {
+  GLfloat *dst = g->vertices + g->vertices_used++ * RB_VERTEX;
+  dst[0] = x; dst[1] = y;
+  dst[2] = u * q; dst[3] = v * q; dst[4] = q;
+  dst[5] = ((color >> 24) & 255) / 255.f;
+  dst[6] = ((color >> 16) & 255) / 255.f;
+  dst[7] = ((color >> 8) & 255) / 255.f;
+  dst[8] = (color & 255) / 255.f;
+}
+/* A textured quadrilateral: `px` holds TL, TR, BR, BL in screen pixels and
+ * `colors` their tints. q per corner from the diagonal intersection makes the
+ * texture perspective-correct (Heckbert); a degenerate quad is dropped. */
+void rb_graphics_quad_warp(RbGraphics *g, const float px[8],
+                           const uint32_t colors[4], int tex, int sx, int sy,
+                           int sw, int sh) {
+  float x0 = px[0], y0 = px[1], x1 = px[2], y1 = px[3], x2 = px[4], y2 = px[5],
+        x3 = px[6], y3 = px[7];
+  /* Diagonals TL-BR and TR-BL: intersection c = p0 + s*(p2-p0). */
+  float d1x = x2 - x0, d1y = y2 - y0, d2x = x3 - x1, d2y = y3 - y1;
+  float den = d1x * d2y - d1y * d2x;
+  if (den > -1e-6f && den < 1e-6f)
+    return;
+  float s = ((x1 - x0) * d2y - (y1 - y0) * d2x) / den;
+  float r = ((x1 - x0) * d1y - (y1 - y0) * d1x) / den;
+  if (s <= 0 || s >= 1 || r <= 0 || r >= 1)
+    return; /* not convex */
+  /* Distances along each diagonal from the corners to the intersection. */
+  float q0 = 1 / (1 - s), q2 = 1 / s, q1 = 1 / (1 - r), q3 = 1 / r;
+  if (!begin_quad(g, tex))
+    return;
+  float uv[4];
+  source_uv(g, tex, sx, sy, sw, sh, uv);
+  float u0 = uv[0], v0 = uv[1], u1 = uv[0] + uv[2], v1 = uv[1] + uv[3];
+  float nx[4], ny[4];
+  for (int i = 0; i < 4; i++) {
+    nx[i] = 2 * px[2 * i] / g->width - 1;
+    ny[i] = 1 - 2 * px[2 * i + 1] / g->height;
   }
+  /* Triangles TL,TR,BL and BL,TR,BR. */
+  put_vertex(g, nx[0], ny[0], u0, v0, q0, colors[0]);
+  put_vertex(g, nx[1], ny[1], u1, v0, q1, colors[1]);
+  put_vertex(g, nx[3], ny[3], u0, v1, q3, colors[3]);
+  put_vertex(g, nx[3], ny[3], u0, v1, q3, colors[3]);
+  put_vertex(g, nx[1], ny[1], u1, v0, q1, colors[1]);
+  put_vertex(g, nx[2], ny[2], u1, v1, q2, colors[2]);
+}
+void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
+                      uint32_t color, int tex, int sx, int sy, int sw,
+                      int sh) {
+  if (!begin_quad(g, tex))
+    return;
+  float uvr[4];
+  source_uv(g, tex, sx, sy, sw, sh, uvr);
+  float u = uvr[0], v = uvr[1], uw = uvr[2], vh = uvr[3];
   /* Same box transform and triangle order as the original strip renderer. */
   float cx = (2 * x + w) / g->width - 1;
   float cy = 1 - (2 * y + h) / g->height;
@@ -521,13 +584,9 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
                                {cx-hw, cy+hh, u, v},
                                {cx+hw, cy+hh, u+uw, v}};
   const unsigned order[6] = {0, 1, 2, 2, 1, 3};
-  const float tint[4] = {((color >> 24) & 255) / 255.f,
-                         ((color >> 16) & 255) / 255.f,
-                         ((color >> 8) & 255) / 255.f, (color & 255) / 255.f};
   for (unsigned i = 0; i < 6; i++) {
-    GLfloat *dst = g->vertices + g->vertices_used++ * 8;
-    memcpy(dst, corners[order[i]], 4 * sizeof(GLfloat));
-    memcpy(dst + 4, tint, 4 * sizeof(GLfloat));
+    const float *k = corners[order[i]];
+    put_vertex(g, k[0], k[1], k[2], k[3], 1, color);
   }
 }
 /* Upload one 98x98 RGBA thumbnail cell (a 96x96 image with a replicated

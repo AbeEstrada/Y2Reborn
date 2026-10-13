@@ -1416,6 +1416,10 @@ impl Runtime {
                 }
                 self.checkpoint();
             }
+            Effect::SetAlbumView(view) => {
+                self.model.settings.album_view = view;
+                self.checkpoint();
+            }
             Effect::SetShuffle(enabled) => {
                 self.model.settings.shuffle = enabled;
                 self.checkpoint();

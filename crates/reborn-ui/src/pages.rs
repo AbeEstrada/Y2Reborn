@@ -126,6 +126,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 )
                 .with_kind(RowKind::Chevron),
             );
+            rows.push(row("Album view", "album_view", m.settings.album_view.label()));
             Page::rows(rows)
         }
         Screen::SettingsSystem => system(ui, m),
