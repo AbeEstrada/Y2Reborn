@@ -7,12 +7,14 @@ mod catalog;
 pub mod charge;
 mod components;
 pub mod diagnostics;
+mod flow;
 mod fontdata;
 mod maskdata;
 pub mod pages;
 mod screens;
 mod text;
 pub mod theme;
+mod views_coverflow;
 mod views_library;
 mod views_playing;
 mod views_settings;
@@ -252,6 +254,15 @@ pub struct Ui {
     spinning: bool,
     /// Freeze spinners at this phase (previews and tests).
     pub spin_fixed: Option<f32>,
+    /// Cover Flow's scroll position and the cover's flight to the album page.
+    flow: RefCell<flow::Flow>,
+    transition: std::cell::Cell<Option<flow::Transition>>,
+    /// Freeze Cover Flow motion at its target (previews and tests).
+    pub motion_fixed: bool,
+    /// The cover now in the collection-art texture (full resolution).
+    pub collection_art: std::cell::Cell<Option<u64>>,
+    /// The centre cover the last frame wants at full resolution.
+    cover_request: std::cell::Cell<Option<(u64, usize)>>,
 }
 
 /// A dialog the player raises by itself.
@@ -349,7 +360,50 @@ impl Ui {
     /// Whether something on screen changes with time (a fade, a ring), so the
     /// caller keeps redrawing.
     pub fn animating(&self) -> bool {
-        self.volume_until.is_some() || self.power_hold.is_some() || self.spinning
+        self.volume_until.is_some()
+            || self.power_hold.is_some()
+            || self.spinning
+            || self.flow.borrow().moving()
+            || self.transition_progress().is_some()
+    }
+
+    /// Cover Flow's fractional centre for this frame, advanced in time.
+    pub(crate) fn flow_position(&self, m: &AppModel, focus: usize) -> f32 {
+        self.flow.borrow_mut().advance(
+            (m.screen, m.navigation.filter.clone()),
+            focus,
+            self.motion_fixed,
+            Instant::now(),
+        )
+    }
+
+    /// The running cover flight and its eased 0..1 progress.
+    pub(crate) fn transition_progress(&self) -> Option<(flow::TransitionKind, f32)> {
+        let t = self.transition.get()?;
+        if self.motion_fixed {
+            return None;
+        }
+        match t.progress(Instant::now()) {
+            Some(p) => Some((t.kind, p)),
+            None => {
+                self.transition.set(None);
+                None
+            }
+        }
+    }
+
+    /// The centre cover wants its full-resolution image once the row rests.
+    pub(crate) fn request_cover(&self, key: u64, track_index: usize) {
+        if self.collection_art.get() != Some(key) && self.flow.borrow().rested(120, Instant::now())
+        {
+            self.cover_request.set(Some((key, track_index)));
+        }
+    }
+
+    /// The full-resolution cover the screen wants: art key and library track.
+    /// The caller loads it and reports it with `collection_art`.
+    pub fn take_cover_request(&self) -> Option<(u64, usize)> {
+        self.cover_request.take()
     }
 
     /// A 0..1 phase for spinners, one turn about every 1.6 s.
@@ -1077,6 +1131,26 @@ impl Ui {
     }
 
     pub fn action(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
+        let before = (m.screen, m.navigation.filter.clone());
+        let effect = self.action_inner(m, tracks, action);
+        // Cover Flow and the album page hand the centre cover to each other.
+        if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !self.motion_fixed {
+            let kind = match (before.0, m.screen) {
+                (Screen::Albums, Screen::Album) => Some(flow::TransitionKind::Open),
+                (Screen::Album, Screen::Albums) => Some(flow::TransitionKind::Close),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                self.transition.set(Some(flow::Transition {
+                    kind,
+                    start: Instant::now(),
+                }));
+            }
+        }
+        effect
+    }
+
+    fn action_inner(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
         if !m.screen_off {
             self.normalize(m, tracks);
         }

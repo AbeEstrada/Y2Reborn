@@ -530,6 +530,8 @@ impl Runtime {
 
     fn recreate_graphics(&mut self) -> Result<(), String> {
         self.art = false;
+        // A new renderer starts without Cover Flow's full-resolution cover.
+        self.ui.collection_art.set(None);
         if let Some(worker) = &mut self.thumbs {
             worker.forget_failures();
         }
@@ -2557,6 +2559,17 @@ fn run() -> Result<(), String> {
                 if performance.enabled() {
                     performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.rgba.as_ref().map(Vec::len)}));
                 }
+                if reply.full {
+                    // Cover Flow's centre cover at full resolution.
+                    if let (Some(mut rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
+                        reborn_ui::art::round_corners(&mut rgba, 160);
+                        if renderer.collection_artwork(&rgba).is_ok() {
+                            rt.ui.collection_art.set(Some(reply.thumb));
+                            rt.dirty.mark_render();
+                        }
+                    }
+                    continue;
+                }
                 match (reply.rgba, rt.graphics.as_mut()) {
                     (Some(rgba), Some(renderer)) => {
                         if renderer.upload_thumb(reply.thumb, &rgba).is_ok() {
@@ -2596,6 +2609,23 @@ fn run() -> Result<(), String> {
                     .collect::<Vec<_>>();
                 if !jobs.is_empty() {
                     worker.want(jobs);
+                }
+                if let Some((key, index)) = rt.ui.take_cover_request() {
+                    if let Some(track) = tracks.get(index) {
+                        worker.want_cover(artwork::Job {
+                            thumb: key,
+                            art: artwork::Key::new(
+                                track,
+                                rt.model
+                                    .sources
+                                    .iter()
+                                    .find(|s| s.id == track.source_id)
+                                    .and_then(|s| s.mount_id),
+                                &rt.model.settings.music_directory,
+                            ),
+                            cache: rt.root.join("cache"),
+                        });
+                    }
                 }
             }
         }

@@ -70,6 +70,9 @@ pub struct Job {
 }
 pub struct Reply {
     pub thumb: u64,
+    /// A full-resolution (160x160) cover for Cover Flow's centre, not a thumbnail.
+    #[allow(dead_code)]
+    pub full: bool,
     /// 96x96 RGBA with rounded corners, or `None` when the track has no cover.
     pub rgba: Option<Vec<u8>>,
     pub decode_ms: f64,
@@ -78,6 +81,8 @@ pub struct Reply {
 #[derive(Default)]
 struct Shared {
     queue: VecDeque<Job>,
+    /// Cover Flow's centre cover at full resolution; the latest request wins.
+    cover: Option<Job>,
     current: Option<u64>,
     stop: bool,
 }
@@ -120,6 +125,16 @@ impl Worker {
             wake.notify_one();
         }
     }
+    /// Decode one cover at full resolution before any queued thumbnail.
+    #[allow(dead_code)]
+    pub fn want_cover(&mut self, job: Job) {
+        let (lock, wake) = &*self.shared;
+        let Ok(mut shared) = lock.lock() else {
+            return;
+        };
+        shared.cover = Some(job);
+        wake.notify_one();
+    }
     // Used by the player; the benchmark build shares this file without them.
     #[allow(dead_code)]
     pub fn record_failure(&mut self, thumb: u64) {
@@ -136,6 +151,7 @@ impl Worker {
         let (lock, _) = &*self.shared;
         lock.lock().is_ok_and(|mut shared| {
             shared.queue.clear();
+            shared.cover = None;
             shared.current.is_none()
         })
     }
@@ -163,7 +179,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
     let mut cached = 0usize;
     let mut counted = false;
     loop {
-        let job = {
+        let (job, full) = {
             let Ok(mut guard) = lock.lock() else {
                 return;
             };
@@ -171,9 +187,13 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
                 if guard.stop {
                     return;
                 }
+                if let Some(job) = guard.cover.take() {
+                    guard.current = Some(job.thumb);
+                    break (job, true);
+                }
                 if let Some(job) = guard.queue.pop_front() {
                     guard.current = Some(job.thumb);
-                    break job;
+                    break (job, false);
                 }
                 guard = match wake.wait(guard) {
                     Ok(g) => g,
@@ -192,6 +212,25 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
                 .unwrap_or(0);
         }
         let started = std::time::Instant::now();
+        if full {
+            let rgba = Cancel::new()
+                .ok()
+                .and_then(|cancel| job.art.load_cover(&cancel));
+            if let Ok(mut guard) = lock.lock() {
+                guard.current = None;
+            }
+            let reply = Reply {
+                thumb: job.thumb,
+                full: true,
+                rgba,
+                decode_ms: started.elapsed().as_secs_f64() * 1000.,
+                cache_hit: false,
+            };
+            if tx.send(reply).is_err() {
+                return;
+            }
+            continue;
+        }
         let path = cache_path(&job);
         let hit = std::fs::read(&path)
             .ok()
@@ -223,6 +262,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         }
         let reply = Reply {
             thumb: job.thumb,
+            full: false,
             rgba,
             decode_ms: started.elapsed().as_secs_f64() * 1000.,
             cache_hit,

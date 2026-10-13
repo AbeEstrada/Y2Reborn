@@ -42,6 +42,17 @@ fn tracks() -> Vec<Track> {
                 channels: 2,
                 artwork: true,
                 online: true,
+                genre: [
+                    "Ambient",
+                    "Ambient",
+                    "Folk",
+                    "Classical",
+                    "Folk",
+                    "Jazz",
+                    "Jazz",
+                    "",
+                ][a]
+                    .into(),
                 ..Default::default()
             });
         }
@@ -244,6 +255,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.accent = orange;
         m.navigation.focus = 5;
     });
+    case!("08b-albums-grid", at(Screen::Albums, ""), move |ui, m| {
+        ui.accent = orange;
+        m.settings.album_view = reborn_core::AlbumView::Grid;
+        m.navigation.focus = 5;
+    });
+    case!(
+        "08c-cover-flow-first",
+        at(Screen::Albums, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 0;
+        }
+    );
+    case!("08d-genres", at(Screen::Genres, ""), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 1;
+    });
+    case!(
+        "08e-genre-albums",
+        at(Screen::Albums, "genre:Jazz"),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 1;
+        }
+    );
     case!("09-album", at(Screen::Album, album), move |ui, m| {
         ui.accent = teal;
         m.navigation.focus = 3;
@@ -509,6 +545,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, mut m, setup) in cases {
         let mut ui = ui();
         ui.spin_fixed = Some(0.45);
+        ui.motion_fixed = true;
         setup(&mut ui, &mut m);
         ui.set_resident_thumbs(keys.clone());
         let tracks = std::mem::take(&mut m.library.tracks);

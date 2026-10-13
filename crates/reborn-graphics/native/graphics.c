@@ -261,10 +261,13 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
       "varying vec3 t;varying vec4 tint;void main(){"
       "gl_Position=vec4(p,0.,1.);t=uv;tint=color;}";
   /* uv carries (u*q, v*q, q): q=1 for boxes; warped quads use projective q
-   * so a tilted cover is textured with correct perspective. */
+   * so a tilted cover is textured with correct perspective. texture2DProj
+   * lets the texture unit divide: the coordinate stays a direct varying at
+   * full precision. A mediump t.xy/t.z (fp16 on the Mali-400 fragment
+   * shader) shifted glyph sampling by up to half a texel. */
   const char *fs =
       "precision mediump float;varying vec3 t;varying vec4 tint;"
-      "uniform sampler2D tex;void main(){gl_FragColor=texture2D(tex,t.xy/t.z)*tint;}";
+      "uniform sampler2D tex;void main(){gl_FragColor=texture2DProj(tex,t)*tint;}";
   GLuint v = make_shader(GL_VERTEX_SHADER, vs),
          f = make_shader(GL_FRAGMENT_SHADER, fs);
   if (!v || !f) {

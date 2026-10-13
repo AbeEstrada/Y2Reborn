@@ -152,6 +152,9 @@ pub fn browse(
         return empty(c, ui, m, interactive);
     }
     match m.screen {
+        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow => {
+            crate::views_coverflow::albums(c, ui, m, tracks, interactive)
+        }
         Screen::Albums => albums_grid(c, ui, m, tracks, interactive),
         Screen::Album => album_page(c, ui, m, tracks, has_art, interactive),
         Screen::Artist => artist_page(c, ui, m, tracks, interactive),
@@ -347,7 +350,7 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
 }
 
 /// "9 songs · 38 min" for the album with filter `key`.
-fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String {
+pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String {
     let _ = m;
     let members: Vec<&Track> = tracks
         .iter()
@@ -392,6 +395,13 @@ fn album_page(
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let scroll = window(m, focus, visible_rows_for(Screen::Album));
     let rows_all = ui.visible_rows(m, tracks, scroll, 6);
+    // Opening from Cover Flow: the centre cover flies into the header box.
+    let opening = ui
+        .transition_progress()
+        .filter(|(kind, _)| *kind == crate::flow::TransitionKind::Open)
+        .map(|(_, t)| t);
+    let cover_at = c.draw.len();
+    let mut rest_at = cover_at;
     if scroll == 0 {
         let head = ui.collection_track(m, tracks);
         let key = head.map(|t| {
@@ -408,6 +418,7 @@ fn album_page(
         } else {
             cover_rounded(c, ui, key, 24., 44., 104., 9.);
         }
+        rest_at = c.draw.len();
         if let Some(t) = head {
             c.text_mid(
                 144.,
@@ -493,6 +504,51 @@ fn album_page(
     }
     if count > 6 {
         components::scroll_rail(c, 178., 160., scroll, count, 6, accent);
+    }
+    if let Some(t) = opening {
+        fly_in(c, cover_at, rest_at, t);
+    }
+}
+
+/// The album page's first frames after Cover Flow: every quad of the header
+/// cover is carried from the centre of Cover Flow into its box, and the rest
+/// of the page rises and fades in.
+fn fly_in(c: &mut Canvas, cover_at: usize, rest_at: usize, t: f32) {
+    let (bx, by, bs) = crate::views_coverflow::PAGE_COVER;
+    let from = crate::flow::cover_corners(0.);
+    let at = |u: f32, v: f32| -> [f32; 2] {
+        // The point (u, v) of the box, moved along the flight.
+        let top = [
+            from[0][0] + (from[1][0] - from[0][0]) * u,
+            from[0][1] + (from[1][1] - from[0][1]) * u,
+        ];
+        let bottom = [
+            from[3][0] + (from[2][0] - from[3][0]) * u,
+            from[3][1] + (from[2][1] - from[3][1]) * u,
+        ];
+        let start = [
+            top[0] + (bottom[0] - top[0]) * v,
+            top[1] + (bottom[1] - top[1]) * v,
+        ];
+        let end = [bx + u * bs, by + v * bs];
+        [
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * t,
+        ]
+    };
+    for q in &mut c.draw[cover_at..rest_at] {
+        let (u0, v0) = ((q.x - bx) / bs, (q.y - by) / bs);
+        let (u1, v1) = ((q.x + q.w - bx) / bs, (q.y + q.h - by) / bs);
+        q.warp = Some(reborn_graphics::Warp {
+            corners: [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)],
+            colors: [q.color; 4],
+        });
+    }
+    let rise = (1. - t) * 48.;
+    for q in &mut c.draw[rest_at..] {
+        q.y += rise;
+        let a = ((q.color & 0xff) as f32 * t).round() as u32;
+        q.color = q.color & !0xff | a;
     }
 }
 

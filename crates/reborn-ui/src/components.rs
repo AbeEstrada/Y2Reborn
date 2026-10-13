@@ -300,8 +300,8 @@ pub fn cover_rounded(
     }
 }
 
-/// A calm gradient tile standing in for a cover that is missing or loading.
-pub fn placeholder(c: &mut Canvas, x: f32, y: f32, size: f32, radius: f32, key: u64) {
+/// The calm tint of a missing or loading cover with identity `key`.
+pub fn placeholder_color(key: u64) -> u32 {
     let hue = [
         0x3A4560u32,
         0x4A3A58,
@@ -310,8 +310,16 @@ pub fn placeholder(c: &mut Canvas, x: f32, y: f32, size: f32, radius: f32, key: 
         0x3A5846,
         0x50405A,
     ];
-    let base = hue[(key >> 8) as usize % hue.len()] << 8 | 0xFF;
-    c.rrect(x, y, size, size, radius, mix(base, color::BG, 0.35));
+    mix(
+        hue[(key >> 8) as usize % hue.len()] << 8 | 0xFF,
+        color::BG,
+        0.35,
+    )
+}
+
+/// A calm gradient tile standing in for a cover that is missing or loading.
+pub fn placeholder(c: &mut Canvas, x: f32, y: f32, size: f32, radius: f32, key: u64) {
+    c.rrect(x, y, size, size, radius, placeholder_color(key));
     if size >= 40. {
         c.icon(
             Icon::Note,

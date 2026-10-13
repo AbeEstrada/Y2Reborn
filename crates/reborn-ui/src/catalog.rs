@@ -2,6 +2,9 @@
 use crate::{album_filter, display_or_unknown, track_matches, Item};
 use reborn_core::{AppModel, Screen, Track};
 use std::collections::{BTreeMap, BTreeSet};
+/// A genre's cover track, its albums, its song count and whether the cover
+/// track has artwork.
+type GenreStats<'a> = (usize, BTreeSet<(&'a str, &'a str)>, usize, bool);
 pub enum Row {
     Track(usize),
     /// A track on its album's own page; the artist line is redundant there.
@@ -69,23 +72,26 @@ impl Catalog {
                         .iter()
                         .filter(|t| track_matches(t, &m.navigation.filter))
                         .count();
-                    self.push(Item::new("All Songs", "all_songs").with_secondary(match songs {
-                        1 => "1 song".to_owned(),
-                        n => format!("{n} songs"),
-                    }));
+                    self.push(
+                        Item::new("All Songs", "all_songs").with_secondary(match songs {
+                            1 => "1 song".to_owned(),
+                            n => format!("{n} songs"),
+                        }),
+                    );
                 }
                 for ((album, artist), (i, t)) in albums {
                     self.push(album_item(album, artist, i, t));
                 }
             }
             Screen::Genres => {
-                // genre -> (cover track, albums, songs, cover has art)
-                let mut genres: BTreeMap<&str, (usize, BTreeSet<(&str, &str)>, usize, bool)> =
-                    BTreeMap::new();
+                let mut genres: BTreeMap<&str, GenreStats> = BTreeMap::new();
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.online) {
-                    let entry = genres
-                        .entry(t.genre.as_str())
-                        .or_insert((i, BTreeSet::new(), 0, t.artwork));
+                    let entry = genres.entry(t.genre.as_str()).or_insert((
+                        i,
+                        BTreeSet::new(),
+                        0,
+                        t.artwork,
+                    ));
                     entry.1.insert((t.album.as_str(), t.album_artist.as_str()));
                     entry.2 += 1;
                     if !entry.3 && t.artwork {

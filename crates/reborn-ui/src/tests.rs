@@ -1592,7 +1592,11 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     let mut m = app(Screen::Genres);
     // Albums 0 and 1 are Jazz, album 2 has no genre tag.
     for t in m.library.tracks.iter_mut() {
-        t.genre = if t.id < 6 { "Jazz".into() } else { String::new() };
+        t.genre = if t.id < 6 {
+            "Jazz".into()
+        } else {
+            String::new()
+        };
     }
     let tracks = m.library.tracks.clone();
     let genres = ui.rows(&m, &tracks);
@@ -1606,7 +1610,10 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     // Jazz -> its albums, headed by All Songs.
     let mut ui = ui;
     ui.action(&mut m, &tracks, Action::Select);
-    assert_eq!((m.screen, m.navigation.filter.as_str()), (Screen::Albums, "genre:Jazz"));
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Albums, "genre:Jazz")
+    );
     assert_eq!(screens::screen_title(&m), "Jazz");
     let albums = ui.rows(&m, &tracks);
     assert_eq!(
@@ -1616,7 +1623,10 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     assert_eq!(albums[0].secondary, "6 songs");
     // All Songs -> the genre's six songs.
     ui.action(&mut m, &tracks, Action::Select);
-    assert_eq!((m.screen, m.navigation.filter.as_str()), (Screen::Tracks, "genre:Jazz"));
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Tracks, "genre:Jazz")
+    );
     assert_eq!(ui.row_count(&m, &tracks), 6);
     // Back, then one album -> its page.
     ui.action(&mut m, &tracks, Action::Back);
@@ -1635,6 +1645,75 @@ fn home_with_genres_fits_the_screen() {
         m.navigation.focus = focus;
         let quads = ui.draw(&m, &m.library.tracks, false);
         // Every menu label ends above the bottom edge.
-        assert!(quads.iter().all(|q| q.y + q.h <= crate::theme::HEIGHT + 0.5), "focus {focus}");
+        assert!(
+            quads
+                .iter()
+                .all(|q| q.y + q.h <= crate::theme::HEIGHT + 0.5),
+            "focus {focus}"
+        );
     }
+}
+
+#[test]
+fn albums_use_cover_flow_by_default_and_the_grid_by_setting() {
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    let flow = ui.draw(&m, &tracks, false);
+    // Cover Flow draws its covers as warped quads; the grid draws none.
+    assert!(flow.iter().filter(|q| q.warp.is_some()).count() >= 2);
+    assert_eq!(crate::focus_target_count(&flow), 1);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    let grid = ui.draw(&m, &tracks, false);
+    assert!(grid.iter().all(|q| q.warp.is_none()));
+    // The setting toggles from Settings > Display.
+    let mut m = app(Screen::SettingsDisplay);
+    let rows = ui.rows(&m, &tracks);
+    m.navigation.focus = rows.iter().position(|r| r.key == "album_view").unwrap();
+    assert_eq!(rows[m.navigation.focus].secondary, "Cover Flow");
+    assert_eq!(
+        ui.action(&mut m, &tracks, Action::Select),
+        Effect::SetAlbumView(reborn_core::AlbumView::Grid)
+    );
+}
+
+#[test]
+fn cover_flow_glides_opens_with_a_flight_and_asks_for_the_sharp_cover_at_rest() {
+    let mut ui = radios();
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false); // first frame anchors the row at focus 0
+    m.navigation.focus = 2;
+    ui.draw(&m, &tracks, false);
+    assert!(ui.animating(), "the row glides toward the new focus");
+    // While gliding nothing asks for the full-resolution cover.
+    assert!(ui.take_cover_request().is_none());
+    // Select flies the centre cover into the album page.
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+    assert!(ui.animating());
+    let page = ui.draw(&m, &tracks, false);
+    assert!(
+        page.iter().any(|q| q.warp.is_some()),
+        "the cover is in flight"
+    );
+    // Frozen motion: no glide, no flight; the cover is wanted once at rest.
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let m = app(Screen::Albums);
+    ui.draw(&m, &tracks, false);
+    std::thread::sleep(std::time::Duration::from_millis(130));
+    ui.draw(&m, &tracks, false);
+    let (key, index) = ui
+        .take_cover_request()
+        .expect("centre cover requested at rest");
+    assert_eq!(key, crate::art_key(&tracks[index]));
+    ui.collection_art.set(Some(key));
+    ui.draw(&m, &tracks, false);
+    assert!(ui.take_cover_request().is_none(), "never asked twice");
+    assert!(ui
+        .draw(&m, &tracks, false)
+        .iter()
+        .any(|q| q.tex == reborn_graphics::Tex::CollectionArt));
 }
