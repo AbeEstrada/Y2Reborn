@@ -2106,13 +2106,16 @@ fn next_brightness(current: u8) -> u8 {
         .unwrap_or(reborn_core::BRIGHTNESS_LEVELS[0])
 }
 
-pub(crate) fn initial(label: &str) -> char {
-    label
-        .chars()
-        .next()
-        .filter(char::is_ascii_alphabetic)
-        .map(|c| c.to_ascii_uppercase())
-        .unwrap_or('#')
+/// The letter a row of `screen` files under in A to Z order (the fast-scroll
+/// overlay): "The Postal Service" is under P on Artists.
+pub(crate) fn initial(label: &str, screen: Screen) -> char {
+    use reborn_core::sort::{sort_initial, sort_key, SortAs};
+    let kind = if screen == Screen::Artists {
+        SortAs::Artist
+    } else {
+        SortAs::Title
+    };
+    sort_initial(&sort_key(label, kind))
 }
 
 /// The coverage-mask atlases the native renderer needs.

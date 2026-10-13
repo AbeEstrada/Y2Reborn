@@ -1745,3 +1745,125 @@ fn only_cover_flow_motion_asks_for_the_panel_rate() {
     ui.draw(&m, &tracks, false);
     assert!(ui.gliding() && ui.animating());
 }
+
+#[test]
+fn library_lists_sort_a_to_z_ignoring_case_accents_and_a_leading_article() {
+    let ui = Ui::default();
+    let mut m = app(Screen::Artists);
+    let named = [
+        (
+            "Such Great Heights",
+            "The Postal Service",
+            "Give Up",
+            "Indie",
+        ),
+        ("The Wall", "Pink Floyd", "The Wall", "rock"),
+        (
+            "Bohemian Rhapsody",
+            "Queen",
+            "A Night at the Opera",
+            "Rock & Roll",
+        ),
+        (
+            "Can I Kick It?",
+            "A Tribe Called Quest",
+            "People's Instinctive Travels",
+            "Hip Hop",
+        ),
+        ("Bloodbuzz Ohio", "the National", "High Violet", "Indie"),
+        ("Été", "Émilie Simon", "Végétal", "Électronique"),
+        (
+            "1979",
+            "The Smashing Pumpkins",
+            "Mellon Collie",
+            "The Blues",
+        ),
+        (
+            "an end has a start",
+            "Editors",
+            "An End Has a Start",
+            "Alternative",
+        ),
+    ];
+    m.library.tracks = named
+        .iter()
+        .enumerate()
+        .map(|(i, (title, artist, album, genre))| Track {
+            id: i as i64,
+            title: (*title).into(),
+            artist: (*artist).into(),
+            album: (*album).into(),
+            album_artist: (*artist).into(),
+            genre: (*genre).into(),
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    let tracks = m.library.tracks.clone();
+    let mut labels = |screen: Screen| {
+        m.screen = screen;
+        ui.rows(&m, &tracks)
+            .into_iter()
+            .map(|r| r.label)
+            .collect::<Vec<_>>()
+    };
+    // Artists skip a leading "The" but keep "A" (A Tribe Called Quest).
+    assert_eq!(
+        labels(Screen::Artists),
+        [
+            "A Tribe Called Quest",
+            "Editors",
+            "Émilie Simon",
+            "the National",
+            "Pink Floyd",
+            "The Postal Service",
+            "Queen",
+            "The Smashing Pumpkins",
+        ]
+    );
+    // Albums, songs and genres skip "The", "A" and "An".
+    assert_eq!(
+        labels(Screen::Albums),
+        [
+            "An End Has a Start",
+            "Give Up",
+            "High Violet",
+            "Mellon Collie",
+            "A Night at the Opera",
+            "People's Instinctive Travels",
+            "Végétal",
+            "The Wall",
+        ]
+    );
+    assert_eq!(
+        labels(Screen::Tracks),
+        [
+            "1979",
+            "Bloodbuzz Ohio",
+            "Bohemian Rhapsody",
+            "Can I Kick It?",
+            "an end has a start",
+            "Été",
+            "Such Great Heights",
+            "The Wall",
+        ]
+    );
+    assert_eq!(
+        labels(Screen::Genres),
+        [
+            "Alternative",
+            "The Blues",
+            "Électronique",
+            "Hip Hop",
+            "Indie",
+            "rock",
+            "Rock & Roll",
+        ]
+    );
+    // The fast-scroll letter follows the order.
+    assert_eq!(initial("The Postal Service", Screen::Artists), 'P');
+    assert_eq!(initial("A Tribe Called Quest", Screen::Artists), 'A');
+    assert_eq!(initial("Émilie Simon", Screen::Artists), 'E');
+    assert_eq!(initial("A Night at the Opera", Screen::Albums), 'N');
+    assert_eq!(initial("1979", Screen::Tracks), '#');
+}
