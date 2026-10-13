@@ -638,6 +638,21 @@ fn pcm_lease_at(directory: &std::path::Path) -> Result<Option<std::fs::File>, St
 fn dbus_error(e: dbus::Error) -> String {
     format!("D-Bus org.bluez: {}", e.name().unwrap_or("unknown"))
 }
+/// The A2DP source codecs BlueALSA was started with. Its `Codecs` property
+/// lists "profile:codec" pairs; 5.0 spells the profile "A2DP-source", so the
+/// profile must match case-insensitively (a lowercase-only match saw none and
+/// left every codec, SBC included, ineligible).
+fn a2dp_source_codecs(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter_map(|name| {
+            let (profile, codec) = name.split_once(':')?;
+            profile
+                .eq_ignore_ascii_case("a2dp-source")
+                .then(|| codec.to_owned())
+        })
+        .collect()
+}
 fn compatible_codecs(mutual: &HashMap<String, PropMap>) -> Vec<String> {
     mutual
         .iter()
@@ -701,10 +716,7 @@ fn discover_codec_policy(
     let runtime: Vec<String> = manager
         .get("org.bluealsa.Manager1", "Codecs")
         .map_err(dbus_error)?;
-    let runtime: Vec<String> = runtime
-        .into_iter()
-        .filter_map(|name| name.strip_prefix("a2dp-source:").map(str::to_owned))
-        .collect();
+    let runtime = a2dp_source_codecs(&runtime);
     let proxy = c.with_proxy(owner, pcm.object.as_str(), Duration::from_millis(350));
     let (mutual,): (HashMap<String, PropMap>,) = proxy
         .method_call("org.bluealsa.PCM1", "GetCodecs", ())
@@ -793,10 +805,7 @@ fn codec_request(
     let runtime: Vec<String> = manager
         .get("org.bluealsa.Manager1", "Codecs")
         .map_err(dbus_error)?;
-    let runtime: Vec<String> = runtime
-        .iter()
-        .filter_map(|s| s.strip_prefix("a2dp-source:").map(str::to_string))
-        .collect();
+    let runtime = a2dp_source_codecs(&runtime);
     let proxy = c.with_proxy(owner, pcm.object.as_str(), Duration::from_secs(2));
     let (mutual,): (HashMap<String, PropMap>,) = proxy
         .method_call("org.bluealsa.PCM1", "GetCodecs", ())
@@ -1659,6 +1668,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_codecs_follow_bluealsa_profile_names_in_any_case() {
+        let names: Vec<String> = [
+            "A2DP-source:SBC",
+            "A2DP-source:aptX-HD",
+            "a2dp-source:LDAC",
+            "A2DP-sink:AAC",
+            "HFP-AG:CVSD",
+            "malformed",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(a2dp_source_codecs(&names), ["SBC", "aptX-HD", "LDAC"]);
+    }
+
+    #[test]
     fn fresh_codec_choices_are_read_only_epoch_bound_and_do_not_need_a_request() {
         use dbus::{arg::Variant, channel::Channel};
         use std::io::{BufRead, BufReader};
@@ -1697,9 +1721,11 @@ mod tests {
                             ("org.bluealsa.Manager1", "Codecs")
                         );
                         msg.method_return().append1(Variant(vec![
-                            "a2dp-source:SBC".to_owned(),
-                            "a2dp-source:AAC".to_owned(),
-                            "a2dp-source:LDAC".to_owned(),
+                            // BlueALSA 5.0.0 spelling, as observed on the Y2.
+                            "A2DP-source:SBC".to_owned(),
+                            "A2DP-source:AAC".to_owned(),
+                            "A2DP-source:LDAC".to_owned(),
+                            "HFP-AG:CVSD".to_owned(),
                         ]))
                     }
                     "GetCodecs" => {

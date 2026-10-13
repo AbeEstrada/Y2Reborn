@@ -9,8 +9,9 @@ use std::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CodecPreference {
-    Auto,
+    /// The best codec both ends support, from the platform's ranking.
     #[default]
+    Auto,
     #[serde(rename = "SBC")]
     Sbc,
     #[serde(rename = "SBC-XQ")]
@@ -499,6 +500,10 @@ pub struct Settings {
     /// How Albums presents its covers.
     #[serde(default)]
     pub album_view: AlbumView,
+    /// 1 once the codec default became Auto. Older sessions stored SBC only
+    /// as the default (the choice was never offered), so they move to Auto.
+    #[serde(default)]
+    pub codec_revision: u8,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -535,7 +540,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             volume: 35,
-            codec_preference: CodecPreference::Sbc,
+            codec_preference: CodecPreference::Auto,
             screen_timeout_seconds: 60,
             music_directory: "/data/music".into(),
             replay_gain: ReplayGainMode::Off,
@@ -547,9 +552,12 @@ impl Default for Settings {
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
+            codec_revision: CODEC_REVISION,
         }
     }
 }
+/// See `Settings::codec_revision`.
+pub const CODEC_REVISION: u8 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppModel {
     pub playback: PlaybackState,
@@ -900,6 +908,12 @@ impl AppModel {
             }
             Err(_) => serde_json::from_slice::<Self>(&bytes)?,
         };
+        if m.settings.codec_revision < CODEC_REVISION {
+            if m.settings.codec_preference == CodecPreference::Sbc {
+                m.settings.codec_preference = CodecPreference::Auto;
+            }
+            m.settings.codec_revision = CODEC_REVISION;
+        }
         if m.queue.len() > MAX_QUEUE || (!m.queue.is_empty() && m.queue_position >= m.queue.len()) {
             return Err(io::Error::other("invalid saved queue"));
         }
@@ -965,6 +979,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     #[test]
     fn s24_le_has_24_valid_bits_in_a_four_byte_stereo_frame() {
         assert_eq!(PcmFormat::S24LE.bytes_per_sample(), 4);
@@ -1026,6 +1041,44 @@ mod tests {
         assert_eq!(value["schema"], SESSION_SCHEMA_VERSION);
         assert!(fs::metadata(&path).unwrap().len() <= SESSION_MAX_BYTES as u64);
         assert!(AppModel::restore(&path).unwrap().current().is_some());
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn codec_default_is_auto_and_an_old_sbc_default_moves_to_auto_once() {
+        assert_eq!(Settings::default().codec_preference, CodecPreference::Auto);
+        let path = std::env::temp_dir().join(format!("reborn-codec-{}.json", std::process::id()));
+        let save = |preference: CodecPreference, revision: Option<u8>| {
+            let mut model = AppModel::default();
+            model.settings.codec_preference = preference;
+            let mut value = serde_json::to_value(&model).unwrap();
+            match revision {
+                Some(r) => value["settings"]["codec_revision"] = r.into(),
+                None => {
+                    value["settings"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("codec_revision");
+                }
+            }
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({"schema":2,"model":value})).unwrap(),
+            )
+            .unwrap();
+            AppModel::restore(&path).unwrap().settings
+        };
+        // A session from before the revision: its SBC was only ever the default.
+        let old = save(CodecPreference::Sbc, None);
+        assert_eq!(old.codec_preference, CodecPreference::Auto);
+        assert_eq!(old.codec_revision, CODEC_REVISION);
+        // An explicit older choice other than SBC is kept.
+        assert_eq!(
+            save(CodecPreference::Aac, None).codec_preference,
+            CodecPreference::Aac
+        );
+        // SBC chosen after the revision is respected.
+        let chosen = save(CodecPreference::Sbc, Some(CODEC_REVISION));
+        assert_eq!(chosen.codec_preference, CodecPreference::Sbc);
         fs::remove_file(path).unwrap();
     }
     #[test]
