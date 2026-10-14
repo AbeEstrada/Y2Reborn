@@ -1,6 +1,17 @@
 # Current Reborn state on the Y2
 
-## Baseline 34 — 2026-10-14 (latest)
+## Baseline 48 — 2026-10-16 (latest)
+
+Reborn 0.3.0 `62af097` is the player in Y2Linux Baseline 48 (POWER-FINAL-48, tag `baseline-48`, the third release on
+the over-the-air channel). Since Baseline 34: **Software Update** for full-system updates over Wi-Fi (Y2Linux OTA-35
+to 48): check (also once a day, with a *Software update available* notice), download, **Restart and Install** (the
+player restarts into its recovery image and back by itself), *Restoring* and named refusals (charger or half a
+battery, needs a computer, couldn't be verified; not enough system space names the MB and says music is not
+affected). The **download screen** (48) reads the platform's live progress file: *Step 1 of 2 · Download* with a
+percentage, a gliding bar, MB of MB, speed and time left, then *Step 2 of 2 · Check*; when done the page turns to
+Ready to Install and a notice says so wherever the owner is. Preview states `34`, `34b`, `34c`.
+
+## Baseline 34 — 2026-10-14
 
 Reborn 0.3.0 `5b69ef5` is the player in Y2Linux Baseline 34 (POWER-FINAL-34, tag `baseline-34`). Since Baseline 24
 (`ced5199`): Cover Flow at the panel's rate (no 34-ms frame gate), sub-minute album lengths, macOS `._*` and system

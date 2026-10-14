@@ -43,9 +43,12 @@ runtime font loader. Details: `assets/fonts/README.md`.
   "Don't unplug until it finishes" while copying; Back dismisses it, it returns
   on a new connection), a **Battery low** dialog (once per level), the
   **Bluetooth pairing** card ("Pairing with … Keep the headphones close.") and a
-  **Couldn't connect** dialog with *Try again*, an **update download** ring, a
-  scanning ring, and *SD card removed* / *N new songs added* toasts. Rings sweep
-  because no progress figure exists; no percentage is ever invented. Crossfade
+  **Couldn't connect** dialog with *Try again*, the **update download** (since
+  Baseline 48: step, percentage, gliding bar, MB, speed and time left from the
+  platform's live progress; *Connecting…* with a sweeping segment before the
+  first report), a scanning ring, and *SD card removed* / *N new songs added*
+  toasts. Rings sweep where no progress figure exists; no percentage is ever
+  invented. Crossfade
   has its own option icon on Now Playing. The Power button: a short press turns the screen off or on; a
   **hold** fills a ring ("Hold to turn off"), release cancels. There is no menu.
 
