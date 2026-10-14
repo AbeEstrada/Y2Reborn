@@ -653,14 +653,17 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
         c.text_center(
             240.,
             204. + Face::S20.mid_offset(),
-            "Downloading update…",
+            &match m.platform.snapshot.update.download_percent {
+                Some(p) => format!("Downloading update… {p}%"),
+                None => "Downloading update…".into(),
+            },
             Face::S20,
             color::TEXT,
         );
         c.text_center(
             240.,
             230. + Face::R13.mid_offset(),
-            "Keep Wi-Fi on and the player charging.",
+            "Keep Wi-Fi on.",
             Face::R13,
             color::MUTED,
         );

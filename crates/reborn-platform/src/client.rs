@@ -261,7 +261,13 @@ pub fn update_problem(error: &str) -> UpdateProblem {
         UpdateProblem::NotEnoughSpace
     } else if e.contains("signature") || e.contains("hash") || e.contains("manifest") {
         UpdateProblem::VerificationFailed
-    } else if e.contains("kernel") || e.contains("compatib") || e.contains("maintenance") {
+    } else if e.contains("charger") || e.contains("battery") {
+        UpdateProblem::NeedsCharge
+    } else if e.contains("kernel")
+        || e.contains("compatib")
+        || e.contains("maintenance")
+        || e.contains("recovery")
+    {
         UpdateProblem::NeedsComputer
     } else {
         UpdateProblem::Other
@@ -399,9 +405,11 @@ pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
     let terminal = matches!(state, "Idle" | "Acknowledged" | "RolledBack" | "Failed");
     let phase = match state {
         "Queued" => UpdatePhase::ReadyToInstall,
-        "PendingHealth" | "RollbackPending" => UpdatePhase::Installing,
+        "PendingHealth" => UpdatePhase::Installing,
+        "RollbackPending" => UpdatePhase::Restoring,
         "Failed" => UpdatePhase::Failed(update_problem(u["failure"].as_str().unwrap_or(""))),
         _ => match download["state"].as_str() {
+            Some("Checking") => UpdatePhase::Checking,
             Some("Staging") => UpdatePhase::Downloading,
             Some("Checked") => match download["release_version"].as_str() {
                 Some(v) if Some(v) != current => UpdatePhase::Available {
@@ -424,6 +432,16 @@ pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
         can_rollback: ota_enabled
             && u["rollback_allowed"] == true
             && matches!(state, "Acknowledged" | "PendingHealth"),
+        download_percent: match (
+            download["bytes_done"].as_u64(),
+            download["bytes_total"].as_u64(),
+        ) {
+            (Some(done), Some(total)) if total > 0 && download["state"] == "Staging" => {
+                Some((done.min(total) * 100 / total) as u8)
+            }
+            _ => None,
+        },
+        download_bytes: download["download_bytes"].as_u64(),
         phase,
     }
 }
@@ -1161,6 +1179,42 @@ mod tests {
             UpdateProblem::NoUpdateSource
         );
         assert!(!update(&v, false).can_check);
+    }
+
+    #[test]
+    fn full_system_update_progress_restore_and_power_gate() {
+        let mut v = status();
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Checking"}});
+        assert_eq!(update(&v, true).phase, UpdatePhase::Checking);
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Checked",
+            "release_version":"1.2","download_bytes":57_000_000_u64}});
+        let u = update(&v, true);
+        assert_eq!(
+            u.phase,
+            UpdatePhase::Available {
+                version: "1.2".into()
+            }
+        );
+        assert_eq!(u.download_bytes, Some(57_000_000));
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Staging",
+            "bytes_done":25,"bytes_total":100}});
+        let u = update(&v, true);
+        assert_eq!(
+            (u.phase, u.download_percent),
+            (UpdatePhase::Downloading, Some(25))
+        );
+        v["system"]["update"] = json!({"state":"RollbackPending"});
+        assert_eq!(update(&v, true).phase, UpdatePhase::Restoring);
+        v["system"]["update"] = json!({"state":"PendingHealth"});
+        assert_eq!(update(&v, true).phase, UpdatePhase::Installing);
+        assert_eq!(
+            update_problem("update_needs_charger_or_half_battery"),
+            UpdateProblem::NeedsCharge
+        );
+        assert_eq!(
+            update_problem("RECOVERY holds no Y2 recovery image"),
+            UpdateProblem::NeedsComputer
+        );
     }
 
     #[test]

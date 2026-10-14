@@ -872,9 +872,25 @@ pub fn update_summary(m: &AppModel) -> String {
         UpdatePhase::UpToDate => "Up to date".into(),
         UpdatePhase::Available { .. } => "Update available".into(),
         UpdatePhase::ReadyToInstall => "Ready to install".into(),
-        UpdatePhase::Installing => "Installing…".into(),
-        UpdatePhase::Downloading => "Downloading…".into(),
+        UpdatePhase::Installing => "Finishing…".into(),
+        UpdatePhase::Restoring => "Restore pending".into(),
+        UpdatePhase::Downloading => match m.platform.snapshot.update.download_percent {
+            Some(p) => format!("Downloading · {p}%"),
+            None => "Downloading…".into(),
+        },
         _ => String::new(),
+    }
+}
+
+/// "1.0.0-platform-v1-power-final-candidate.35" reads as "1.0.0 (35)".
+pub fn short_version(version: &str) -> String {
+    match (version.split('-').next(), version.rsplit('.').next()) {
+        (Some(base), Some(build))
+            if version.contains('-') && build.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            format!("{base} ({build})")
+        }
+        _ => version.to_owned(),
     }
 }
 
@@ -897,8 +913,11 @@ fn update_status(m: &AppModel) -> Page {
     }
     if busy == Some(PlatformTask::UpdateStage) || u.phase == UpdatePhase::Downloading {
         return Page::hero(
-            "Downloading Update…",
-            "Keep Wi-Fi on and the player charging.",
+            match u.download_percent {
+                Some(p) => format!("Downloading Update… {p}%"),
+                None => "Downloading Update…".into(),
+            },
+            "Keep Wi-Fi on.",
         );
     }
     if !s.observed {
@@ -917,12 +936,22 @@ fn update_status(m: &AppModel) -> Page {
     match &u.phase {
         UpdatePhase::UpToDate => Page::hero(
             "Up to Date",
-            format!("Reborn {} is the latest version.", reborn_core::VERSION),
+            match &s.info.release_version {
+                Some(v) => format!("{} is the latest version.", short_version(v)),
+                None => format!("Reborn {} is the latest version.", reborn_core::VERSION),
+            },
         )
         .with_rows(vec![check]),
         UpdatePhase::Available { version } => Page::hero(
             "Update Available",
-            format!("Version {version} is ready to download."),
+            match u.download_bytes {
+                Some(bytes) => format!(
+                    "Version {} is ready to download ({} MB).",
+                    short_version(version),
+                    bytes.div_ceil(1_000_000)
+                ),
+                None => format!("Version {} is ready to download.", short_version(version)),
+            },
         )
         .with_rows(vec![disabled(
             Item::new("Download Update", "task:update_stage"),
@@ -930,11 +959,11 @@ fn update_status(m: &AppModel) -> Page {
         )]),
         UpdatePhase::ReadyToInstall => Page::hero(
             "Ready to Install",
-            "Restart to finish installing. Keep the player charging.",
+            "The player turns off. Press Power to install; it takes a few minutes.",
         )
         .with_rows(vec![
             disabled(
-                Item::new("Restart to Install", "confirm:update_apply"),
+                Item::new("Turn Off and Install", "confirm:update_apply"),
                 u.can_install && busy.is_none(),
             ),
             disabled(
@@ -943,8 +972,12 @@ fn update_status(m: &AppModel) -> Page {
             ),
         ]),
         UpdatePhase::Installing => Page::hero(
-            "Installing Update…",
-            "The player restarts by itself. Keep it charging.",
+            "Finishing the Update…",
+            "The new version is checking itself. This takes a minute.",
+        ),
+        UpdatePhase::Restoring => Page::hero(
+            "Restoring the Previous Version",
+            "The update didn't start properly. Turn the player off, then press Power.",
         ),
         UpdatePhase::Checking | UpdatePhase::Downloading => {
             Page::hero("Working…", "This takes a moment.")
@@ -962,6 +995,11 @@ fn update_status(m: &AppModel) -> Page {
             UpdateProblem::NotEnoughSpace => Page::hero(
                 "Not Enough Space for the Update",
                 "Remove some music using a computer, then try again.",
+            )
+            .with_rows(vec![check]),
+            UpdateProblem::NeedsCharge => Page::hero(
+                "Connect the Charger",
+                "Installing needs the charger or at least half a battery.",
             )
             .with_rows(vec![check]),
             UpdateProblem::VerificationFailed => Page::hero(

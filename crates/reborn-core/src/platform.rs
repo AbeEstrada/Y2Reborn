@@ -260,9 +260,12 @@ pub enum UpdatePhase {
         version: String,
     },
     Downloading,
-    /// Verified and queued; a restart installs it.
+    /// Verified and queued; turning the player off and on installs it.
     ReadyToInstall,
+    /// The new system is checking itself after the recovery image installed it.
     Installing,
+    /// The previous system is restored by the recovery image at the next power-on.
+    Restoring,
     /// The last operation failed; the installed system is unchanged.
     Failed(UpdateProblem),
 }
@@ -276,6 +279,8 @@ pub enum UpdateProblem {
     NotEnoughSpace,
     VerificationFailed,
     NeedsComputer,
+    /// Installing needs the charger or at least half a battery.
+    NeedsCharge,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -287,6 +292,10 @@ pub struct UpdateState {
     pub can_cancel: bool,
     /// A verified previous system root can be restored (Diagnostics only).
     pub can_rollback: bool,
+    /// Download progress while the platform stages a release.
+    pub download_percent: Option<u8>,
+    /// Size of the release the last check found, in bytes.
+    pub download_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -857,6 +857,38 @@ fn update_page_follows_typed_state_and_capability() {
 }
 
 #[test]
+fn full_system_update_wording_and_versions() {
+    let ui = radios();
+    let mut m = app(Screen::Update);
+    m.platform.snapshot.update = UpdateState {
+        phase: UpdatePhase::ReadyToInstall,
+        can_install: true,
+        ..Default::default()
+    };
+    let page = pages::page(&ui, &m, &m.library.tracks);
+    assert!(page.hero.unwrap().body.contains("Press Power"));
+    assert!(page.rows.iter().any(|r| r.label == "Turn Off and Install"));
+    m.platform.snapshot.update.phase = UpdatePhase::Restoring;
+    let page = pages::page(&ui, &m, &m.library.tracks);
+    assert!(page.hero.unwrap().title.contains("Previous"));
+    m.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NeedsCharge);
+    let page = pages::page(&ui, &m, &m.library.tracks);
+    assert!(page.hero.unwrap().title.contains("Charger"));
+    m.platform.snapshot.update.phase = UpdatePhase::Downloading;
+    m.platform.snapshot.update.download_percent = Some(40);
+    assert!(pages::page(&ui, &m, &m.library.tracks)
+        .hero
+        .unwrap()
+        .title
+        .ends_with("40%"));
+    assert_eq!(
+        pages::short_version("1.0.0-platform-v1-power-final-candidate.35"),
+        "1.0.0 (35)"
+    );
+    assert_eq!(pages::short_version("1.2"), "1.2");
+}
+
+#[test]
 fn shutdown_locks_navigation_but_keeps_volume() {
     let mut ui = radios();
     let mut m = app(Screen::Albums);

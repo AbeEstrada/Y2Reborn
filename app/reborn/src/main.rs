@@ -42,6 +42,8 @@ struct Runtime {
     /// A refresh (not a user operation) is in flight.
     platform_refresh_pending: bool,
     platform_observed: bool,
+    /// The release the daily check last announced, so the toast shows once.
+    announced_update: Option<String>,
     /// Remaining frames of the first-frame fade from the boot mark into the UI.
     boot_fade: u8,
     thumbs: Option<artwork::Worker>,
@@ -1707,6 +1709,15 @@ impl Runtime {
                 p.snapshot = *snapshot;
                 p.snapshot.health = health;
                 p.snapshot.diagnostics.extend(health_section);
+                if let reborn_core::platform::UpdatePhase::Available { version } =
+                    &p.snapshot.update.phase
+                {
+                    if self.announced_update.as_ref() != Some(version) {
+                        self.announced_update = Some(version.clone());
+                        self.ui.flash("Software update available");
+                        self.dirty.mark_render();
+                    }
+                }
                 if p.busy == Some(reborn_core::PlatformTask::Refresh) {
                     p.busy = None;
                 }
@@ -2567,6 +2578,7 @@ fn run() -> Result<(), String> {
         },
         platform_refresh_pending: false,
         platform_observed: false,
+        announced_update: None,
         boot_fade: reborn_ui::BOOT_FADE_FRAMES,
         thumbs: if headless {
             None
