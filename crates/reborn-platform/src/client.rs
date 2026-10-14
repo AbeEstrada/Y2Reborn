@@ -443,11 +443,20 @@ pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
     let download = &u["download"];
     let current = status["system"]["versions"]["release_version"].as_str();
     let terminal = matches!(state, "Idle" | "Acknowledged" | "RolledBack" | "Failed");
+    // A cancel is the owner's choice, not a failure, and a check made after a
+    // failed update (download.json) supersedes it: otherwise the page kept
+    // saying "didn't finish" and never offered the newer release.
+    let failure = u["failure"].as_str().unwrap_or("");
+    let superseded = failure.contains("cancelled")
+        || matches!(
+            download["state"].as_str(),
+            Some("Checking" | "Checked" | "Staging")
+        );
     let phase = match state {
         "Queued" => UpdatePhase::ReadyToInstall,
         "PendingHealth" => UpdatePhase::Installing,
         "RollbackPending" => UpdatePhase::Restoring,
-        "Failed" => UpdatePhase::Failed(update_problem(u["failure"].as_str().unwrap_or(""))),
+        "Failed" if !superseded => UpdatePhase::Failed(update_problem(failure)),
         _ => match download["state"].as_str() {
             Some("Checking") => UpdatePhase::Checking,
             Some("Staging") => UpdatePhase::Downloading,
@@ -1275,6 +1284,20 @@ mod tests {
             assert_eq!(radio_firmware(&s), want);
         }
         assert_eq!(radio_firmware(&json!({})), RadioFirmware::Unknown);
+        // A cancelled queue followed by a check: the newer release is offered.
+        v["system"]["update"] = json!({"state":"Failed","failure":"owner cancelled before installation",
+            "download":{"state":"Checked","release_version":"1.0.0-platform-v1-power-final-candidate.49"}});
+        let u = update(&v, true);
+        assert!(matches!(u.phase, UpdatePhase::Available { .. }) && u.can_download);
+        v["system"]["update"] =
+            json!({"state":"Failed","failure":"owner cancelled before installation"});
+        assert_eq!(update(&v, true).phase, UpdatePhase::Unknown);
+        // A real failure still shows until a later check.
+        v["system"]["update"] = json!({"state":"Failed","failure":"verification failed: hash"});
+        assert_eq!(
+            update(&v, true).phase,
+            UpdatePhase::Failed(UpdateProblem::VerificationFailed)
+        );
         let live = parse_download(
             &json!({"schema":1,"phase":"download","bytes_done":25,"bytes_total":100,
                 "speed_bytes_per_s":3_300_000,"seconds_left":12}),
