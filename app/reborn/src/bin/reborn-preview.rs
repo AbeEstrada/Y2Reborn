@@ -11,6 +11,9 @@ use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus,
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
+#[path = "../skins.rs"]
+mod skins;
+
 fn tracks() -> Vec<Track> {
     let albums = [
         ("Northark", "Night Drive", ["A Brighter Silence", "Fields of Tomorrow", "The Weighing Sky"]),
@@ -212,12 +215,45 @@ fn at(screen: Screen, filter: &str) -> AppModel {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let skin_dir = args
+        .iter()
+        .position(|a| a == "--skin")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
     let output = PathBuf::from(
-        std::env::args()
-            .nth(1)
+        args.iter()
+            .enumerate()
+            .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--skin"))
+            .map(|(_, a)| a.clone())
             .unwrap_or_else(|| "out/product-ui-v3-preview-quads".into()),
     );
     fs::create_dir_all(&output)?;
+    // `--skin DIR`: every state in that skin; the atlas is written next to
+    // the quads for render_previews.py.
+    let skin = match &skin_dir {
+        Some(dir) => {
+            let id = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let skin = skins::load(dir, &id, &|path, w, h| {
+                reborn_media::decode_image(path, w, h)
+            })
+            .map_err(|e| format!("skin {}: {e}", dir.display()))?;
+            for w in &skin.warnings {
+                eprintln!("skin warning: {w}");
+            }
+            fs::write(output.join("skin-atlas.rgba"), &skin.atlas)?;
+            fs::write(
+                output.join("skin-atlas.json"),
+                serde_json::to_vec(&json!({"width":skin.atlas_width,"height":skin.atlas_height}))?,
+            )?;
+            Some(std::rc::Rc::new(skin))
+        }
+        None => None,
+    };
+    let themes = skins::scan(&[PathBuf::from("skins")]);
     let album = "album:Quiet Harbour\u{1f}Low Tide";
     let mut cases: Vec<(&str, AppModel, Setup)> = vec![];
     let none = || -> Setup { Box::new(|_, _| {}) };
@@ -528,6 +564,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.position_ms = 20_000;
     });
     case!("50-song-info", at(Screen::TrackInfo, "0"));
+    case!("51-display", at(Screen::SettingsDisplay, ""), |_, m| {
+        m.navigation.focus = 3;
+    });
+    {
+        let themes = themes.clone();
+        case!("52-theme-picker", at(Screen::Theme, ""), move |ui, m| {
+            ui.themes = themes.clone();
+            m.navigation.focus = 1;
+            m.settings.theme = themes.first().map(|t| t.id.clone()).unwrap_or_default();
+        });
+    }
 
     let mut manifest = vec![];
     let write = |name: &str, quads: &[reborn_graphics::Quad], focus: usize| {
@@ -544,6 +591,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut home = vec![];
     for (name, mut m, setup) in cases {
         let mut ui = ui();
+        ui.skin = skin.clone();
         ui.spin_fixed = Some(0.45);
         ui.motion_fixed = true;
         setup(&mut ui, &mut m);

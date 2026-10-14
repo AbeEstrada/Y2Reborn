@@ -102,6 +102,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Equalizer => equalizer(m),
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
+        Screen::Theme => theme(ui, m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
             row("Repeat", "repeat", crate::repeat_label(m.settings.repeat)),
@@ -127,6 +128,14 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 .with_kind(RowKind::Chevron),
             );
             rows.push(row("Album view", "album_view", m.settings.album_view.label()));
+            rows.push(
+                row(
+                    "Theme",
+                    "theme",
+                    ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
+                )
+                .with_kind(RowKind::Chevron),
+            );
             Page::rows(rows)
         }
         Screen::SettingsSystem => system(ui, m),
@@ -284,6 +293,31 @@ fn screen_timeout(m: &AppModel) -> Page {
         }
         .into(),
     );
+    page
+}
+
+/// The skin picker: Reborn's own look first, then every installed skin.
+fn theme(ui: &Ui, m: &AppModel) -> Page {
+    let mut rows = vec![row("Reborn", "theme_set:", "The built-in look")
+        .with_kind(RowKind::Check(m.settings.theme.is_empty()))];
+    for skin in &ui.themes {
+        let detail = match (&skin.problem, skin.author.is_empty()) {
+            (Some(problem), _) => problem.clone(),
+            (None, false) => format!("by {}", skin.author),
+            (None, true) => skin.description.clone(),
+        };
+        rows.push(disabled(
+            row(&skin.name, &format!("theme_set:{}", skin.id), detail)
+                .with_kind(RowKind::Check(m.settings.theme == skin.id)),
+            skin.problem.is_none(),
+        ));
+    }
+    let mut page = Page::rows(rows);
+    page.status = Some(if ui.themes.is_empty() {
+        "Copy a skin folder into Themes on Internal Storage or the SD card.".into()
+    } else {
+        "Add skins by copying their folder into Themes on Internal Storage or the SD card.".into()
+    });
     page
 }
 

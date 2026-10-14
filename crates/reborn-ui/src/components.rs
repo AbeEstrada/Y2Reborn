@@ -91,7 +91,7 @@ pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool
     status_cluster(c, ui, m, color::MUTED);
 }
 
-fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
+pub(crate) fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
     let b = m.platform.battery;
     let low = matches!(
         b.level,

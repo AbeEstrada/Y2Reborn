@@ -9,8 +9,7 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](https://github.com/SchulzCode/Y2Linux/blob/main/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **63**. Explicit historical/contract scope notices:
-Indexed pages: **59**. Explicit historical/contract scope notices:
+Indexed pages: **64**. Explicit historical/contract scope notices:
 **40**.
 
 ## Entry
@@ -33,6 +32,7 @@ Indexed pages: **59**. Explicit historical/contract scope notices:
 | [Reborn ↔ Y2Linux platform API boundary](architecture/platform-api-boundary.md) | Source contract |
 | [Reborn FFmpeg 9 audio stack](architecture/reborn-audio-stack-ffmpeg9.md) | Source contract |
 | [Reborn physical input audit](architecture/reborn-input-audit.md) | Historical design / runbook |
+| [Reborn skins](skins.md) | Author guide / source contract |
 | [Reborn UI reset architecture](architecture/reborn-premium-overhaul.md) | Historical design / runbook |
 
 ## Validation

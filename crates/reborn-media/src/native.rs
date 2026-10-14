@@ -104,6 +104,8 @@ type MediaRead =
 type MediaSeek = unsafe extern "C" fn(*mut c_void, i64) -> c_int;
 type MediaArtwork = unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int;
 type MediaArtworkFile = unsafe extern "C" fn(*const c_char, *mut u8, c_int) -> c_int;
+type MediaImageFile =
+    unsafe extern "C" fn(*const c_char, *mut u8, c_int, c_int, *mut c_int, *mut c_int) -> c_int;
 type MediaConvert =
     unsafe extern "C" fn(*const u8, c_int, c_int, c_int, c_int, *mut u8, c_int) -> c_int;
 type MediaCrossfade = unsafe extern "C" fn(
@@ -135,6 +137,7 @@ struct MediaApi {
     seek: MediaSeek,
     artwork: MediaArtwork,
     artwork_file: MediaArtworkFile,
+    image_file: MediaImageFile,
     convert: MediaConvert,
     crossfade: MediaCrossfade,
 }
@@ -206,6 +209,7 @@ impl MediaApi {
                     seek: Self::symbol(handle, b"rb_media_seek\0")?,
                     artwork: Self::symbol(handle, b"rb_media_art\0")?,
                     artwork_file: Self::symbol(handle, b"rb_media_art_file\0")?,
+                    image_file: Self::symbol(handle, b"rb_media_image_file\0")?,
                     convert: Self::symbol(handle, b"rb_media_convert\0")?,
                     crossfade: Self::symbol(handle, b"rb_media_crossfade\0")?,
                 })
@@ -794,6 +798,38 @@ pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
         Ok(b)
     }
 }
+/// A skin picture (JPEG, PNG or WebP) at its own size as straight-alpha RGBA:
+/// `(width, height, pixels)`. Pictures larger than `max_w` x `max_h` are refused.
+pub fn decode_image(path: &Path, max_w: u32, max_h: u32) -> Result<(u32, u32, Vec<u8>), String> {
+    use std::os::unix::ffi::OsStrExt;
+    if max_w == 0 || max_h == 0 || max_w > 2048 || max_h > 2048 {
+        return Err("image bounds".into());
+    }
+    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+    let api = api()?;
+    let mut b = vec![0; max_w as usize * max_h as usize * 4];
+    let (mut w, mut h) = (0, 0);
+    // SAFETY: C receives a valid local path, max_w*max_h*4 writable bytes and two out-ints.
+    let r = unsafe {
+        (api.image_file)(
+            name.as_ptr(),
+            b.as_mut_ptr(),
+            max_w as c_int,
+            max_h as c_int,
+            &mut w,
+            &mut h,
+        )
+    };
+    if r < 0 {
+        return Err(error(api, r));
+    }
+    let (w, h) = (w as u32, h as u32);
+    if w == 0 || h == 0 || w > max_w || h > max_h {
+        return Err("image dimensions".into());
+    }
+    b.truncate(w as usize * h as usize * 4);
+    Ok((w, h, b))
+}
 /// Deterministic sidecar preference, shared by playback and collection artwork.
 /// Only candidate paths are retained; failed images fall through to the next cover.
 /// Names in priority order (any case, .jpg/.jpeg/.png/.webp): cover, folder,
@@ -875,6 +911,24 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/fixtures")
             .join(n)
+    }
+    #[test]
+    fn skin_pictures_decode_at_their_own_size_with_alpha_and_never_scale() {
+        let skin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skins/classic/images");
+        let (w, h, rgba) = decode_image(&skin.join("battery.png"), 480, 360).unwrap();
+        assert_eq!((w, h, rgba.len()), (28, 14, 28 * 14 * 4));
+        // Outline opaque, inside transparent: straight alpha survives.
+        assert_eq!(rgba[3], 255);
+        assert_eq!(rgba[(7 * 28 + 10) * 4 + 3], 0);
+        let (_, _, strip) = decode_image(&skin.join("highlight.png"), 480, 360).unwrap();
+        assert_ne!(
+            strip[..4],
+            strip[strip.len() - 4..],
+            "a gradient, not one colour"
+        );
+        // Too large for the bound: refused, not scaled down.
+        assert!(decode_image(&skin.join("battery.png"), 20, 360).is_err());
+        assert!(decode_image(&fixture("missing.png"), 480, 360).is_err());
     }
     #[test]
     fn packed24_decode_float_dsp_and_sink_packing_keep_bits_below_s16() {

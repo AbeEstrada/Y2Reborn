@@ -102,6 +102,9 @@ static int wait_flip(int fd, struct flip *f) {
 }
 static _Thread_local char last_error[256];
 const char *rb_graphics_error(void) { return last_error; }
+/* Texture slots; keep in step with reborn-graphics/src/native.rs. */
+#define RB_TEXTURES 9
+#define RB_SKIN_MAX 1024
 typedef struct {
   int fd, width, height, modeset;
   bool sleeping, failed;
@@ -118,8 +121,8 @@ typedef struct {
   /* Texture slots, in the order the product UI names them (see rb_graphics_quad):
    * 0 white, 1..3 glyph pages, 4 shape/icon masks, 5 artwork, 6 collection
    * artwork, 7 thumbnail atlas. Every sampled size is kept for UV scaling. */
-  GLuint program, vbo, tex[8];
-  int tex_w[8], tex_h[8];
+  GLuint program, vbo, tex[RB_TEXTURES];
+  int tex_w[RB_TEXTURES], tex_h[RB_TEXTURES];
   struct flip flip;
   /* Bounded adjacent-texture batching, preserving the original draw order. */
   GLfloat vertices[256 * 6 * RB_VERTEX];
@@ -173,7 +176,7 @@ void rb_graphics_close(RbGraphics *g) {
       glDeleteProgram(g->program);
     if (g->vbo)
       glDeleteBuffers(1, &g->vbo);
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < RB_TEXTURES; i++)
       if (g->tex[i])
         glDeleteTextures(1, &g->tex[i]);
   }
@@ -325,12 +328,16 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
   g->tex[7] = texture(RB_THUMB_W, RB_THUMB_H, NULL);
   g->tex_w[7] = RB_THUMB_W;
   g->tex_h[7] = RB_THUMB_H;
-  for (int i = 5; i < 8; i++) {
+  /* Skin atlas: RGBA images and white glyph coverage, uploaded only when a
+   * skin is chosen (rb_graphics_skin); until then one white texel. */
+  g->tex[8] = texture(1, 1, white);
+  g->tex_w[8] = g->tex_h[8] = 1;
+  for (int i = 5; i < RB_TEXTURES; i++) {
     glBindTexture(GL_TEXTURE_2D, g->tex[i]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   }
-  for (int i = 0; i < 8; i++)
+  for (int i = 0; i < RB_TEXTURES; i++)
     if (!g->tex[i])
       return -EIO;
   if (glGetError() != GL_NO_ERROR)
@@ -500,13 +507,13 @@ void rb_graphics_begin(RbGraphics *g) {
   glClear(GL_COLOR_BUFFER_BIT);
 }
 /* `tex` selects the texture (0 white, 1..3 glyph pages, 4 masks, 5 artwork,
- * 6 collection artwork, 7 thumbnails); (sx, sy, sw, sh) is the source rectangle
+ * 6 collection artwork, 7 thumbnails, 8 skin atlas); (sx, sy, sw, sh) is the source rectangle
  * in texels of a mask/glyph/thumbnail texture and is ignored otherwise. */
 /* Texture-space source rectangle (u, v, uw, vh) for `tex`. */
 static void source_uv(RbGraphics *g, int tex, int sx, int sy, int sw, int sh,
                       float uv[4]) {
   uv[0] = 0; uv[1] = 0; uv[2] = 1; uv[3] = 1;
-  if ((tex >= 1 && tex <= 4) || tex == 7) {
+  if ((tex >= 1 && tex <= 4) || tex == 7 || tex == 8) {
     uv[0] = (float)sx / g->tex_w[tex];
     uv[1] = (float)sy / g->tex_h[tex];
     uv[2] = (float)sw / g->tex_w[tex];
@@ -514,7 +521,7 @@ static void source_uv(RbGraphics *g, int tex, int sx, int sy, int sw, int sh,
   }
 }
 static int begin_quad(RbGraphics *g, int tex) {
-  if (tex < 0 || tex > 7)
+  if (tex < 0 || tex >= RB_TEXTURES)
     return 0;
   GLuint t = g->tex[tex];
   if (g->vertices_used &&
@@ -609,6 +616,20 @@ int rb_graphics_art(RbGraphics *g, const uint8_t *p, int collection) {
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 160, 160, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, p);
   return glGetError() == GL_NO_ERROR ? 0 : -EIO;
+}
+/* Replace the skin atlas (w x h RGBA, at most RB_SKIN_MAX square); a 1x1
+ * upload releases the previous atlas's video memory. */
+int rb_graphics_skin(RbGraphics *g, const uint8_t *p, int w, int h) {
+  if (!p || w < 1 || h < 1 || w > RB_SKIN_MAX || h > RB_SKIN_MAX)
+    return -EINVAL;
+  glBindTexture(GL_TEXTURE_2D, g->tex[8]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, p);
+  if (glGetError() != GL_NO_ERROR)
+    return -EIO;
+  g->tex_w[8] = w;
+  g->tex_h[8] = h;
+  return 0;
 }
 int rb_graphics_test(RbGraphics *g) {
   GLuint t = texture(8, 8, NULL), fb;

@@ -21,6 +21,9 @@ pub enum Tex {
     /// A library thumbnail (96x96) identified by an opaque key; the renderer
     /// maps it to an atlas cell and skips it until its pixels are resident.
     Thumb(u64),
+    /// The active skin's RGBA atlas (images and white glyph coverage),
+    /// addressed with `Quad::src` in texels.
+    Skin,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,3 +86,5 @@ pub const THUMB_CELL: usize = THUMB_SIZE + 2;
 pub const THUMB_COLUMNS: usize = 1024 / THUMB_CELL;
 pub const THUMB_ROWS: usize = 512 / THUMB_CELL;
 pub const THUMB_SLOTS: usize = THUMB_COLUMNS * THUMB_ROWS;
+/// The largest skin atlas edge, in texels.
+pub const SKIN_ATLAS: usize = 1024;

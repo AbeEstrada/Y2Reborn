@@ -68,6 +68,10 @@ pub enum Command {
     Playback {
         action: PlaybackAction,
     },
+    /// List installed skins; with `id`, switch to it ("" = Reborn's own look).
+    Theme {
+        id: Option<String>,
+    },
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

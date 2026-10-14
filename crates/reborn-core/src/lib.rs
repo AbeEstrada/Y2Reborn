@@ -352,6 +352,8 @@ pub enum Screen {
     Crossfade,
     /// Screen-off delay picker.
     ScreenTimeout,
+    /// Skin picker: the built-in look and the installed skins.
+    Theme,
     SettingsLibrary,
     SettingsDisplay,
     SettingsSystem,
@@ -504,6 +506,9 @@ pub struct Settings {
     /// as the default (the choice was never offered), so they move to Auto.
     #[serde(default)]
     pub codec_revision: u8,
+    /// The chosen skin's id; empty is Reborn's own look.
+    #[serde(default)]
+    pub theme: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -553,6 +558,7 @@ impl Default for Settings {
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
             codec_revision: CODEC_REVISION,
+            theme: String::new(),
         }
     }
 }
@@ -647,6 +653,10 @@ pub enum Effect {
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
+    /// Switch to the skin with this id ("" = Reborn's own look).
+    SetTheme(String),
+    /// Look for installed skins again (the picker opened).
+    ScanThemes,
     QueueRemove(usize),
     QueueMove {
         index: usize,

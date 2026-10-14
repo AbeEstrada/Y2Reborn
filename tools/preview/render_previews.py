@@ -85,6 +85,23 @@ class Rasterizer:
         self.fallback = mask_page(root / "assets/fonts/reborn-fallback.a8", 1024)
         self.masks = mask_page(root / "assets/icons/reborn-masks.a8", 512)
         self.covers: dict[int, Image.Image] = {}
+        self.skin: Image.Image | None = None
+
+    def load_skin(self, preview_dir: Path) -> None:
+        """The skin atlas reborn-preview wrote for `--skin`, if any."""
+        meta = preview_dir / "skin-atlas.json"
+        if meta.exists():
+            size = json.loads(meta.read_text())
+            data = (preview_dir / "skin-atlas.rgba").read_bytes()
+            self.skin = Image.frombytes("RGBA", (size["width"], size["height"]), data)
+
+    def skin_region(self, quad: dict, w: int, h: int) -> Image.Image:
+        """A skin atlas region stretched to (w, h) and multiplied by the tint."""
+        sx, sy, sw, sh = quad["src"]
+        region = self.skin.crop((sx, sy, sx + sw, sy + sh))
+        if (sw, sh) != (w, h):
+            region = region.resize((w, h), Image.Resampling.BILINEAR)
+        return ImageChops.multiply(region, Image.new("RGBA", (w, h), rgba(quad["color"])))
 
     def cover_for(self, key: int, size: int) -> Image.Image:
         if key not in self.covers:
@@ -100,6 +117,9 @@ class Rasterizer:
             return self.cover_for(0, 160)
         if isinstance(tex, dict) and "Thumb" in tex:
             return self.cover_for(tex["Thumb"], 96)
+        if tex == "Skin":
+            sx, sy, sw, sh = quad["src"]
+            return self.skin.crop((sx, sy, sx + sw, sy + sh))
         page = (self.regular, self.semibold, self.fallback)[tex["Font"]] if isinstance(tex, dict) else self.masks
         sx, sy, sw, sh = quad["src"]
         layer = Image.new("RGBA", (sw, sh), (255, 255, 255, 255))
@@ -152,6 +172,10 @@ class Rasterizer:
         elif isinstance(tex, dict) and "Thumb" in tex:
             layer = self.cover_for(tex["Thumb"], w).resize((w, h))
             layer.putalpha(ImageChops.multiply(layer.getchannel("A"), Image.new("L", (w, h), tint[3])))
+        elif tex == "Skin":
+            if quad["src"][2] == 0 or quad["src"][3] == 0:
+                return
+            layer = self.skin_region(quad, w, h)
         else:
             if isinstance(tex, dict) and "Font" in tex:
                 page = (self.regular, self.semibold, self.fallback)[tex["Font"]]
@@ -190,6 +214,7 @@ def main() -> int:
     output = args.output or args.preview_dir / "png"
     output.mkdir(parents=True, exist_ok=True)
     raster = Rasterizer(root)
+    raster.load_skin(args.preview_dir)
     for spec in sorted(args.preview_dir.glob("*.json")):
         if spec.name == "manifest.json":
             continue

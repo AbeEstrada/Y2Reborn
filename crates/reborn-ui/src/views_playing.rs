@@ -143,7 +143,7 @@ pub fn now_playing(
 }
 
 /// `FLAC · 96 KHZ`: what the file is, in a sentence the listener understands.
-fn quality_label(t: &Track) -> Option<String> {
+pub(crate) fn quality_label(t: &Track) -> Option<String> {
     if t.codec.is_empty() {
         return None;
     }

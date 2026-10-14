@@ -4,6 +4,8 @@
 use crate::{
     canvas::Canvas,
     components::{self, SheetRow, Tone},
+    pages::Page,
+    skin::{self, Scene, Sheet, Skin},
     text::{self, Face},
     theme::{color, HEIGHT, WIDTH},
     views_library, views_playing, views_settings, views_system, Alert, Item, Ui,
@@ -23,6 +25,9 @@ pub fn visible_rows_for(screen: Screen) -> usize {
 }
 
 pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
+    if let Some(skin) = ui.skin.as_deref() {
+        return skinned(ui, skin, m, tracks, has_art);
+    }
     let mut c = Canvas::new();
     c.rect(0., 0., WIDTH, HEIGHT, color::BG);
     if matches!(
@@ -64,6 +69,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Equalizer
         | Screen::Crossfade
         | Screen::ScreenTimeout
+        | Screen::Theme
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
@@ -71,6 +77,359 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
     }
     overlays(&mut c, ui, m, tracks);
     c.finish()
+}
+
+/// Reborn's own drawing of the current screen (what a skin falls back to).
+fn native_screen(
+    c: &mut Canvas,
+    ui: &Ui,
+    m: &AppModel,
+    tracks: &[Track],
+    has_art: bool,
+    interactive: bool,
+) {
+    match m.screen {
+        Screen::NowPlaying if m.current().is_some() => {
+            views_playing::now_playing(c, ui, m, tracks, has_art, interactive)
+        }
+        Screen::Home => views_library::home(c, ui, m, tracks, has_art, interactive),
+        Screen::Albums
+        | Screen::Artists
+        | Screen::Genres
+        | Screen::Tracks
+        | Screen::Folders
+        | Screen::Album
+        | Screen::Artist
+        | Screen::Queue => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        Screen::Settings
+        | Screen::Wifi
+        | Screen::Bluetooth
+        | Screen::SettingsAudio
+        | Screen::Equalizer
+        | Screen::Crossfade
+        | Screen::ScreenTimeout
+        | Screen::Theme
+        | Screen::SettingsDisplay
+        | Screen::Storage
+        | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
+        _ => views_system::page(c, ui, m, tracks, interactive),
+    }
+}
+
+/// The skin layout names for the current screen, most specific first.
+fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'static str] {
+    let paged = page.is_some_and(|p| p.hero.is_some() || !p.facts.is_empty());
+    macro_rules! keys {
+        ($own:literal) => {
+            if paged {
+                &[$own, "page"]
+            } else {
+                &[$own, "list"]
+            }
+        };
+    }
+    match m.screen {
+        Screen::NowPlaying if m.current().is_some() => &["now_playing"],
+        Screen::Home => &["home", "list"],
+        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !empty => {
+            &["cover_flow"]
+        }
+        Screen::Albums => &["albums", "list"],
+        Screen::Artists => &["artists", "list"],
+        Screen::Genres => &["genres", "list"],
+        Screen::Tracks => &["songs", "list"],
+        Screen::Folders => &["folders", "list"],
+        Screen::Album => &["album", "list"],
+        Screen::Artist => &["artist", "list"],
+        Screen::Queue => &["queue", "list"],
+        Screen::Equalizer => &["equalizer"],
+        Screen::TextEntry | Screen::Pairing => &[],
+        Screen::ValueDetail => &["value", "page"],
+        Screen::Music => keys!("music"),
+        Screen::NowPlaying => keys!("now_playing"),
+        Screen::TrackInfo => keys!("song_info"),
+        Screen::Settings => keys!("settings"),
+        Screen::Wifi => keys!("wifi"),
+        Screen::Bluetooth => keys!("bluetooth"),
+        Screen::PcTransfer => keys!("computer"),
+        Screen::SettingsAudio => keys!("sound"),
+        Screen::SettingsPlayback => keys!("playback"),
+        Screen::Crossfade => keys!("crossfade"),
+        Screen::ScreenTimeout => keys!("screen_off"),
+        Screen::Theme => keys!("theme"),
+        Screen::SettingsLibrary => keys!("library"),
+        Screen::SettingsDisplay => keys!("display"),
+        Screen::SettingsSystem => keys!("service"),
+        Screen::Battery => keys!("battery"),
+        Screen::Sleep => keys!("sleep"),
+        Screen::Storage => keys!("storage"),
+        Screen::Update => keys!("updates"),
+        Screen::About => keys!("about"),
+        Screen::Maintenance => keys!("maintenance"),
+        Screen::Diagnostics => keys!("diagnostics"),
+        Screen::DiagnosticSection => keys!("diagnostic"),
+    }
+}
+
+/// The page a skin layout shows for screens built from `pages`.
+fn skin_page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Option<Page> {
+    match m.screen {
+        Screen::NowPlaying if m.current().is_some() => None,
+        Screen::Home
+        | Screen::Albums
+        | Screen::Artists
+        | Screen::Genres
+        | Screen::Tracks
+        | Screen::Folders
+        | Screen::Album
+        | Screen::Artist
+        | Screen::Queue
+        | Screen::Diagnostics
+        | Screen::DiagnosticSection
+        | Screen::TextEntry
+        | Screen::Pairing => None,
+        Screen::ValueDetail => {
+            let (title, value) = m
+                .navigation
+                .filter
+                .split_once('\u{1f}')
+                .unwrap_or(("Detail", &m.navigation.filter));
+            Some(Page {
+                hero: Some(crate::pages::Hero {
+                    title: title.to_owned(),
+                    body: value.to_owned(),
+                }),
+                rows: vec![Item::new("Back", "back")],
+                ..Default::default()
+            })
+        }
+        _ => Some(crate::pages::page(ui, m, tracks)),
+    }
+}
+
+/// The layout a skin draws the current screen with, if it has one.
+pub(crate) fn skin_layout<'s>(
+    skin: &'s Skin,
+    ui: &Ui,
+    m: &AppModel,
+    tracks: &[Track],
+) -> Option<(&'static str, &'s [skin::Node], Option<Page>)> {
+    let page = skin_page(ui, m, tracks);
+    let empty = m.screen == Screen::Albums && ui.row_count(m, tracks) == 0;
+    layout_keys(m, page.as_ref(), empty)
+        .iter()
+        .find_map(|k| skin.layout(k).map(|l| (*k, l)))
+        .map(|(k, l)| (k, l, page))
+}
+
+fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
+    let mut c = Canvas::new();
+    c.rect(0., 0., WIDTH, HEIGHT, skin.bg());
+    if matches!(
+        m.platform.busy,
+        Some(reborn_core::PlatformTask::UpdateApply | reborn_core::PlatformTask::UpdateRollback)
+    ) {
+        views_system::installing(&mut c);
+        skin::remap(&mut c, 1, &skin.palette, ui.accent());
+        return c.finish();
+    }
+    if m.screen_off {
+        return c.finish();
+    }
+    let interactive = m.navigation.modal.is_none()
+        && ui.pairing.is_none()
+        && !ui.text_entry
+        && ui.alert.is_none();
+    if ui.usb_overlay(m) {
+        views_system::usb(&mut c, ui, m);
+        skin::remap(&mut c, 1, &skin.palette, ui.accent());
+        skinned_overlays(&mut c, ui, skin, m, tracks);
+        return c.finish();
+    }
+    let start = c.draw.len();
+    match skin_layout(skin, ui, m, tracks) {
+        Some((_, layout, page)) => {
+            let native = |c: &mut Canvas| native_screen(c, ui, m, tracks, has_art, interactive);
+            let scene = Scene {
+                ui,
+                m,
+                tracks,
+                skin,
+                has_art,
+                interactive,
+                page: page.as_ref(),
+                sheet: None,
+                message: None,
+                opacity: 1.,
+                native: Some(&native),
+            };
+            skin::draw_layout(&mut c, &scene, layout);
+        }
+        None => {
+            native_screen(&mut c, ui, m, tracks, has_art, interactive);
+            skin::remap(&mut c, start, &skin.palette, ui.accent());
+        }
+    }
+    skinned_overlays(&mut c, ui, skin, m, tracks);
+    c.finish()
+}
+
+/// `overlays` for a skin: its sheet, dialog, toast and volume layouts where
+/// it has them, else Reborn's own in the skin's palette.
+fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track]) {
+    let scene = |sheet, message, opacity| Scene {
+        ui,
+        m,
+        tracks,
+        skin,
+        has_art: false,
+        interactive: false,
+        page: None,
+        sheet,
+        message,
+        opacity,
+        native: None,
+    };
+    // A sheet or dialog: (title, body, rows, focus, danger, is a dialog).
+    let mut sheet: Option<(String, String, Vec<Item>, usize, bool, bool)> = None;
+    if let Some(alert) = &ui.alert {
+        sheet = Some(match alert {
+            Alert::BluetoothFailed { name, .. } => (
+                "Couldn't connect".into(),
+                format!("{name} did not answer. Check that it is on and in range."),
+                vec![Item::new("Cancel", ""), Item::new("Try again", "")],
+                ui.alert_focus(),
+                false,
+                true,
+            ),
+            Alert::BatteryLow => (
+                "Battery low".into(),
+                m.platform
+                    .battery
+                    .percent
+                    .map(|p| format!("{p}% left. Charge soon to keep playing."))
+                    .unwrap_or_else(|| "Charge soon to keep playing.".into()),
+                vec![Item::new("OK", "")],
+                0,
+                false,
+                true,
+            ),
+        });
+    } else if let Some(pair) = &ui.pairing {
+        sheet = Some((
+            "Pair with this device?".into(),
+            pair.clone(),
+            vec![Item::new("Pair", ""), Item::new("Cancel", "")],
+            ui.pairing_focus,
+            false,
+            true,
+        ));
+    } else if ui.text_entry {
+        let at = c.draw.len();
+        views_settings::password_entry(c, ui, m);
+        skin::remap(c, at, &skin.palette, ui.accent());
+    } else if m.navigation.modal.is_some() {
+        let (title, body) = ui.modal_copy(m);
+        let rows = ui.modal_rows_public(m, tracks);
+        let focus = m.navigation.modal_focus.min(rows.len().saturating_sub(1));
+        sheet = Some(match &m.navigation.modal {
+            Some(Modal::Confirm(action)) => {
+                let danger = !matches!(action, reborn_core::ConfirmAction::Platform(_));
+                (title, body, rows, focus, danger, true)
+            }
+            Some(Modal::ContextMenu) => {
+                let (song, subtitle) = context_song(ui, m, tracks);
+                (song.unwrap_or(title), subtitle, rows, focus, false, false)
+            }
+            _ => (title, body, rows, focus, false, false),
+        });
+    }
+    if let Some((title, body, rows, focus, danger, dialog)) = &sheet {
+        let layout = if *dialog {
+            skin.layout("dialog").or_else(|| skin.layout("sheet"))
+        } else {
+            skin.layout("sheet")
+        };
+        match layout {
+            Some(layout) => {
+                let s = scene(
+                    Some(Sheet {
+                        title,
+                        body,
+                        rows,
+                        focus: *focus,
+                        danger: *danger,
+                    }),
+                    None,
+                    1.,
+                );
+                skin::draw_layout(c, &s, layout);
+            }
+            None => {
+                let at = c.draw.len();
+                let rows: Vec<SheetRow> = rows
+                    .iter()
+                    .map(|r| SheetRow {
+                        label: &r.label,
+                        detail: &r.secondary,
+                        enabled: r.enabled,
+                    })
+                    .collect();
+                if *dialog {
+                    components::dialog(c, title, body, &rows, *focus, *danger);
+                } else {
+                    components::action_sheet(c, title, body, &rows, *focus);
+                }
+                skin::remap(c, at, &skin.palette, ui.accent());
+            }
+        }
+    }
+    // Toasts.
+    let toast = if matches!(
+        m.platform.battery.level,
+        LowBattery::Critical | LowBattery::ShuttingDown
+    ) {
+        Some((
+            m.platform
+                .battery
+                .percent
+                .map(|p| format!("Battery low · {p}%"))
+                .unwrap_or_else(|| "Battery low".into()),
+            true,
+        ))
+    } else if !ui.notice.is_empty()
+        && ui
+            .notice_until
+            .is_some_and(|t| t > std::time::Instant::now())
+    {
+        Some((ui.notice.clone(), is_problem(&ui.notice)))
+    } else {
+        None
+    };
+    if let Some((message, error)) = &toast {
+        match skin.layout("toast") {
+            Some(layout) => skin::draw_layout(c, &scene(None, Some((message, *error)), 1.), layout),
+            None => {
+                let at = c.draw.len();
+                components::toast(c, message, if *error { Tone::Error } else { Tone::Info });
+                skin::remap(c, at, &skin.palette, ui.accent());
+            }
+        }
+    }
+    let visibility = ui.volume_visibility();
+    if visibility > 0. {
+        match skin.layout("volume") {
+            Some(layout) => skin::draw_layout(c, &scene(None, None, visibility), layout),
+            None => {
+                let at = c.draw.len();
+                views_playing::volume_line(c, ui, m);
+                skin::remap(c, at, &skin.palette, ui.accent());
+            }
+        }
+    }
+    let at = c.draw.len();
+    views_playing::power_hold(c, ui);
+    skin::remap(c, at, &skin.palette, ui.accent());
 }
 
 /// The sheet, dialog or entry surface above the screen, then toasts and the
@@ -187,7 +546,7 @@ fn modal(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
 }
 
 /// For a song's options sheet: the song's title and artist.
-fn context_song(ui: &Ui, m: &AppModel, tracks: &[Track]) -> (Option<String>, String) {
+pub(crate) fn context_song(ui: &Ui, m: &AppModel, tracks: &[Track]) -> (Option<String>, String) {
     let song = if m.screen == Screen::NowPlaying {
         m.current()
     } else {
@@ -247,6 +606,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen off after".into(),
+        Screen::Theme => "Theme".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::SettingsSystem => "Service".into(),

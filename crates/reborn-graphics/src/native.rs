@@ -1,4 +1,6 @@
-use super::{Quad, Tex, FONT_PAGE_WIDTH, THUMB_CELL, THUMB_COLUMNS, THUMB_SIZE, THUMB_SLOTS};
+use super::{
+    Quad, Tex, FONT_PAGE_WIDTH, SKIN_ATLAS, THUMB_CELL, THUMB_COLUMNS, THUMB_SIZE, THUMB_SLOTS,
+};
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
 use std::{
@@ -50,6 +52,7 @@ unsafe extern "C" {
     );
     fn rb_graphics_thumb(p: *mut c_void, cx: c_int, cy: c_int, rgba: *const u8) -> c_int;
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
+    fn rb_graphics_skin(p: *mut c_void, b: *const u8, w: c_int, h: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_readback(p: *mut c_void, pixels: *mut u8) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
@@ -74,6 +77,7 @@ pub struct Renderer {
     frame: u64,
     missing: Vec<u64>,
     mask_size: (usize, usize),
+    skin_size: (usize, usize),
     page_heights: [usize; 3],
 }
 #[derive(Clone, Copy)]
@@ -173,6 +177,7 @@ impl Renderer {
             frame: 0,
             missing: Vec::new(),
             mask_size: atlases.mask_size,
+            skin_size: (1, 1),
             page_heights: heights.map(|h| h as usize),
         })
     }
@@ -207,6 +212,7 @@ impl Renderer {
                     Tex::Mask => (4, q.src),
                     Tex::Art => (5, [0; 4]),
                     Tex::CollectionArt => (6, [0; 4]),
+                    Tex::Skin => (8, q.src),
                     Tex::Thumb(key) => match self.thumbs.get_mut(&key) {
                         Some(slot) => {
                             slot.used = self.frame;
@@ -310,6 +316,7 @@ impl Renderer {
                     && inside(FONT_PAGE_WIDTH, self.page_heights[usize::from(page)])
             }
             Tex::Mask => inside(self.mask_size.0, self.mask_size.1),
+            Tex::Skin => inside(self.skin_size.0, self.skin_size.1),
             _ => true,
         }
     }
@@ -404,6 +411,36 @@ impl Renderer {
         } else {
             Ok(())
         }
+    }
+    /// Replace the skin atlas with `width` x `height` RGBA texels (at most
+    /// `SKIN_ATLAS` square); `None` releases it. Skin quads address it in texels.
+    pub fn skin_atlas(&mut self, atlas: Option<(&[u8], usize, usize)>) -> Result<(), String> {
+        const WHITE: [u8; 4] = [255; 4];
+        let (rgba, width, height) = atlas.unwrap_or((&WHITE, 1, 1));
+        if width == 0 || height == 0 || width > SKIN_ATLAS || height > SKIN_ATLAS {
+            return Err("skin atlas dimensions".into());
+        }
+        if rgba.len() != width * height * 4 {
+            return Err("skin atlas size".into());
+        }
+        let started = Instant::now();
+        // SAFETY: the slice holds exactly width*height RGBA texels; GL copies it synchronously.
+        let r = unsafe {
+            rb_graphics_skin(
+                self.raw.as_ptr(),
+                rgba.as_ptr(),
+                width as c_int,
+                height as c_int,
+            )
+        };
+        self.log
+            .gauge("skin_upload_ms", started.elapsed().as_secs_f64() * 1000.);
+        if r < 0 {
+            self.skin_size = (1, 1);
+            return Err(format!("skin upload {r}"));
+        }
+        self.skin_size = (width, height);
+        Ok(())
     }
     pub fn test(&mut self) -> Result<(), String> {
         // SAFETY: bounded FBO test on current owner context restores default framebuffer and viewport.

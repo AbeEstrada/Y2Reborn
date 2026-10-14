@@ -1463,9 +1463,9 @@ static enum AVCodecID image_codec_for_header(const uint8_t *b, size_t n) {
 /* External cover images use the same FFmpeg image decoders and libswscale as
  * attached artwork. They are read as bounded local files without enabling an
  * image demuxer or any network protocol in the production build. */
-int rb_media_art_file(const char *path, uint8_t *out, int side) {
-  if (!path || !out || side < 1 || side > 256)
-    return AVERROR(EINVAL);
+/* Read a bounded local image file into a packet and pick its decoder by
+ * extension, else by signature. */
+static int read_image_file(const char *path, AVPacket **out, enum AVCodecID *codec_id) {
   enum AVCodecID id = image_codec_for_path(path);
   int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
   if (fd < 0)
@@ -1500,8 +1500,7 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
       return AVERROR(EIO);
     }
   }
-  const AVCodec *codec = id == AV_CODEC_ID_NONE ? NULL : avcodec_find_decoder(id);
-  if (!codec) {
+  if (id == AV_CODEC_ID_NONE || !avcodec_find_decoder(id)) {
     fclose(file);
     return AVERROR_DECODER_NOT_FOUND;
   }
@@ -1510,11 +1509,75 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
   if (r >= 0 && fread(packet->data, 1, (size_t)length, file) != (size_t)length)
     r = AVERROR(EIO);
   fclose(file);
-  if (r >= 0) r = decode_art(id, NULL, packet, out, side);
+  if (r < 0) {
+    av_packet_free(&packet);
+    return r;
+  }
+  *out = packet;
+  *codec_id = id;
+  return 0;
+}
 
+/* External cover images use the same FFmpeg image decoders and libswscale as
+ * attached artwork. They are read as bounded local files without enabling an
+ * image demuxer or any network protocol in the production build. */
+int rb_media_art_file(const char *path, uint8_t *out, int side) {
+  if (!path || !out || side < 1 || side > 256)
+    return AVERROR(EINVAL);
+  AVPacket *packet = NULL;
+  enum AVCodecID id;
+  int r = read_image_file(path, &packet, &id);
+  if (r >= 0) r = decode_art(id, NULL, packet, out, side);
   av_packet_free(&packet);
   return r;
+}
 
+/* Skin pictures: decoded at their own size into straight-alpha RGBA. An image
+ * larger than max_w x max_h is refused, never scaled, so a skin looks the same
+ * everywhere. `out` holds max_w * max_h * 4 bytes; *w and *h receive the size. */
+int rb_media_image_file(const char *path, uint8_t *out, int max_w, int max_h,
+                        int *w, int *h) {
+  if (!path || !out || !w || !h || max_w < 1 || max_h < 1 || max_w > 2048 || max_h > 2048)
+    return AVERROR(EINVAL);
+  AVPacket *packet = NULL;
+  enum AVCodecID id;
+  int r = read_image_file(path, &packet, &id);
+  if (r < 0)
+    return r;
+  const AVCodec *codec = avcodec_find_decoder(id);
+  AVCodecContext *ctx = avcodec_alloc_context3(codec);
+  AVFrame *frame = av_frame_alloc();
+  if (!ctx || !frame) r = AVERROR(ENOMEM);
+  if (r >= 0) {
+    ctx->max_pixels = (int64_t)max_w * max_h;
+    ctx->thread_count = 1;
+    r = avcodec_open2(ctx, codec, NULL);
+  }
+  if (r >= 0) r = avcodec_send_packet(ctx, packet);
+  if (r >= 0) r = avcodec_receive_frame(ctx, frame);
+  if (r >= 0 && (frame->width < 1 || frame->height < 1 ||
+                 frame->width > max_w || frame->height > max_h))
+    r = AVERROR(ERANGE);
+  if (r >= 0) {
+    struct SwsContext *scale = sws_getContext(frame->width, frame->height, frame->format,
+        frame->width, frame->height, AV_PIX_FMT_RGBA, SWS_POINT, NULL, NULL, NULL);
+    if (!scale) r = AVERROR(ENOMEM);
+    else {
+      uint8_t *dest[] = {out}; int stride[] = {frame->width * 4};
+      r = sws_scale(scale, (const uint8_t *const *)frame->data, frame->linesize,
+          0, frame->height, dest, stride);
+      sws_freeContext(scale);
+    }
+    if (r >= 0) {
+      *w = frame->width;
+      *h = frame->height;
+      r = 0;
+    }
+  }
+  avcodec_free_context(&ctx);
+  av_frame_free(&frame);
+  av_packet_free(&packet);
+  return r;
 }
 
 static int json_append(char *out, int size, int *used, const char *fmt, ...) {

@@ -12,6 +12,7 @@ mod fontdata;
 mod maskdata;
 pub mod pages;
 mod screens;
+pub mod skin;
 mod text;
 pub mod theme;
 mod views_coverflow;
@@ -267,6 +268,10 @@ pub struct Ui {
     cover_request: std::cell::Cell<Option<(u64, usize)>>,
     /// The last album detail line.
     detail: RefCell<DetailCache>,
+    /// The skin in use; `None` is Reborn's own look.
+    pub skin: Option<std::rc::Rc<skin::Skin>>,
+    /// Installed skins, as last scanned for the picker.
+    pub themes: Vec<skin::SkinInfo>,
 }
 
 /// A dialog the player raises by itself.
@@ -647,6 +652,9 @@ impl Ui {
 
     /// The accent in use: the cover's, or the default before one is known.
     pub fn accent(&self) -> u32 {
+        if let Some(fixed) = self.skin.as_deref().and_then(skin::Skin::accent) {
+            return fixed;
+        }
         if self.accent == 0 {
             theme::color::ACCENT
         } else {
@@ -1403,7 +1411,7 @@ impl Ui {
         }
         *focus = next;
         if !modal {
-            let visible = screens::visible_rows_for(m.screen);
+            let visible = self.visible_count(m, tracks);
             if next < m.navigation.scroll {
                 m.navigation.scroll = next;
             } else if next >= m.navigation.scroll + visible {
@@ -1477,7 +1485,12 @@ impl Ui {
         }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
-            return Effect::None;
+            // The picker lists what is installed now (skins arrive over MTP).
+            return if screen == Screen::Theme {
+                Effect::ScanThemes
+            } else {
+                Effect::None
+            };
         }
         if let Some(effect) = self.setting(m, key) {
             return effect;
@@ -1558,6 +1571,9 @@ impl Ui {
             }),
             k if k.starts_with("crossfade_set:") => {
                 Effect::SetCrossfade(k["crossfade_set:".len()..].parse().ok()?)
+            }
+            k if k.starts_with("theme_set:") => {
+                Effect::SetTheme(k["theme_set:".len()..].to_owned())
             }
             k if k.starts_with("timeout_set:") => {
                 Effect::SetScreenTimeout(k["timeout_set:".len()..].parse().ok()?)
@@ -1948,6 +1964,17 @@ impl Ui {
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
         screens::draw(self, m, tracks, has_art)
     }
+
+    /// List rows one screen shows: the skin's list, else Reborn's own.
+    fn visible_count(&self, m: &AppModel, tracks: &[Track]) -> usize {
+        self.skin
+            .as_deref()
+            .and_then(|skin| {
+                let (key, _, _) = screens::skin_layout(skin, self, m, tracks)?;
+                skin.list_rows(key)
+            })
+            .unwrap_or_else(|| screens::visible_rows_for(m.screen))
+    }
 }
 
 fn route(key: &str) -> Option<Screen> {
@@ -1969,6 +1996,7 @@ fn route(key: &str) -> Option<Screen> {
         "playback" => Screen::SettingsPlayback,
         "crossfade" => Screen::Crossfade,
         "screen_timeout" => Screen::ScreenTimeout,
+        "theme" => Screen::Theme,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
         "system" => Screen::SettingsSystem,
