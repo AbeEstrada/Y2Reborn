@@ -907,6 +907,12 @@ pub fn update_summary(m: &AppModel) -> String {
 
 /// "1.0.0-platform-v1-power-final-candidate.35" reads as "1.0.0 (35)".
 pub fn short_version(version: &str) -> String {
+    // "1.0.0-beta.1" reads as "1.0.0 Beta 1".
+    if let Some((base, beta)) = version.split_once("-beta.") {
+        if !beta.is_empty() && beta.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{base} Beta {beta}");
+        }
+    }
     match (version.split('-').next(), version.rsplit('.').next()) {
         (Some(base), Some(build))
             if version.contains('-') && build.chars().all(|c| c.is_ascii_digit()) =>

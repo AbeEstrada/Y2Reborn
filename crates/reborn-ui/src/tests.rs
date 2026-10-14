@@ -924,6 +924,7 @@ fn full_system_update_wording_and_versions() {
         pages::short_version("1.0.0-platform-v1-power-final-candidate.35"),
         "1.0.0 (35)"
     );
+    assert_eq!(pages::short_version("1.0.0-beta.1"), "1.0.0 Beta 1");
     assert_eq!(pages::short_version("1.2"), "1.2");
 }
 

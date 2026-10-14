@@ -5,11 +5,12 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 0.3.0, part of Y2Linux Baseline 49 (2026-10-16), developer preview.**
-> Git tag `baseline-49` in both repositories. Reborn has no installer of its own.
-> It is built into the Y2Linux image. To run it on a Y2, follow Y2Linux's
-> [BUILDING](https://github.com/SchulzCode/Y2Linux/blob/main/docs/BUILDING.md) and
-> [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guides.
+> **Status: 1.0.0-beta.1, part of Y2Linux 1.0 Beta 1 (Baseline 50, 2026-10-16), public beta.**
+> Git tag `baseline-50` in both repositories. Reborn has no installer of its own: it is built
+> into the Y2Linux images. Install them from the
+> [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
+> [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
+> updates with the system over Wi-Fi (Settings → About & Updates).
 
 ## What it does
 
@@ -17,10 +18,13 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   with cover art from the album folder first and the embedded picture otherwise (thumbnails
   cached in `/data/reborn/cache`); Albums as Cover Flow or a grid, and Genres.
 - Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
-  Bluetooth playback; the codec is chosen automatically (SBC, AAC, aptX, LDAC as offered).
+  Bluetooth playback; the codec is chosen automatically (SBC, AAC and LDAC in the public images;
+  aptX/aptX HD only in owner-private builds).
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
-  connection and copying, Bluetooth pairing, update download and low battery.
+  connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
+  with progress, speed and time left, Restart and Install). A to Z lists ignore case, accents and
+  a leading "The".
 - Skins: Settings → Display → Theme switches between Reborn's own look and skins that
   restyle every screen (colours, fonts, pictures, layouts). Fifteen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
   Cassette, Neon Night, Zune and five Mini colours);

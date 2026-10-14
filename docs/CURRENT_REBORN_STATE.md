@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## Baseline 48 — 2026-10-16 (latest)
+## 1.0.0-beta.1 — Y2Linux 1.0 Beta 1 (Baseline 50), 2026-10-16 (latest)
+
+Reborn's first public beta, built into the Y2Linux 1.0 Beta 1 images. Since Baseline 48: Wi-Fi and Bluetooth pages
+explain the one-time radio firmware copy (*Firmware* drive) and say when it is ready; a cancelled or older failed update
+no longer hides a newer release; versions read "1.0.0 Beta 1"; merged contributions by @samanz: covers that load
+reliably (#6), A to Z ignoring case, accents and a leading "The" (#7), genre titles on the album grid (#8). Public
+codecs SBC, AAC (fdk-aac-free) and LDAC.
+
+## Baseline 48 — 2026-10-16
 
 Reborn 0.3.0 `62af097` is the player in Y2Linux Baseline 48 (POWER-FINAL-48, tag `baseline-48`, the third release on
 the over-the-air channel). Since Baseline 34: **Software Update** for full-system updates over Wi-Fi (Y2Linux OTA-35
