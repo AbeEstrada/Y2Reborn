@@ -96,7 +96,12 @@ pub fn battery(status: &Value) -> BatteryState {
 pub fn battery_percent(status: &Value) -> Option<u8> {
     let battery = &status["platform"]["battery"];
     let source = battery["source"].as_str()?;
-    if !matches!(source, "fuel_gauge" | "hybrid" | "voltage_estimate") {
+    // `stock_oam`: the stock open-circuit estimate the platform reports
+    // since POWER-FINAL-29 (charging and resting); Reborn showed no level then.
+    if !matches!(
+        source,
+        "fuel_gauge" | "hybrid" | "voltage_estimate" | "stock_oam"
+    ) {
         return None;
     }
     let percent = battery["percent"].as_u64()?;
@@ -264,6 +269,8 @@ mod tests {
         assert_eq!(b.percent, Some(72));
         assert_eq!(b.charging, ChargingState::Charging);
         assert_eq!(b.level, LowBattery::Low);
+        let oam = battery(&json!({"platform":{"battery":{"source":"stock_oam","percent":96}}}));
+        assert_eq!(oam.percent, Some(96));
         let unknown = battery(&json!({"platform":{"battery":{"source":"guess","percent":72}}}));
         assert_eq!(unknown.percent, None);
         assert_eq!(unknown.charging, ChargingState::Unknown);
