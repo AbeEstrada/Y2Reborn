@@ -1,6 +1,24 @@
 # Current Reborn state on the Y2
 
-## Baseline 15 — 2026-10-12 (latest)
+## Baseline 34 — 2026-10-14 (latest)
+
+Reborn 0.3.0 `5b69ef5` is the player in Y2Linux Baseline 34 (POWER-FINAL-34, tag `baseline-34`). Since Baseline 24
+(`ced5199`): Cover Flow at the panel's rate (no 34-ms frame gate), sub-minute album lengths, macOS `._*` and system
+folders skipped (25); Bluetooth codecs seen and chosen automatically (26); folder-first artwork with more cover names,
+`.m4b/.oga/.aifc`, `ALBUM ARTIST` (31); the limiter only when the DSP can raise a peak (30); **themes** (33, 34): a
+skin engine (strict `skin.json`, skin atlas texture, TTF fonts, layouts per screen with Reborn's own drawing in the
+skin's palette as fallback), Settings → Display → Theme, `Themes` folders on Internal Storage and the SD card,
+`rebornctl theme`, 15 shipped skins ([skins](skins.md)); and the battery level for the platform's `stock_oam` source
+(34). Reborn's own look is unchanged without a skin (every host preview identical to `0892bf2` except the new Theme
+row). 398 workspace tests, fmt and strict Clippy pass. **On hardware:** the themes ran on 33 (owner: "it works very
+good"; Classic 162 ms, the other 13 shipped themes 87–119 ms to load); 34 (battery level, Zune) awaits the flash.
+Cover Flow frame rate after 25, AAC with AirPods, crossfade and EQ are not yet checked on the device.
+
+## Baseline 24 — 2026-10-13
+
+Reborn 0.3.0 `ced5199` is the player in Y2Linux Baseline 24: Cover Flow for Albums, Genres, animation frame pacing.
+
+## Baseline 15 — 2026-10-12
 
 Reborn 0.3.0 `f68e088` is the player in Y2Linux Baseline 15 (POWER-FINAL-15, tag `baseline-15`). The only change since
 13 is the move to Rust 1.99.0 with its stricter Clippy (`as_chunks`, `try_update`, a pointer cast for the signal

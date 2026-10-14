@@ -1,6 +1,6 @@
 # Reborn documentation
 
-Reborn 0.3.0 is the player in **Y2Linux Baseline 15** (2026-10-12, tag `baseline-15`), built with Rust 1.99.
+Reborn 0.3.0 is the player in **Y2Linux Baseline 34** (2026-10-14, tag `baseline-34`), built with Rust 1.99.
 Start with [current Reborn state](CURRENT_REBORN_STATE.md), the
 [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md) design and the paired
 [Y2Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).
@@ -11,6 +11,7 @@ To build and install it, use Y2Linux's
 | Need | Start here |
 | --- | --- |
 | Exact current application and physical scope | [Current Reborn state](CURRENT_REBORN_STATE.md) |
+| Themes: format, screens, elements, installing | [Reborn skins](skins.md) |
 | Responsiveness, rendering, startup and idle measurements | [Performance pass](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) |
 | All pages by scope | [Complete catalog](DOCUMENTATION_CATALOG.md) |
 | Media / live volume | [FFmpeg stack](architecture/reborn-audio-stack-ffmpeg9.md), [volume](architecture/live-volume.md) |

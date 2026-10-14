@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 0.3.0, part of Y2Linux Baseline 15 (2026-10-12), developer preview.**
-> Git tag `baseline-15` in both repositories. Reborn has no installer of its own.
+> **Status: 0.3.0, part of Y2Linux Baseline 34 (2026-10-14), developer preview.**
+> Git tag `baseline-34` in both repositories. Reborn has no installer of its own.
 > It is built into the Y2Linux image. To run it on a Y2, follow Y2Linux's
 > [BUILDING](https://github.com/SchulzCode/Y2Linux/blob/main/docs/BUILDING.md) and
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guides.
@@ -14,9 +14,10 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 ## What it does
 
 - Library of artists, albums and songs from the internal music storage and the SD card,
-  with cover art (thumbnails cached in `/data/reborn/cache`).
+  with cover art from the album folder first and the embedded picture otherwise (thumbnails
+  cached in `/data/reborn/cache`); Albums as Cover Flow or a grid, and Genres.
 - Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
-  Bluetooth playback with SBC.
+  Bluetooth playback; the codec is chosen automatically (SBC, AAC, aptX, LDAC as offered).
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
   connection and copying, Bluetooth pairing, update download and low battery.
@@ -28,8 +29,8 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   `rebornctl` and a control socket at `/run/reborn/control.sock`.
 
 Known limits (details in [current state](docs/CURRENT_REBORN_STATE.md)): native
-high-rate output is gated, and only SBC is enabled for Bluetooth. Crossfade and EQ
-have not been checked on hardware.
+high-rate output is gated; AAC with real headphones is not confirmed yet; saved Bluetooth
+headphones are not connected on play. Crossfade and EQ have not been checked on hardware.
 
 ## Development
 
