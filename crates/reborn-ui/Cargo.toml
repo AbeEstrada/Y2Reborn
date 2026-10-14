@@ -9,3 +9,6 @@ serde.workspace = true
 serde_json.workspace = true
 reborn-core = { path = "../reborn-core" }
 reborn-graphics = { path = "../reborn-graphics" }
+# Skins: TrueType/OpenType outlines and coverage rasterisation, no runtime deps.
+ttf-parser = "0.25"
+ab_glyph_rasterizer = "0.1"
