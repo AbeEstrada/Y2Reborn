@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the extra Reborn skins in skins-extra/ (one folder per skin).
+"""Build the shipped example skins in skins/ (one folder per skin; Classic has its own script).
 
 Each skin is written as skin.json, small generated pictures and Latin subsets
 of open-licence fonts (Open Sans / Noto, SIL OFL 1.1). The skins share one set
@@ -19,7 +19,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "skins-extra"
+OUT = ROOT / "skins"
 FONTS = {
     "OpenSans-Bold": "/usr/share/fonts/TTF/OpenSans-Bold.ttf",
     "OpenSans-SemiBold": "/usr/share/fonts/TTF/OpenSans-SemiBold.ttf",
