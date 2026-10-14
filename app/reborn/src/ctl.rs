@@ -65,7 +65,7 @@ fn command(a: &[String]) -> Result<Command, String> {
         });
     }
     Ok(match first{
- "theme"=>Command::Theme{id:next.map(|s|if s=="reborn"{String::new()}else{s.to_owned()})},
+ "theme"=>Command::Theme{id:next.filter(|s|!s.starts_with("--")).map(|s|if s=="reborn"{String::new()}else{s.to_owned()})},
  "status"=>Command::Status,"audio"=>Command::Audio,"health"=>Command::Health,"metrics"=>Command::Metrics,"snapshot"=>Command::Snapshot,"diagnose"=>Command::Diagnose,"scan"=>Command::Scan,
  "logs"=>Command::Logs{last:number(a,"--last",100)? as usize,subsystem:arg(a,"--subsystem").map(str::to_owned),level:arg(a,"--level").map(|s|Level::parse(s).ok_or("invalid log level")).transpose()?,since_ms:arg(a,"--since").map(|s|s.trim_end_matches('s').parse::<u64>().map(|n|n.saturating_mul(1000)).map_err(|_|"invalid --since")).transpose()?},
  "events"=>Command::Events{last:number(a,"--last",100)? as usize},"log-level"=>{if next==Some("reset"){Command::LogLevel{subsystem:Some("reset".into()),level:None}}else{Command::LogLevel{subsystem:next.filter(|s|!s.starts_with("--")).map(str::to_owned),level:a.get(2).filter(|_|next.is_some_and(|s|!s.starts_with("--"))).filter(|s|!s.starts_with("--")).map(|s|Level::parse(s).ok_or("invalid level")).transpose()?}}},
