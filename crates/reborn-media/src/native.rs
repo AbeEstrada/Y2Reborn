@@ -1179,6 +1179,53 @@ mod tests {
         assert!(peak <= (i32::MAX as f64 * 0.981) as i64);
     }
     #[test]
+    fn limiter_only_when_the_graph_can_raise_a_peak() {
+        // Neutral playback (the player decodes at neutral user gain) and plain
+        // attenuation cannot raise a peak: no limiter stage.
+        let neutral = |volume| {
+            Decoder::open_with(
+                &fixture("flac-16-44100.flac"),
+                OutputSpec {
+                    rate: 44_100,
+                    format: PcmFormat::S16LE,
+                },
+                DspConfig::with_volume(volume),
+                Cancel::new().unwrap(),
+            )
+            .unwrap()
+        };
+        for volume in [100, 80] {
+            let decoder = neutral(volume);
+            assert!(
+                decoder.metadata.filters.contains("no-limiter"),
+                "{}",
+                decoder.metadata.filters
+            );
+            assert!(!decoder.metadata.filters.contains("alimiter"));
+        }
+        // An active EQ band keeps the limiter (see the shared-graph test).
+        let eq = Decoder::open_with(
+            &fixture("flac-16-44100.flac"),
+            OutputSpec {
+                rate: 44_100,
+                format: PcmFormat::S16LE,
+            },
+            DspConfig {
+                volume: 100,
+                eq_enabled: true,
+                eq_bands: vec![EqBand {
+                    frequency_hz: 100.0,
+                    gain_db: -2.0,
+                    q: 1.0,
+                }],
+                ..Default::default()
+            },
+            Cancel::new().unwrap(),
+        )
+        .unwrap();
+        assert!(eq.metadata.filters.contains("alimiter"));
+    }
+    #[test]
     fn final_integer_conversion_stays_inside_the_ffmpeg_boundary() {
         let mut input = Vec::new();
         for value in [i32::MAX, i32::MIN, 0, 1] {

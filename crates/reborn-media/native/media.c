@@ -720,15 +720,23 @@ static int make_filter_graph(RbMedia *m) {
                      m->dsp.eq[i].frequency_hz, q, m->dsp.eq[i].gain_db);
   }
   /* The limiter is also an FFmpeg graph stage so EQ peaks cannot wrap during
-   * the final integer conversion. */
-  used += snprintf(chain + used, sizeof(chain) - (size_t)used,
-                   ",alimiter=limit=0.98:latency=1:level=0");
+   * the final integer conversion. It is only needed when this graph can raise
+   * a peak: an active EQ band, or a net positive gain (ReplayGain without a
+   * peak tag; with one, the headroom above already caps it at -0.1 dBFS).
+   * Otherwise the graph only attenuates, the output conversion saturates, and
+   * the limiter would cost about half the pipeline's CPU (measured on the Y2:
+   * 320k MP3 2.5% -> 1.5% of one core, 24/96 FLAC 4.6% -> 2.4%) and audibly
+   * touch every peak above -0.18 dBFS of a loud master. */
+  int limiter = active_eq || applied > 0.0;
+  if (limiter)
+    used += snprintf(chain + used, sizeof(chain) - (size_t)used,
+                     ",alimiter=limit=0.98:latency=1:level=0");
   if (used <= 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
   snprintf(m->filter_description, sizeof(m->filter_description),
-           "ReplayGain=%s,volume=%u,EQ=%s,alimiter,acrossfade=%ums",
+           "ReplayGain=%s,volume=%u,EQ=%s,%s,acrossfade=%ums",
            rg_name, m->dsp.volume, m->dsp.eq_count ? "configured" : "off",
-           m->dsp.crossfade_ms);
+           limiter ? "alimiter" : "no-limiter", m->dsp.crossfade_ms);
   AVFilterInOut *inputs = NULL, *outputs = NULL;
   r = avfilter_graph_parse2(m->graph, chain, &inputs, &outputs);
   if (r < 0)
