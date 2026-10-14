@@ -1942,3 +1942,18 @@ fn library_lists_sort_a_to_z_ignoring_case_accents_and_a_leading_article() {
     assert_eq!(initial("A Night at the Opera", Screen::Albums), 'N');
     assert_eq!(initial("1979", Screen::Tracks), '#');
 }
+
+#[test]
+fn the_album_grid_of_a_genre_is_titled_with_the_genre() {
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    for t in m.library.tracks.iter_mut() {
+        t.genre = "Jazz".into();
+    }
+    let tracks = m.library.tracks.clone();
+    assert!(drawn_text(&ui.draw(&m, &tracks, false)).contains("ALBUMS"));
+    m.navigation.filter = "genre:Jazz".into();
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("JAZZ") && !text.contains("ALBUMS"), "{text}");
+}
