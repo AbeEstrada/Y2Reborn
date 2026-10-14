@@ -342,9 +342,8 @@ fn run() -> Result<(), String> {
                 cache: cache.clone(),
             }]);
             let reply = worker
-                .replies
-                .recv_timeout(std::time::Duration::from_secs(10))
-                .map_err(|e| e.to_string())?;
+                .reply_within(std::time::Duration::from_secs(10))
+                .ok_or("artwork fixture timed out")?;
             if reply.thumb != index as u64 + 1 {
                 return Err("stale artwork fixture reply".into());
             }

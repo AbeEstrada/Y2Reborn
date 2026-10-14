@@ -2770,7 +2770,7 @@ fn run() -> Result<(), String> {
             // Upload finished thumbnails (a few per pass, so a burst never
             // stalls a frame), then queue what the last frame could not show.
             for _ in 0..3 {
-                let Ok(reply) = worker.replies.try_recv() else {
+                let Some(reply) = worker.try_reply() else {
                     break;
                 };
                 if performance.enabled() {

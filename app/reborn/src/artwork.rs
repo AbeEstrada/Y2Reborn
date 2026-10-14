@@ -5,7 +5,7 @@ use reborn_graphics::THUMB_SIZE;
 use reborn_media::{external_artwork, folder_artwork_candidates, Cancel, MediaFile};
 use reborn_platform::storage::{pin_track, PinnedTrack};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -85,13 +85,20 @@ struct Shared {
     cover: Option<Job>,
     current: Option<u64>,
     stop: bool,
+    /// Replies sent and not yet taken by the player, by cover and whether it
+    /// is a full-resolution one. Such a cover is not decoded again: while the
+    /// player takes fewer replies per pass than the worker makes (a cached
+    /// thumbnail takes a few milliseconds), asking again on every pass would
+    /// fill the channel with copies, delay every new cover behind them and
+    /// hold their pixels in memory.
+    unread: HashMap<(u64, bool), u32>,
 }
 /// Cached thumbnails are at most this many files (about 55 MB).
 const CACHE_LIMIT: usize = 1500;
 
 pub struct Worker {
     shared: Arc<(Mutex<Shared>, Condvar)>,
-    pub replies: Receiver<Reply>,
+    replies: Receiver<Reply>,
     failed: HashSet<u64>,
 }
 impl Worker {
@@ -117,10 +124,15 @@ impl Worker {
             return;
         };
         let current = shared.current;
-        shared.queue = jobs
+        let queue = jobs
             .into_iter()
-            .filter(|job| !self.failed.contains(&job.thumb) && Some(job.thumb) != current)
+            .filter(|job| {
+                !self.failed.contains(&job.thumb)
+                    && Some(job.thumb) != current
+                    && !shared.unread.contains_key(&(job.thumb, false))
+            })
             .collect();
+        shared.queue = queue;
         if !shared.queue.is_empty() {
             wake.notify_one();
         }
@@ -132,8 +144,36 @@ impl Worker {
         let Ok(mut shared) = lock.lock() else {
             return;
         };
-        shared.cover = Some(job);
-        wake.notify_one();
+        if !shared.unread.contains_key(&(job.thumb, true)) {
+            shared.cover = Some(job);
+            wake.notify_one();
+        }
+    }
+    /// The next reply, if one is waiting; its cover may be asked for again.
+    #[allow(dead_code)]
+    pub fn try_reply(&self) -> Option<Reply> {
+        let reply = self.replies.try_recv().ok()?;
+        self.taken(&reply);
+        Some(reply)
+    }
+    /// Wait up to `wait` for the next reply.
+    #[allow(dead_code)]
+    pub fn reply_within(&self, wait: std::time::Duration) -> Option<Reply> {
+        let reply = self.replies.recv_timeout(wait).ok()?;
+        self.taken(&reply);
+        Some(reply)
+    }
+    fn taken(&self, reply: &Reply) {
+        let (lock, _) = &*self.shared;
+        if let Ok(mut shared) = lock.lock() {
+            let key = (reply.thumb, reply.full);
+            if let Some(n) = shared.unread.get_mut(&key) {
+                *n -= 1;
+                if *n == 0 {
+                    shared.unread.remove(&key);
+                }
+            }
+        }
     }
     // Used by the player; the benchmark build shares this file without them.
     #[allow(dead_code)]
@@ -232,6 +272,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
                 .and_then(|cancel| job.art.load_cover(&cancel));
             if let Ok(mut guard) = lock.lock() {
                 guard.current = None;
+                *guard.unread.entry((job.thumb, true)).or_insert(0) += 1;
             }
             let reply = Reply {
                 thumb: job.thumb,
@@ -273,6 +314,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         };
         if let Ok(mut guard) = lock.lock() {
             guard.current = None;
+            *guard.unread.entry((job.thumb, false)).or_insert(0) += 1;
         }
         let reply = Reply {
             thumb: job.thumb,
@@ -345,9 +387,36 @@ mod tests {
     fn reply(worker: &mut Worker, job: Job) -> Reply {
         worker.want(vec![job]);
         worker
-            .replies
-            .recv_timeout(std::time::Duration::from_secs(10))
+            .reply_within(std::time::Duration::from_secs(10))
             .unwrap()
+    }
+    fn unread(worker: &Worker) -> u32 {
+        let (lock, _) = &*worker.shared;
+        lock.lock().unwrap().unread.values().sum()
+    }
+    #[test]
+    fn a_cover_waiting_to_be_taken_is_not_decoded_again() {
+        let root = std::env::temp_dir().join(format!("reborn-thumbs-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("cache")).unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
+        std::fs::copy(fixtures.join("artwork.flac"), root.join("song.flac")).unwrap();
+        let track = fixture_track(&root, "song.flac", 1, true);
+        let mut worker = Worker::spawn().unwrap();
+        // The player asks on every pass until it has taken the reply.
+        for _ in 0..50 {
+            worker.want(vec![job(&root, &track, 7)]);
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(unread(&worker), 1, "one reply, not one per request");
+        assert!(worker.try_reply().is_some());
+        assert!(worker.try_reply().is_none());
+        assert_eq!(unread(&worker), 0);
+        // Once taken it may be asked for again (now from the disk cache).
+        assert!(reply(&mut worker, job(&root, &track, 7)).cache_hit);
+        drop(worker);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn removable_mount_and_file_revision_are_part_of_art_identity() {
@@ -409,9 +478,8 @@ mod tests {
         worker.record_failure(9);
         worker.want(vec![job(&root, &bad, 9)]);
         assert!(worker
-            .replies
-            .recv_timeout(std::time::Duration::from_millis(300))
-            .is_err());
+            .reply_within(std::time::Duration::from_millis(300))
+            .is_none());
         worker.forget_failures();
         assert!(reply(&mut worker, job(&root, &bad, 9)).rgba.is_none());
         // A source replaced in place (same size and mtime) fails the freshness check.
