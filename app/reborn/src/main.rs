@@ -1760,7 +1760,9 @@ impl Runtime {
                     }
                     Err(error) => {
                         // The update page presents its own journaled reason.
-                        if !matches!(task, UpdateCheck | UpdateStage) {
+                        if matches!(task, UpdateApply | UpdateRollback) {
+                            self.ui.flash(install_refusal(&error));
+                        } else if !matches!(task, UpdateCheck | UpdateStage) {
                             self.ui.flash(error.clone());
                         }
                         p.failure = Some(error);
@@ -3841,6 +3843,17 @@ fn run() -> Result<(), String> {
         json!({}),
     );
     Ok(())
+}
+
+/// Why the platform did not turn off to install, in the owner's words.
+fn install_refusal(error: &str) -> String {
+    use reborn_core::platform::UpdateProblem;
+    match client::update_problem(error) {
+        UpdateProblem::NeedsCharge => "Connect the charger or charge to half first".into(),
+        UpdateProblem::NeedsComputer => "This player needs a computer to update".into(),
+        UpdateProblem::VerificationFailed => "The update couldn't be verified".into(),
+        _ => "The update couldn't start. Nothing was changed.".into(),
+    }
 }
 
 fn main() {
