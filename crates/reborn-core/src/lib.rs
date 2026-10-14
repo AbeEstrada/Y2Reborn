@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod platform;
+pub mod sort;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,

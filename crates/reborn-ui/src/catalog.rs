@@ -1,6 +1,9 @@
 //! Cached ordered row identities, rebuilt on catalog/route change, not wheel ticks.
 use crate::{album_filter, display_or_unknown, track_matches, Item};
-use reborn_core::{AppModel, Screen, Track};
+use reborn_core::{
+    sort::{sort_key, SortAs},
+    AppModel, Screen, Track,
+};
 use std::collections::{BTreeMap, BTreeSet};
 /// A genre's cover track, its albums, its song count and whether the cover
 /// track has artwork.
@@ -66,6 +69,11 @@ impl Catalog {
                         .entry((t.album.as_str(), t.album_artist.as_str()))
                         .or_insert((i, t));
                 }
+                // A to Z by title, then album artist, articles skipped.
+                let mut albums: Vec<_> = albums.into_iter().collect();
+                albums.sort_by_cached_key(|((album, artist), _)| {
+                    (title_key(album), artist_key(artist))
+                });
                 // A genre's album view opens with all of its songs.
                 if m.navigation.filter.starts_with("genre:") && !albums.is_empty() {
                     let songs = tracks
@@ -100,8 +108,10 @@ impl Catalog {
                     }
                 }
                 // Untagged songs go last, under one honest name.
-                let (named, untagged): (Vec<_>, Vec<_>) =
+                let (mut named, untagged): (Vec<_>, Vec<_>) =
                     genres.into_iter().partition(|(genre, _)| !genre.is_empty());
+                // A to Z as everywhere: case, accents and a leading article aside.
+                named.sort_by_cached_key(|(genre, _)| title_key(genre));
                 for (genre, (i, albums, songs, _)) in named.into_iter().chain(untagged) {
                     let label = if genre.is_empty() { "No Genre" } else { genre };
                     let albums = match albums.len() {
@@ -131,6 +141,8 @@ impl Catalog {
                         entry.2 = true;
                     }
                 }
+                let mut artists: Vec<_> = artists.into_iter().collect();
+                artists.sort_by_cached_key(|(artist, _)| artist_key(artist));
                 for (artist, (i, albums, _)) in artists {
                     let mut item =
                         Item::new(display_or_unknown(artist), format!("artist:{artist}"))
@@ -214,11 +226,11 @@ impl Catalog {
                 }
                 if m.screen == Screen::Tracks && m.navigation.filter.is_empty() {
                     ids.sort_by_cached_key(|(_, t)| {
-                        if t.title.is_empty() {
-                            t.filename.to_lowercase()
+                        title_key(if t.title.is_empty() {
+                            &t.filename
                         } else {
-                            t.title.to_lowercase()
-                        }
+                            &t.title
+                        })
                     });
                 }
                 if m.screen == Screen::Album {
@@ -241,6 +253,10 @@ impl Catalog {
                             .entry((t.album.as_str(), t.album_artist.as_str()))
                             .or_insert((*i, *t));
                     }
+                    let mut albums: Vec<_> = albums.into_iter().collect();
+                    albums.sort_by_cached_key(|((album, artist), _)| {
+                        (title_key(album), artist_key(artist))
+                    });
                     for ((album, artist), (i, t)) in albums {
                         self.push(album_item(album, artist, i, t));
                     }
@@ -260,6 +276,14 @@ impl Catalog {
             _ => {}
         }
     }
+}
+/// A to Z keys (`reborn_core::sort::sort_key`): an artist skips a leading
+/// "The ", a title "The", "A" or "An". The name itself breaks ties.
+fn artist_key(name: &str) -> (String, String) {
+    (sort_key(name, SortAs::Artist), name.to_owned())
+}
+fn title_key(name: &str) -> (String, String) {
+    (sort_key(name, SortAs::Title), name.to_owned())
 }
 fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
     let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(

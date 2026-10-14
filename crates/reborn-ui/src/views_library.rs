@@ -279,7 +279,7 @@ fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus:
     let Some(row) = ui.row_at(m, tracks, focus) else {
         return;
     };
-    let letter = crate::initial(&row.label).to_string();
+    let letter = crate::initial(&row.label, m.screen).to_string();
     let accent = ui.accent();
     c.rrect(206., 150., 68., 64., 18., 0x0E1014F5);
     c.rrect_outline(206., 150., 68., 64., 18., 1., alpha(accent, 170));
