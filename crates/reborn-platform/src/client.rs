@@ -442,6 +442,9 @@ pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
             _ => None,
         },
         download_bytes: download["download_bytes"].as_u64(),
+        space_needed_mb: download["needed_bytes"]
+            .as_u64()
+            .map(|b| b.div_ceil(1_000_000)),
         phase,
     }
 }
@@ -1210,6 +1213,16 @@ mod tests {
         assert_eq!(
             update_problem("update_needs_charger_or_half_battery"),
             UpdateProblem::NeedsCharge
+        );
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Failed",
+            "failure":"update_data_space_reserve","needed_bytes":280_100_000u64}});
+        let u = update(&v, true);
+        assert_eq!(
+            (u.phase, u.space_needed_mb),
+            (
+                UpdatePhase::Failed(UpdateProblem::NotEnoughSpace),
+                Some(281)
+            )
         );
         assert_eq!(
             update_problem("RECOVERY holds no Y2 recovery image"),

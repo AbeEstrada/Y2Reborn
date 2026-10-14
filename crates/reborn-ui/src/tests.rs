@@ -866,8 +866,12 @@ fn full_system_update_wording_and_versions() {
         ..Default::default()
     };
     let page = pages::page(&ui, &m, &m.library.tracks);
-    assert!(page.hero.unwrap().body.contains("Press Power"));
-    assert!(page.rows.iter().any(|r| r.label == "Turn Off and Install"));
+    assert!(page.hero.unwrap().body.contains("restarts"));
+    assert!(page.rows.iter().any(|r| r.label == "Restart and Install"));
+    m.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NotEnoughSpace);
+    m.platform.snapshot.update.space_needed_mb = Some(281);
+    let page = pages::page(&ui, &m, &m.library.tracks);
+    assert!(page.hero.unwrap().body.contains("281 MB"));
     m.platform.snapshot.update.phase = UpdatePhase::Restoring;
     let page = pages::page(&ui, &m, &m.library.tracks);
     assert!(page.hero.unwrap().title.contains("Previous"));

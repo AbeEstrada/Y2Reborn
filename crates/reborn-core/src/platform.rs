@@ -296,6 +296,8 @@ pub struct UpdateState {
     pub download_percent: Option<u8>,
     /// Size of the release the last check found, in bytes.
     pub download_bytes: Option<u64>,
+    /// System space a refused download needed, after the platform's cleanup.
+    pub space_needed_mb: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

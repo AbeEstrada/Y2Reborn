@@ -959,11 +959,11 @@ fn update_status(m: &AppModel) -> Page {
         )]),
         UpdatePhase::ReadyToInstall => Page::hero(
             "Ready to Install",
-            "The player turns off. Press Power to install; it takes a few minutes.",
+            "The player restarts to install. It takes about a minute.",
         )
         .with_rows(vec![
             disabled(
-                Item::new("Turn Off and Install", "confirm:update_apply"),
+                Item::new("Restart and Install", "confirm:update_apply"),
                 u.can_install && busy.is_none(),
             ),
             disabled(
@@ -994,7 +994,12 @@ fn update_status(m: &AppModel) -> Page {
             ),
             UpdateProblem::NotEnoughSpace => Page::hero(
                 "Not Enough Space for the Update",
-                "Remove some music using a computer, then try again.",
+                match u.space_needed_mb {
+                    Some(mb) => format!(
+                        "The player cleared what it could, but the update needs {mb} MB of system space. Your music is not affected. Connect the player to a computer to update."
+                    ),
+                    None => "The player cleared what it could. Your music is not affected. Connect the player to a computer to update.".into(),
+                },
             )
             .with_rows(vec![check]),
             UpdateProblem::NeedsCharge => Page::hero(

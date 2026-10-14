@@ -2056,7 +2056,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::ClearCache => "Clear",
         ConfirmAction::PowerOff => "Power Off",
         ConfirmAction::Reboot => "Restart",
-        ConfirmAction::Platform(PlatformTask::UpdateApply) => "Turn Off and Install",
+        ConfirmAction::Platform(PlatformTask::UpdateApply) => "Restart and Install",
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => "Cancel Update",
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => "Restore",
         ConfirmAction::Platform(_) => "Run",
@@ -2100,8 +2100,8 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::PowerOff => ("Power off?", "Your queue and position are saved."),
         ConfirmAction::Reboot => ("Restart?", "Your queue and position are saved."),
         ConfirmAction::Platform(PlatformTask::UpdateApply) => (
-            "Turn off and install?",
-            "The player turns off. Press Power to install the update, and again when it says so. Use the charger or at least half a battery.",
+            "Restart and install?",
+            "The player restarts, installs the update and starts the new version by itself. It takes about a minute. Use the charger or at least half a battery.",
         ),
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => (
             "Cancel this update?",
