@@ -179,6 +179,13 @@ pub(crate) enum FontRef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Case {
+    Normal,
+    Upper,
+    Lower,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Align {
     Left,
     Center,
@@ -439,7 +446,7 @@ pub(crate) enum El {
         lines: usize,
         line: f32,
         tracking: f32,
-        upper: bool,
+        case: Case,
     },
     Icon {
         x: f32,

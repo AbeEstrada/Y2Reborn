@@ -1,8 +1,8 @@
 //! The skin interpreter: draws a compiled layout from the player's state, and
 //! recolours Reborn's own drawing for the screens a skin leaves to Reborn.
 use super::{
-    atlas::Font, Align, ArtSource, Bx, El, Flag, FontRef, IconRef, Level, ListSource, NativePart,
-    Node, Paint, Palette, Seg, Skin, Var,
+    atlas::Font, Align, ArtSource, Bx, Case, El, Flag, FontRef, IconRef, Level, ListSource,
+    NativePart, Node, Paint, Palette, Seg, Skin, Var,
 };
 use crate::{
     canvas::{Canvas, Icon},
@@ -567,7 +567,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
             lines,
             line,
             tracking,
-            upper,
+            case,
         } => {
             let mut value = String::new();
             for seg in text {
@@ -576,8 +576,10 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     Seg::Var(v) => value.push_str(&s.text(*v, row)),
                 }
             }
-            if *upper {
-                value = value.to_uppercase();
+            match case {
+                Case::Normal => {}
+                Case::Upper => value = value.to_uppercase(),
+                Case::Lower => value = value.to_lowercase(),
             }
             if value.trim().is_empty() {
                 return;

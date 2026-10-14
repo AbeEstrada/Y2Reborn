@@ -183,7 +183,8 @@ impl ttf_parser::OutlineBuilder for Outline<'_> {
 }
 
 /// Rasterise `charset()` from `data` at `px` into the atlas.
-pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32) -> Result<Font, String> {
+/// With `ascii`, only printable ASCII (large display sizes).
+pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32, ascii: bool) -> Result<Font, String> {
     let face = ttf_parser::Face::parse(data, 0).map_err(|e| format!("not a usable font ({e})"))?;
     let units = f32::from(face.units_per_em().max(1));
     let scale = px / units;
@@ -192,7 +193,7 @@ pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32) -> Result<Font, String
     let gap = f32::from(face.line_gap()) * scale;
     let mut glyphs = HashMap::new();
     let mut raster = ab_glyph_rasterizer::Rasterizer::new(1, 1);
-    for ch in charset() {
+    for ch in charset().filter(|c| !ascii || c.is_ascii()) {
         let Some(id) = face.glyph_index(ch) else {
             continue;
         };

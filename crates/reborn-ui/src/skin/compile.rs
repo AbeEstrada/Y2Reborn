@@ -1,9 +1,9 @@
 //! `skin.json` to a checked, drawable `Skin`. Pure: every file is fetched
 //! through `Files`, so the caller owns reading, path containment and decoding.
 use super::{
-    atlas, Align, ArtSource, Bx, Cond, El, Files, FontRef, IconRef, Level, ListSource, NativePart,
-    Node, Paint, Palette, Scroll, Seg, Skin, Sliced, FLAGS, FONT_FILE_MAX, FORMAT, LAYOUTS,
-    MANIFEST, MAX_ELEMENTS, MAX_FONTS, MAX_PICTURES, PICTURE_MAX, TOKENS, VARS,
+    atlas, Align, ArtSource, Bx, Case, Cond, El, Files, FontRef, IconRef, Level, ListSource,
+    NativePart, Node, Paint, Palette, Scroll, Seg, Skin, Sliced, FLAGS, FONT_FILE_MAX, FORMAT,
+    LAYOUTS, MANIFEST, MAX_ELEMENTS, MAX_FONTS, MAX_PICTURES, PICTURE_MAX, TOKENS, VARS,
 };
 use crate::{canvas::Icon, text::Face};
 use serde::Deserialize;
@@ -47,6 +47,10 @@ struct Manifest {
 struct FontSpec {
     file: String,
     size: f32,
+    /// "latin" (default) or "ascii": only printable ASCII, for large display
+    /// sizes; anything else falls back to Reborn's font.
+    #[serde(default)]
+    charset: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -562,11 +566,12 @@ impl Compiler<'_> {
                     lines: lines as usize,
                     line: num(e.line_height, "line_height", Some(0.))?.clamp(0., 200.),
                     tracking: num(e.tracking, "tracking", Some(0.))?.clamp(-4., 20.),
-                    upper: match e.case.as_deref() {
-                        None | Some("normal") => false,
-                        Some("upper") => true,
+                    case: match e.case.as_deref() {
+                        None | Some("normal") => Case::Normal,
+                        Some("upper") => Case::Upper,
+                        Some("lower") => Case::Lower,
                         Some(other) => {
-                            return Err(format!("{at}: case \"{other}\" is normal or upper"))
+                            return Err(format!("{at}: case \"{other}\" is normal, upper or lower"))
                         }
                     },
                 }
@@ -891,7 +896,12 @@ pub fn compile(id: &str, text: &str, files: &dyn Files) -> Result<Skin, String> 
         let data = files
             .read(&spec.file, FONT_FILE_MAX)
             .map_err(|e| format!("{at}: \"{}\" {e}", spec.file))?;
-        let font = atlas::rasterise(&mut atlas, &data, spec.size.round())
+        let ascii = match spec.charset.as_deref() {
+            None | Some("latin") => false,
+            Some("ascii") => true,
+            Some(other) => return Err(format!("{at}: charset \"{other}\" is latin or ascii")),
+        };
+        let font = atlas::rasterise(&mut atlas, &data, spec.size.round(), ascii)
             .map_err(|e| format!("{at}: \"{}\" {e}", spec.file))?;
         font_index.insert(name.clone(), fonts.len());
         fonts.push(font);

@@ -457,3 +457,28 @@ fn the_overlays_use_the_skins_layouts() {
         "Classic toast"
     );
 }
+
+#[test]
+fn display_fonts_can_carry_only_ascii_and_text_can_be_lowercased() {
+    let files = classic_files().with("images/bar.png", b"8x30");
+    let text = manifest(
+        r##"{"list": [{"type": "text", "w": 400, "h": 60, "text": "{screen}", "font": "huge", "case": "lower"}]}"##,
+    )
+    .replace(
+        r##""images":"##,
+        r##""fonts": {"huge": {"file": "fonts/OpenSans-Bold.ttf", "size": 64, "charset": "ascii"}}, "images":"##,
+    );
+    let skin = compile("t", &text, &files).unwrap();
+    let huge = &skin.fonts[0];
+    assert!(huge.glyphs.contains_key(&'a') && !huge.glyphs.contains_key(&'é'));
+    let quads = skinned(skin).draw(&model(Screen::Settings), &library(1), false);
+    assert!(quads.iter().any(|q| q.tex == reborn_graphics::Tex::Skin));
+    let bad = text.replace("\"ascii\"", "\"klingon\"");
+    assert!(compile("t", &bad, &files)
+        .unwrap_err()
+        .contains("latin or ascii"));
+    let bad = text.replace("\"lower\"", "\"title\"");
+    assert!(compile("t", &bad, &files)
+        .unwrap_err()
+        .contains("normal, upper or lower"));
+}
