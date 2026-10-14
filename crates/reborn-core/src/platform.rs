@@ -286,6 +286,20 @@ pub enum UpdateProblem {
 /// A running download, read straight from the platform's progress file in
 /// RAM while the download task runs (Y2Linux OTA-48): the task itself only
 /// answers when it is finished.
+/// Wi-Fi and Bluetooth need MediaTek firmware that no image may carry: the
+/// owner copies `system.img` from the Innioasis package to the player once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RadioFirmware {
+    /// An older platform without the record, or not yet observed.
+    #[default]
+    Unknown,
+    Ready,
+    Missing,
+    Installing,
+    /// The copied file was not the Innioasis Y2 firmware package.
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DownloadLive {
     /// The download is complete and the platform checks the package.
@@ -382,6 +396,8 @@ pub struct DiagnosticSection {
 pub struct PlatformSnapshot {
     /// False until a successful observation of the current boot.
     pub observed: bool,
+    /// The MediaTek radio firmware the owner supplies once (Y2Linux 49+).
+    pub radio_firmware: RadioFirmware,
     pub info: PlatformInfo,
     pub storage: StorageState,
     pub usb: UsbTransfer,

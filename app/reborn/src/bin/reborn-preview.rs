@@ -508,6 +508,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Downloading;
         m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
     });
+    case!("35-wifi-needs-firmware", at(Screen::Wifi, ""), |_, m| {
+        m.platform.snapshot.radio_firmware = reborn_core::platform::RadioFirmware::Missing;
+    });
+    case!(
+        "35b-bluetooth-firmware-failed",
+        at(Screen::Bluetooth, ""),
+        |_, m| {
+            m.platform.snapshot.radio_firmware = reborn_core::platform::RadioFirmware::Failed;
+        }
+    );
     case!(
         "34b-update-download-progress",
         at(Screen::Update, ""),

@@ -1706,8 +1706,17 @@ impl Runtime {
                 self.platform_refresh_pending = false;
                 let health = p.snapshot.health;
                 let health_section = p.snapshot.section("health").cloned();
+                let firmware_before = p.snapshot.radio_firmware;
                 p.snapshot = *snapshot;
                 p.snapshot.health = health;
+                {
+                    use reborn_core::platform::RadioFirmware::*;
+                    if matches!(firmware_before, Missing | Installing | Failed)
+                        && p.snapshot.radio_firmware == Ready
+                    {
+                        self.ui.flash("Wi-Fi and Bluetooth are ready");
+                    }
+                }
                 p.snapshot.diagnostics.extend(health_section);
                 if let reborn_core::platform::UpdatePhase::Available { version } =
                     &p.snapshot.update.phase
@@ -2244,6 +2253,7 @@ fn platform_backed(screen: Screen) -> bool {
             | Screen::SettingsLibrary
             | Screen::SettingsSystem
             | Screen::Sleep
+            | Screen::Wifi
             | Screen::Bluetooth
             | Screen::Storage
             | Screen::Update

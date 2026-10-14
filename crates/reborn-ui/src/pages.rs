@@ -95,8 +95,8 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::NowPlaying => Page::default(),
         Screen::TrackInfo => track_info(m, tracks),
         Screen::Settings => settings(ui, m),
-        Screen::Wifi => wifi(ui),
-        Screen::Bluetooth => bluetooth(ui, m),
+        Screen::Wifi => radio_firmware(m, "Wi-Fi").unwrap_or_else(|| wifi(ui)),
+        Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
         Screen::Equalizer => equalizer(m),
@@ -330,6 +330,25 @@ fn usb_summary(m: &AppModel) -> &'static str {
         UsbTransfer::Error => "Reconnect cable",
         UsbTransfer::Disconnected | UsbTransfer::Unknown => "",
     }
+}
+
+/// Wi-Fi and Bluetooth before the owner's one-time firmware copy (Y2Linux 49+):
+/// what to do, while it installs, and when the file was not the right one.
+fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
+    use reborn_core::platform::RadioFirmware;
+    const HOW: &str = "Connect the player to a computer and copy system.img from the Innioasis Y2 firmware package to the Firmware drive.";
+    Some(match m.platform.snapshot.radio_firmware {
+        RadioFirmware::Missing => Page::hero(format!("{radio} Needs the Radio Firmware"), HOW),
+        RadioFirmware::Installing => Page::hero(
+            "Installing the Radio Firmware…",
+            "This takes a few seconds. Wi-Fi and Bluetooth start by themselves.",
+        ),
+        RadioFirmware::Failed => Page::hero(
+            "That File Isn't the Y2 Firmware",
+            "Use system.img from the Innioasis Y2 firmware package (v3.2.0). Delete the file on the Firmware drive and copy the right one.",
+        ),
+        RadioFirmware::Ready | RadioFirmware::Unknown => return None,
+    })
 }
 
 fn wifi(ui: &Ui) -> Page {

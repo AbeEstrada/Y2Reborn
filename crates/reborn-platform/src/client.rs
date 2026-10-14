@@ -9,9 +9,9 @@
 use reborn_core::{
     platform::{
         BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, LdacQuality,
-        OperationResult, PlatformInfo, PlatformSnapshot, SbcQuality, SdCard, SleepPhase,
-        SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem, UpdateState,
-        UsbTransfer, VolumeSpace, VolumeState, WakeReason,
+        OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, SbcQuality, SdCard,
+        SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
+        UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
 };
@@ -529,6 +529,7 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
     let ota = enabled.iter().any(|c| c == "ota");
     PlatformSnapshot {
         observed: true,
+        radio_firmware: radio_firmware(status),
         info: PlatformInfo {
             release_version: text(&status["system"]["versions"]["release_version"]),
         },
@@ -541,6 +542,16 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         health: HealthLevel::Unknown,
         diagnostics: diagnostics(status, caps),
         enabled,
+    }
+}
+
+pub fn radio_firmware(status: &Value) -> RadioFirmware {
+    match status["system"]["radio_firmware"]["state"].as_str() {
+        Some("Ready") => RadioFirmware::Ready,
+        Some("Missing") => RadioFirmware::Missing,
+        Some("Installing") => RadioFirmware::Installing,
+        Some("Failed") => RadioFirmware::Failed,
+        _ => RadioFirmware::Unknown,
     }
 }
 
@@ -1254,6 +1265,16 @@ mod tests {
             update_problem("update_needs_charger_or_half_battery"),
             UpdateProblem::NeedsCharge
         );
+        for (state, want) in [
+            ("Ready", RadioFirmware::Ready),
+            ("Missing", RadioFirmware::Missing),
+            ("Failed", RadioFirmware::Failed),
+            ("odd", RadioFirmware::Unknown),
+        ] {
+            let s = json!({"system":{"radio_firmware":{"state":state}}});
+            assert_eq!(radio_firmware(&s), want);
+        }
+        assert_eq!(radio_firmware(&json!({})), RadioFirmware::Unknown);
         let live = parse_download(
             &json!({"schema":1,"phase":"download","bytes_done":25,"bytes_total":100,
                 "speed_bytes_per_s":3_300_000,"seconds_left":12}),

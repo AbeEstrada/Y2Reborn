@@ -878,6 +878,24 @@ fn full_system_update_wording_and_versions() {
     m.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NeedsCharge);
     let page = pages::page(&ui, &m, &m.library.tracks);
     assert!(page.hero.unwrap().title.contains("Charger"));
+    // Y2Linux 49: Wi-Fi and Bluetooth say how to supply the radio firmware.
+    for (screen, title) in [
+        (Screen::Wifi, "Wi-Fi Needs"),
+        (Screen::Bluetooth, "Bluetooth Needs"),
+    ] {
+        let mut f = app(screen);
+        f.platform.snapshot.radio_firmware = reborn_core::platform::RadioFirmware::Missing;
+        let hero = pages::page(&ui, &f, &f.library.tracks).hero.unwrap();
+        assert!(
+            hero.title.starts_with(title) && hero.body.contains("system.img"),
+            "{}",
+            hero.title
+        );
+        f.platform.snapshot.radio_firmware = reborn_core::platform::RadioFirmware::Ready;
+        assert!(!pages::page(&ui, &f, &f.library.tracks)
+            .hero
+            .is_some_and(|h| h.title.contains("Firmware")));
+    }
     // OTA-48: the live record wins while the download task runs.
     m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
     m.platform.download = Some(reborn_core::platform::DownloadLive {
