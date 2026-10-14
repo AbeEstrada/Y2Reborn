@@ -22,8 +22,9 @@ use std::{
 };
 const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 << 8);
 pub const SCHEMA_VERSION: i64 = 1;
-/// 3: genre is read and stored; every older row re-reads its tags once.
-const METADATA_REVISION: i64 = 3;
+/// 3: genre is read and stored; 4: Vorbis/APE "ALBUM ARTIST" (with a space) is
+/// read as the album artist. Every older row re-reads its tags once.
+const METADATA_REVISION: i64 = 4;
 pub const MAX_LIBRARY_TRACKS: usize = 250_000;
 pub const CATALOG_PAGE_SIZE: usize = 512;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -957,7 +958,20 @@ pub fn supported(path: &Path) -> bool {
     path.extension().is_some_and(|e| {
         matches!(
             e.to_string_lossy().to_ascii_lowercase().as_str(),
-            "flac" | "mp3" | "aac" | "m4a" | "ogg" | "opus" | "wav" | "aiff" | "aif" | "ape" | "wv"
+            "flac"
+                | "mp3"
+                | "aac"
+                | "m4a"
+                | "m4b"
+                | "ogg"
+                | "oga"
+                | "opus"
+                | "wav"
+                | "aiff"
+                | "aif"
+                | "aifc"
+                | "ape"
+                | "wv"
         )
     })
 }
@@ -1556,6 +1570,12 @@ mod tests {
         assert!(supported(Path::new("a.AIFF")));
         assert!(supported(Path::new("a.ape")));
         assert!(supported(Path::new("a.wv")));
+        // 31: containers the image's FFmpeg already demuxes.
+        assert!(supported(Path::new("book.m4b")));
+        assert!(supported(Path::new("a.oga")));
+        assert!(supported(Path::new("a.AIFC")));
+        // Video containers stay out: a music video would fail every scan.
+        assert!(!supported(Path::new("clip.mp4")));
         assert!(!supported(Path::new("a.txt")));
         assert!(!supported(Path::new("/media/sd/Album/._01 Song.mp3")));
         assert!(supported(Path::new("/media/sd/Album/_01 Song.mp3")));

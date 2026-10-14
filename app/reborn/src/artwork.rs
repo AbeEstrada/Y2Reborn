@@ -167,10 +167,16 @@ impl Drop for Worker {
     }
 }
 
+/// 31: folder covers now win over embedded pictures, so thumbnails made under
+/// the old order ("thumb-") are rebuilt once and the old files removed.
+const THUMB_PREFIX: &str = "thumb2-";
+const LEGACY_THUMB_PREFIX: &str = "thumb-";
 fn cache_path(job: &Job) -> PathBuf {
     let (size, mtime) = job.art.revision();
-    job.cache
-        .join(format!("thumb-{:016x}-{mtime:x}-{size:x}.t96", job.thumb))
+    job.cache.join(format!(
+        "{THUMB_PREFIX}{:016x}-{mtime:x}-{size:x}.t96",
+        job.thumb
+    ))
 }
 
 fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
@@ -206,7 +212,15 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
             cached = std::fs::read_dir(&job.cache)
                 .map(|d| {
                     d.flatten()
-                        .filter(|e| e.file_name().to_string_lossy().starts_with("thumb-"))
+                        .filter(|e| {
+                            let name = e.file_name();
+                            let name = name.to_string_lossy();
+                            if name.starts_with(LEGACY_THUMB_PREFIX) {
+                                let _ = std::fs::remove_file(e.path());
+                                return false;
+                            }
+                            name.starts_with(THUMB_PREFIX)
+                        })
                         .count()
                 })
                 .unwrap_or(0);
@@ -277,13 +291,8 @@ fn load(key: &Key, source: &PinnedTrack, cancel: &Cancel) -> (Option<Vec<u8>>, b
     let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::ArtworkDecode,
     );
-    if key.embedded && !cancel.is_cancelled() {
-        if let Ok(mut media) = MediaFile::open(source.path(), cancel.clone()) {
-            if let Ok(pixels) = media.artwork() {
-                return (Some(pixels), true);
-            }
-        }
-    }
+    // The folder's cover first (one image for the whole album, chosen by the
+    // owner), the file's embedded picture only when the folder has none.
     for name in folder_artwork_candidates(&source.sidecar_directory()).unwrap_or_default() {
         if cancel.is_cancelled() {
             break;
@@ -291,6 +300,13 @@ fn load(key: &Key, source: &PinnedTrack, cancel: &Cancel) -> (Option<Vec<u8>>, b
         if let Ok(file) = source.open_sidecar(&name) {
             if let Ok(pixels) = external_artwork(file.path()) {
                 return (Some(pixels), false);
+            }
+        }
+    }
+    if key.embedded && !cancel.is_cancelled() {
+        if let Ok(mut media) = MediaFile::open(source.path(), cancel.clone()) {
+            if let Ok(pixels) = media.artwork() {
+                return (Some(pixels), true);
             }
         }
     }
@@ -354,8 +370,11 @@ mod tests {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
         std::fs::copy(fixtures.join("artwork.flac"), root.join("song.flac")).unwrap();
         let track = fixture_track(&root, "song.flac", 1, true);
+        // A thumbnail made under the old embedded-first order is discarded.
+        std::fs::write(root.join("cache/thumb-0000000000000007-1-1.t96"), b"old").unwrap();
         let mut worker = Worker::spawn().unwrap();
         let first = reply(&mut worker, job(&root, &track, 7));
+        assert!(!root.join("cache/thumb-0000000000000007-1-1.t96").exists());
         let rgba = first.rgba.expect("embedded cover decodes");
         assert_eq!(rgba.len(), THUMB_SIZE * THUMB_SIZE * 4);
         assert_eq!(rgba[3], 0, "rounded corner is transparent");
@@ -446,6 +465,36 @@ mod tests {
         assert_eq!(load(&key, &key.pin().unwrap(), &cancel), (None, false));
         std::fs::remove_file(root.join("FoLdEr.PNG")).unwrap();
         assert!(key.load_cover(&Cancel::new().unwrap()).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn folder_cover_wins_and_embedded_is_the_fallback() {
+        let root = std::env::temp_dir().join(format!("reborn-art-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
+        std::fs::copy(fixtures.join("artwork.flac"), root.join("song.flac")).unwrap();
+        // A 1x1 red PNG: a picture that differs from every fixture's artwork.
+        const RED: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+            192, 0, 0, 3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+            130,
+        ];
+        std::fs::write(root.join("cover.png"), RED).unwrap();
+        let key = Key::new(&fixture_track(&root, "song.flac", 1, true), None, &root);
+        let folder = key.load_cover(&Cancel::new().unwrap()).unwrap();
+        assert_eq!(folder, external_artwork(&root.join("cover.png")).unwrap());
+        let embedded = MediaFile::open(&root.join("song.flac"), Cancel::new().unwrap())
+            .unwrap()
+            .artwork()
+            .unwrap();
+        assert_ne!(
+            folder, embedded,
+            "fixtures must differ for this test to mean anything"
+        );
+        std::fs::remove_file(root.join("cover.png")).unwrap();
+        assert_eq!(key.load_cover(&Cancel::new().unwrap()).unwrap(), embedded);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

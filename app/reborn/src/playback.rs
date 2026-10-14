@@ -549,6 +549,12 @@ fn publish_artwork(
             let _ = std::fs::remove_file(entry.path());
         }
     }
+    // The folder's cover first, the embedded picture only when the folder has
+    // none (same order as the thumbnail worker). Only embedded pictures are
+    // cached here: a folder image can change without the track changing.
+    if let Ok(folder) = pinned_folder_artwork(&decoder._source) {
+        return Some(folder);
+    }
     let path = cache.join(format!("{}-{}-{}.rgba", track.id, track.size, track.mtime));
     let cached = decoder
         .metadata
@@ -566,16 +572,12 @@ fn publish_artwork(
             .then(|| decoder.artwork())
             .and_then(Result::ok)
     });
-    let can_cache = embedded.is_some();
-    let bytes = embedded.or_else(|| pinned_folder_artwork(&decoder._source).ok());
-    if let Some(bytes) = bytes {
-        if !have_cached && can_cache {
-            let _ = reborn_core::atomic_write(&path, &bytes);
+    if let Some(bytes) = &embedded {
+        if !have_cached {
+            let _ = reborn_core::atomic_write(&path, bytes);
         }
-        Some(bytes)
-    } else {
-        None
     }
+    embedded
 }
 fn pinned_folder_artwork(
     source: &reborn_platform::storage::PinnedTrack,

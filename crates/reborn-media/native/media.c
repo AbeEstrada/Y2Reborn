@@ -1094,7 +1094,10 @@ static void extract_metadata(RbMedia *m, RbMetadata *meta) {
   text(meta->artist, sizeof(meta->artist), !strcmp(m->f->iformat->name, "aiff")
       ? alias(m, "artist", "author") : tag(m, "artist"));
   text(meta->album, sizeof(meta->album), tag(m, "album"));
-  text(meta->album_artist, sizeof(meta->album_artist), alias(m, "album_artist", "albumartist"));
+  /* foobar2000 and others write Vorbis/APE "ALBUM ARTIST" with a space. */
+  const char *album_artist = alias(m, "album_artist", "albumartist");
+  text(meta->album_artist, sizeof(meta->album_artist),
+       album_artist && *album_artist ? album_artist : tag(m, "album artist"));
   text(meta->date, sizeof(meta->date), alias(m, "date", "year"));
   text(meta->genre, sizeof(meta->genre), tag(m, "genre"));
   text(meta->codec, sizeof(meta->codec), avcodec_get_name(p->codec_id));

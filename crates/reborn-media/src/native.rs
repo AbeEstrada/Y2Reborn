@@ -796,44 +796,60 @@ pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
 }
 /// Deterministic sidecar preference, shared by playback and collection artwork.
 /// Only candidate paths are retained; failed images fall through to the next cover.
+/// Names in priority order (any case, .jpg/.jpeg/.png/.webp): cover, folder,
+/// front, album, albumart, artwork; then Windows Media Player's
+/// AlbumArt_{GUID}_Large / AlbumArtSmall; finally, the only image in the folder
+/// (e.g. "<album>.jpg"). macOS "._*" companions never count.
 pub fn folder_artwork_candidates(parent: &Path) -> Result<Vec<String>, String> {
-    const NAMES: [&str; 12] = [
-        "cover.jpg",
-        "cover.jpeg",
-        "cover.png",
-        "cover.webp",
-        "folder.jpg",
-        "folder.jpeg",
-        "folder.png",
-        "folder.webp",
-        "album.jpg",
-        "album.jpeg",
-        "album.png",
-        "album.webp",
-    ];
-    let mut candidates: [Option<PathBuf>; 12] = std::array::from_fn(|_| None);
+    const STEMS: [&str; 6] = ["cover", "folder", "front", "album", "albumart", "artwork"];
+    const EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
+    // Rank: named stems (stem-major, extension-minor), WMP large, WMP small.
+    let rank = |name: &str| -> Option<usize> {
+        let lower = name.to_ascii_lowercase();
+        let (stem, extension) = lower.rsplit_once('.')?;
+        let ext = EXTENSIONS.iter().position(|e| *e == extension)?;
+        if let Some(index) = STEMS.iter().position(|s| *s == stem) {
+            return Some(index * EXTENSIONS.len() + ext);
+        }
+        let base = STEMS.len() * EXTENSIONS.len();
+        if stem.starts_with("albumart_{") && stem.ends_with("}_large") {
+            return Some(base + ext);
+        }
+        (stem == "albumartsmall" || (stem.starts_with("albumart_{") && stem.ends_with("}_small")))
+            .then_some(base + EXTENSIONS.len() + ext)
+    };
+    let mut named: Vec<(usize, PathBuf)> = Vec::new();
+    let mut images: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(parent).map_err(|e| e.to_string())? {
         let Ok(entry) = entry else { continue };
         let name = entry.file_name();
-        let Some(index) = NAMES
-            .iter()
-            .position(|candidate| name.to_string_lossy().eq_ignore_ascii_case(candidate))
-        else {
-            continue;
-        };
-        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+        let name = name.to_string_lossy();
+        if name.starts_with("._") || !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
-        let path = entry.path();
-        if candidates[index].as_ref().is_none_or(|old| path < *old) {
-            candidates[index] = Some(path);
+        if let Some(index) = rank(&name) {
+            named.push((index, entry.path()));
+        } else if name
+            .rsplit_once('.')
+            .is_some_and(|(_, e)| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        {
+            images.push(entry.path());
         }
     }
-    Ok(candidates
+    named.sort();
+    let mut out: Vec<String> = named
         .into_iter()
-        .flatten()
-        .filter_map(|p| p.file_name()?.to_str().map(str::to_owned))
-        .collect())
+        .filter_map(|(_, p)| p.file_name()?.to_str().map(str::to_owned))
+        .collect();
+    if out.is_empty() && images.len() == 1 {
+        out.extend(
+            images[0]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_owned),
+        );
+    }
+    Ok(out)
 }
 pub fn folder_artwork(media: &Path) -> Result<Vec<u8>, String> {
     let parent = media.parent().ok_or("media has no parent")?;
@@ -1224,6 +1240,50 @@ mod tests {
         )
         .unwrap();
         assert!(eq.metadata.filters.contains("alimiter"));
+    }
+    #[test]
+    fn folder_artwork_names_priority_and_single_image_fallback() {
+        let root = std::env::temp_dir().join(format!("reborn-folder-art-{}", std::process::id()));
+        let names = |files: &[&str]| {
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir(&root).unwrap();
+            for f in files {
+                std::fs::write(root.join(f), b"x").unwrap();
+            }
+            folder_artwork_candidates(&root).unwrap()
+        };
+        assert_eq!(
+            names(&[
+                "Album.JPG",
+                "front.png",
+                "Folder.webp",
+                "cover.jpeg",
+                "cover.jpg",
+                "notes.txt"
+            ]),
+            [
+                "cover.jpg",
+                "cover.jpeg",
+                "Folder.webp",
+                "front.png",
+                "Album.JPG"
+            ]
+        );
+        assert_eq!(
+            names(&["artwork.png", "AlbumArt.jpg"]),
+            ["AlbumArt.jpg", "artwork.png"]
+        );
+        assert_eq!(
+            names(&["AlbumArtSmall.jpg", "AlbumArt_{1A2B}_Large.jpg"]),
+            ["AlbumArt_{1A2B}_Large.jpg", "AlbumArtSmall.jpg"]
+        );
+        // The only image in the folder is used; several unnamed ones are not guessed.
+        assert_eq!(names(&["Afterglow.jpg", "01.flac"]), ["Afterglow.jpg"]);
+        assert!(names(&["scan1.jpg", "scan2.jpg"]).is_empty());
+        // macOS companions never count, neither as named nor as the only image.
+        assert!(names(&["._cover.jpg"]).is_empty());
+        assert_eq!(names(&["._cover.jpg", "front.jpg"]), ["front.jpg"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn final_integer_conversion_stays_inside_the_ffmpeg_boundary() {
