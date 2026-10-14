@@ -345,6 +345,17 @@ Consequently:
 
 ## 6. Licensing and redistribution gates
 
+**Owner decision for public releases (2026-10-16, Y2Linux Baseline 49).** Public images and the
+public over-the-air updates carry **SBC, AAC and LDAC**; **aptX and aptX HD** stay in owner-private
+builds (`tools/production/build.py --public` leaves libfreeaptx out). AAC comes from
+**fdk-aac-free** 2.0.3: Red Hat's stripped FDK library (AAC-LC only; the HE-AAC SBR/PS parts are
+removed), upstream `gitlab.freedesktop.org/wtaymans/fdk-aac-stripped` (branch `stripped5`),
+the version Fedora ships after its legal review concluded it is no longer encumbered by AAC
+patents; A2DP uses AAC-LC. LDAC is Sony's Apache-2.0 code; its NOTICE asks for certification for
+product use, so Reborn claims no certification and shows no logos. The codec inventory
+(`/etc/y2linux/bluetooth-codecs.json`, profile `public`) marks exactly these three as approved,
+and public packaging refuses anything else. This is the owner's decision, not a legal opinion.
+
 This is an engineering distribution audit, not a legal clearance. Copyright
 permission, patent scope, brand/logo use, product certification and firmware
 redistribution are different questions. A free source download settles none of
