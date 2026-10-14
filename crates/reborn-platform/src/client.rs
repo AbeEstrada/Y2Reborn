@@ -8,15 +8,16 @@
 //! display is off.
 use reborn_core::{
     platform::{
-        BluetoothQuality, DiagnosticSection, Fact, HealthLevel, LdacQuality, OperationResult,
-        PlatformInfo, PlatformSnapshot, SbcQuality, SdCard, SleepPhase, SleepProblem, SleepState,
-        StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace,
-        VolumeState, WakeReason,
+        BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, LdacQuality,
+        OperationResult, PlatformInfo, PlatformSnapshot, SbcQuality, SdCard, SleepPhase,
+        SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem, UpdateState,
+        UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
 };
 use serde_json::{json, Value};
 use std::{
+    fs,
     io::Read,
     process::{Command, Stdio},
     sync::mpsc::{sync_channel, Receiver, SyncSender},
@@ -395,6 +396,45 @@ pub fn usb(status: &Value) -> UsbTransfer {
         Some("Failed") => UsbTransfer::Error,
         _ => UsbTransfer::Starting,
     }
+}
+
+const DOWNLOAD_PROGRESS: &str = "/run/y2/update-progress.json";
+const CHECK_PROGRESS: &str = "/run/y2/update-check-progress";
+
+/// The platform's live download record and the package check's
+/// "<percent> check" line. Reads two small files in RAM; never blocks on the
+/// platform worker, which is busy with the download itself.
+pub fn download_progress() -> Option<DownloadLive> {
+    let record: Value = serde_json::from_slice(&fs::read(DOWNLOAD_PROGRESS).ok()?).ok()?;
+    let check = fs::read_to_string(CHECK_PROGRESS).ok();
+    parse_download(&record, check.as_deref())
+}
+
+pub fn parse_download(record: &Value, check: Option<&str>) -> Option<DownloadLive> {
+    if record["schema"] != 1 {
+        return None;
+    }
+    let verifying = match record["phase"].as_str()? {
+        "download" => false,
+        "verify" => true,
+        _ => return None,
+    };
+    Some(DownloadLive {
+        verifying,
+        bytes_done: record["bytes_done"].as_u64()?,
+        bytes_total: record["bytes_total"].as_u64()?,
+        speed_bytes_per_s: record["speed_bytes_per_s"].as_u64().filter(|&s| s > 0),
+        seconds_left: record["seconds_left"].as_u64(),
+        check_percent: if verifying {
+            check
+                .and_then(|line| line.split_whitespace().next())
+                .and_then(|p| p.parse::<u8>().ok())
+                .map(|p| p.min(100))
+                .or(Some(0))
+        } else {
+            None
+        },
+    })
 }
 
 pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
@@ -1214,6 +1254,35 @@ mod tests {
             update_problem("update_needs_charger_or_half_battery"),
             UpdateProblem::NeedsCharge
         );
+        let live = parse_download(
+            &json!({"schema":1,"phase":"download","bytes_done":25,"bytes_total":100,
+                "speed_bytes_per_s":3_300_000,"seconds_left":12}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            (live.verifying, live.speed_bytes_per_s, live.seconds_left),
+            (false, Some(3_300_000), Some(12))
+        );
+        assert!((live.fraction() - 0.25).abs() < 1e-6);
+        let checking = parse_download(
+            &json!({"schema":1,"phase":"verify","bytes_done":100,"bytes_total":100,
+                "speed_bytes_per_s":null,"seconds_left":null}),
+            Some("42 check\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            (checking.verifying, checking.check_percent),
+            (true, Some(42))
+        );
+        // Finished, failed or foreign records are not a running download.
+        for phase in ["done", "failed", "other"] {
+            assert!(parse_download(
+                &json!({"schema":1,"phase":phase,"bytes_done":1,"bytes_total":1}),
+                None
+            )
+            .is_none());
+        }
         v["system"]["update"] = json!({"state":"Idle","download":{"state":"Failed",
             "failure":"update_data_space_reserve","needed_bytes":280_100_000u64}});
         let u = update(&v, true);

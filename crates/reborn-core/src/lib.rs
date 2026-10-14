@@ -456,6 +456,8 @@ pub struct PlatformState {
     pub brightness_available: bool,
     /// Set while the shutdown/restart transition is being presented.
     pub shutting_down: Option<platform::ShutdownIntent>,
+    /// Live progress of a running update download.
+    pub download: Option<platform::DownloadLive>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

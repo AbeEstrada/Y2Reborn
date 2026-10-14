@@ -1734,6 +1734,9 @@ impl Runtime {
                 refresh = true;
                 match result {
                     Ok(result) => {
+                        if task == UpdateStage {
+                            p.download = None;
+                        }
                         if !result.succeeded {
                             p.failure =
                                 Some("The operation did not finish. See Latest Result.".into());
@@ -1746,7 +1749,17 @@ impl Runtime {
                         p.failure = None;
                         p.result = Some(result);
                         match task {
-                            UpdateCheck | UpdateStage | UpdateCancel => {}
+                            UpdateStage => {
+                                // Ready at once, wherever the owner is; the
+                                // refresh that follows confirms the journal.
+                                let u = &mut p.snapshot.update;
+                                u.phase = reborn_core::platform::UpdatePhase::ReadyToInstall;
+                                u.can_install = true;
+                                u.can_cancel = true;
+                                u.can_download = false;
+                                self.ui.flash("Update downloaded. Ready to install.");
+                            }
+                            UpdateCheck | UpdateCancel => {}
                             Export => self.ui.flash("Player data exported"),
                             LdacQuality(_) | LdacAbr(_) | SbcQuality(_) => {
                                 self.ui.flash("Quality saved. Restart the player to apply.")
@@ -1762,7 +1775,11 @@ impl Runtime {
                         // The update page presents its own journaled reason.
                         if matches!(task, UpdateApply | UpdateRollback) {
                             self.ui.flash(install_refusal(&error));
-                        } else if !matches!(task, UpdateCheck | UpdateStage) {
+                        } else if task == UpdateStage {
+                            p.download = None;
+                            self.ui
+                                .flash("The download didn't finish. Nothing was changed.");
+                        } else if !matches!(task, UpdateCheck) {
                             self.ui.flash(error.clone());
                         }
                         p.failure = Some(error);
@@ -1770,6 +1787,9 @@ impl Runtime {
                 }
             }
             client::Reply::Failed(task, error) => {
+                if task == reborn_core::PlatformTask::UpdateStage {
+                    p.download = None;
+                }
                 if task == reborn_core::PlatformTask::Refresh {
                     self.platform_refresh_pending = false;
                     // A stale observation cannot keep a control enabled.
@@ -2732,6 +2752,7 @@ fn run() -> Result<(), String> {
     };
     let mut player_publish = Instant::now() - Duration::from_secs(1);
     let mut platform_refresh = Instant::now() - Duration::from_secs(30);
+    let mut download_poll = Instant::now();
     let mut last_platform_screen = rt.model.screen;
     let mut codec_reconnect = CodecReconnect::default();
     while !reborn_platform::stop_requested() {
@@ -2857,6 +2878,21 @@ fn run() -> Result<(), String> {
             }
         }
         last_platform_screen = rt.model.screen;
+        // The download task answers only when it is finished: show its live
+        // progress from the platform's RAM file meanwhile (OTA-48).
+        if (rt.model.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
+            || rt.model.platform.snapshot.update.phase
+                == reborn_core::platform::UpdatePhase::Downloading)
+            && !rt.model.screen_off
+            && download_poll.elapsed() >= Duration::from_millis(200)
+        {
+            download_poll = Instant::now();
+            let live = client::download_progress();
+            if live != rt.model.platform.download {
+                rt.model.platform.download = live;
+                rt.dirty.mark_render();
+            }
+        }
         if let Some(player) = &player {
             for request in player.actions.try_iter().take(8) {
                 if let Some(action) = request.semantic(&rt.model) {

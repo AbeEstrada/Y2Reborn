@@ -862,10 +862,14 @@ fn storage(m: &AppModel) -> Page {
 
 pub fn update_summary(m: &AppModel) -> String {
     let s = &m.platform.snapshot;
-    if matches!(
-        m.platform.busy,
-        Some(PlatformTask::UpdateCheck | PlatformTask::UpdateStage)
-    ) {
+    if m.platform.busy == Some(PlatformTask::UpdateStage) {
+        return match m.platform.download {
+            Some(l) if l.verifying => format!("Checking · {}%", (l.fraction() * 100.) as u32),
+            Some(l) => format!("Downloading · {}%", (l.fraction() * 100.) as u32),
+            None => "Downloading…".into(),
+        };
+    }
+    if m.platform.busy == Some(PlatformTask::UpdateCheck) {
         return "Working…".into();
     }
     match &s.update.phase {
@@ -912,13 +916,23 @@ fn update_status(m: &AppModel) -> Page {
         return Page::hero("Checking for Updates…", "This takes a moment.");
     }
     if busy == Some(PlatformTask::UpdateStage) || u.phase == UpdatePhase::Downloading {
-        return Page::hero(
-            match u.download_percent {
-                Some(p) => format!("Downloading Update… {p}%"),
-                None => "Downloading Update…".into(),
-            },
-            "Keep Wi-Fi on.",
-        );
+        return match m.platform.download {
+            Some(l) if l.verifying => Page::hero(
+                format!("Checking the Update… {}%", (l.fraction() * 100.) as u32),
+                "Making sure the download is complete and genuine.",
+            ),
+            Some(l) => Page::hero(
+                format!("Downloading Update… {}%", (l.fraction() * 100.) as u32),
+                "Keep Wi-Fi on.",
+            ),
+            None => Page::hero(
+                match u.download_percent {
+                    Some(p) => format!("Downloading Update… {p}%"),
+                    None => "Downloading Update…".into(),
+                },
+                "Keep Wi-Fi on.",
+            ),
+        };
     }
     if !s.observed {
         return Page::hero("Software Update", "Checking the installed version…");

@@ -635,6 +635,151 @@ fn storage(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
     let _ = HEIGHT;
 }
 
+/// The running download (OTA-48): which step, a bar that glides between the
+/// platform's reports, how much, how fast and how long. Before the first
+/// report a short segment sweeps the track.
+fn download_progress(
+    c: &mut Canvas,
+    ui: &Ui,
+    live: Option<reborn_core::platform::DownloadLive>,
+    accent: u32,
+) {
+    let verifying = live.is_some_and(|l| l.verifying);
+    let (step, title) = if verifying {
+        ("STEP 2 OF 2 · CHECK", "Checking the Update")
+    } else {
+        ("STEP 1 OF 2 · DOWNLOAD", "Downloading Update")
+    };
+    c.text_center_tracked(
+        240.,
+        66. + Face::S10.mid_offset(),
+        step,
+        Face::S10,
+        color::MUTED,
+        1.6,
+    );
+    c.text_center(
+        240.,
+        94. + Face::S20.mid_offset(),
+        title,
+        Face::S20,
+        color::TEXT,
+    );
+    let (x, y, w, h) = (60., 190., 360., 8.);
+    c.rrect(x, y, w, h, h / 2., color::TRACK);
+    match live {
+        Some(l) => {
+            let fill = ui.download_fill(l.fraction(), verifying);
+            let percent = (l.fraction() * 100.).floor() as u32;
+            c.text_center(
+                240.,
+                148. + Face::S36.mid_offset(),
+                &format!("{percent}%"),
+                Face::S36,
+                color::TEXT,
+            );
+            let lit = (w * fill).round();
+            if lit >= h {
+                c.rrect(x, y, lit, h, h / 2., accent);
+                // A soft highlight runs along the filled part: it is alive.
+                if lit > 48. {
+                    let sx = x + 20. + (lit - 40.) * ui.spin_phase();
+                    c.glow(sx, y + h / 2., 22., 5., alpha(0xFFFFFFFF, 90));
+                }
+            }
+            let (detail, hint) = if verifying {
+                (
+                    "Making sure the download is complete and genuine.".to_owned(),
+                    "This takes a few seconds.".to_owned(),
+                )
+            } else {
+                (
+                    match l.speed_bytes_per_s {
+                        Some(speed) => format!(
+                            "{} of {} MB · {}",
+                            megabytes(l.bytes_done),
+                            megabytes(l.bytes_total),
+                            rate(speed)
+                        ),
+                        None => format!(
+                            "{} of {} MB",
+                            megabytes(l.bytes_done),
+                            megabytes(l.bytes_total)
+                        ),
+                    },
+                    l.seconds_left.map(time_left).unwrap_or_default(),
+                )
+            };
+            c.text_center(
+                240.,
+                226. + Face::R13.mid_offset(),
+                &detail,
+                Face::R13,
+                color::MUTED,
+            );
+            c.text_center(
+                240.,
+                248. + Face::R13.mid_offset(),
+                &hint,
+                Face::R13,
+                color::DIM,
+            );
+        }
+        None => {
+            // Connecting: no size yet.
+            let seg = 72.;
+            let t = ui.spin_phase();
+            let tri = if t < 0.5 { t * 2. } else { 2. - t * 2. };
+            c.rrect(x + (w - seg) * tri, y, seg, h, h / 2., accent);
+            c.text_center(
+                240.,
+                148. + Face::S20.mid_offset(),
+                "Connecting…",
+                Face::S20,
+                color::MUTED,
+            );
+            c.text_center(
+                240.,
+                226. + Face::R13.mid_offset(),
+                "Keep Wi-Fi on.",
+                Face::R13,
+                color::MUTED,
+            );
+        }
+    }
+    c.text_center(
+        240.,
+        320. + Face::R11.mid_offset(),
+        "Back to continue in the background",
+        Face::R11,
+        color::DIM,
+    );
+}
+
+/// "23.4" for 23 400 000 bytes.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / 1e6)
+}
+
+/// "3.2 MB/s", or "640 KB/s" below a megabyte per second.
+fn rate(bytes_per_s: u64) -> String {
+    if bytes_per_s >= 1_000_000 {
+        format!("{:.1} MB/s", bytes_per_s as f64 / 1e6)
+    } else {
+        format!("{} KB/s", (bytes_per_s / 1000).max(1))
+    }
+}
+
+/// A calm estimate: seconds in fives, then minutes.
+fn time_left(seconds: u64) -> String {
+    match seconds {
+        0..=9 => "A few seconds left".into(),
+        10..=59 => format!("About {} seconds left", (seconds + 2) / 5 * 5),
+        60..=89 => "About a minute left".into(),
+        _ => format!("About {} minutes left", (seconds + 30) / 60),
+    }
+}
+
 fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
     let accent = ui.accent();
     let phase = &m.platform.snapshot.update.phase;
@@ -649,31 +794,7 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
     let downloading = *phase == UpdatePhase::Downloading
         || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage);
     if downloading {
-        c.spinner(240., 124., 44., accent, color::RING_TRACK, ui.spin_phase());
-        c.text_center(
-            240.,
-            204. + Face::S20.mid_offset(),
-            &match m.platform.snapshot.update.download_percent {
-                Some(p) => format!("Downloading update… {p}%"),
-                None => "Downloading update…".into(),
-            },
-            Face::S20,
-            color::TEXT,
-        );
-        c.text_center(
-            240.,
-            230. + Face::R13.mid_offset(),
-            "Keep Wi-Fi on.",
-            Face::R13,
-            color::MUTED,
-        );
-        c.text_center(
-            240.,
-            320. + Face::R11.mid_offset(),
-            "Back to continue in the background",
-            Face::R11,
-            color::DIM,
-        );
+        download_progress(c, ui, m.platform.download, accent);
         return;
     }
     let (title, body) = page

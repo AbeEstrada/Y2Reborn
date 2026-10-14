@@ -283,6 +283,35 @@ pub enum UpdateProblem {
     NeedsCharge,
 }
 
+/// A running download, read straight from the platform's progress file in
+/// RAM while the download task runs (Y2Linux OTA-48): the task itself only
+/// answers when it is finished.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DownloadLive {
+    /// The download is complete and the platform checks the package.
+    pub verifying: bool,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    /// Over the last few seconds; None until there is enough to measure.
+    pub speed_bytes_per_s: Option<u64>,
+    pub seconds_left: Option<u64>,
+    /// How far the check is (0..=100) while verifying.
+    pub check_percent: Option<u8>,
+}
+
+impl DownloadLive {
+    /// 0..=1 of the current step (download, then check).
+    pub fn fraction(&self) -> f32 {
+        if self.verifying {
+            f32::from(self.check_percent.unwrap_or(0).min(100)) / 100.
+        } else if self.bytes_total > 0 {
+            (self.bytes_done.min(self.bytes_total) as f64 / self.bytes_total as f64) as f32
+        } else {
+            0.
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UpdateState {
     pub phase: UpdatePhase,

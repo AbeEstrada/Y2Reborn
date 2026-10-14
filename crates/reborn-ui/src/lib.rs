@@ -257,6 +257,8 @@ pub struct Ui {
     spinning: bool,
     /// Freeze spinners at this phase (previews and tests).
     pub spin_fixed: Option<f32>,
+    /// The update download bar as drawn: fill, step (check), last frame.
+    download_bar: std::cell::Cell<(f32, bool, Option<Instant>)>,
     /// Cover Flow's scroll position and the cover's flight to the album page.
     flow: RefCell<flow::Flow>,
     transition: std::cell::Cell<Option<flow::Transition>>,
@@ -436,6 +438,27 @@ impl Ui {
         self.cover_request.take()
     }
 
+    /// The download bar's fill for this frame: it glides toward the reported
+    /// value (reports come four times a second), and starts from empty when
+    /// the step changes from download to check.
+    pub(crate) fn download_fill(&self, target: f32, verifying: bool) -> f32 {
+        let target = target.clamp(0., 1.);
+        if self.motion_fixed || self.spin_fixed.is_some() {
+            return target;
+        }
+        let now = Instant::now();
+        let (shown, step, at) = self.download_bar.get();
+        let shown = if step != verifying { 0. } else { shown };
+        let dt = at.map_or(0., |t| now.duration_since(t).as_secs_f32().min(0.1));
+        let next = if target < shown {
+            target
+        } else {
+            shown + (target - shown) * (1. - (-dt * 6.).exp())
+        };
+        self.download_bar.set((next, verifying, Some(now)));
+        next
+    }
+
     /// A 0..1 phase for spinners, one turn about every 1.6 s.
     pub fn spin_phase(&self) -> f32 {
         if let Some(fixed) = self.spin_fixed {
@@ -506,6 +529,7 @@ impl Ui {
         }
         self.spinning = m.library.scanning
             || m.platform.snapshot.update.phase == reborn_core::platform::UpdatePhase::Downloading
+            || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
             || self.usb_overlay(m) && usb == UsbTransfer::Copying
             || self.bt_busy.is_some();
         before

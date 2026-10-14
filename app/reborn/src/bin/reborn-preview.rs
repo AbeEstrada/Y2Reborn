@@ -506,7 +506,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     case!("34-update-downloading", at(Screen::Update, ""), |_, m| {
         m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Downloading;
+        m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
     });
+    case!(
+        "34b-update-download-progress",
+        at(Screen::Update, ""),
+        |_, m| {
+            m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+            m.platform.download = Some(reborn_core::platform::DownloadLive {
+                verifying: false,
+                bytes_done: 23_400_000,
+                bytes_total: 58_700_000,
+                speed_bytes_per_s: Some(3_250_000),
+                seconds_left: Some(11),
+                check_percent: None,
+            });
+        }
+    );
+    case!(
+        "34c-update-download-check",
+        at(Screen::Update, ""),
+        |_, m| {
+            m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+            m.platform.download = Some(reborn_core::platform::DownloadLive {
+                verifying: true,
+                bytes_done: 58_700_000,
+                bytes_total: 58_700_000,
+                speed_bytes_per_s: None,
+                seconds_left: None,
+                check_percent: Some(63),
+            });
+        }
+    );
     case!(
         "14c-now-playing-crossfade",
         at(Screen::NowPlaying, ""),

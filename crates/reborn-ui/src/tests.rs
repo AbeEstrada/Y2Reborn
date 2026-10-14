@@ -878,6 +878,23 @@ fn full_system_update_wording_and_versions() {
     m.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NeedsCharge);
     let page = pages::page(&ui, &m, &m.library.tracks);
     assert!(page.hero.unwrap().title.contains("Charger"));
+    // OTA-48: the live record wins while the download task runs.
+    m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+    m.platform.download = Some(reborn_core::platform::DownloadLive {
+        verifying: true,
+        bytes_done: 1,
+        bytes_total: 1,
+        check_percent: Some(63),
+        ..Default::default()
+    });
+    assert!(pages::page(&ui, &m, &m.library.tracks)
+        .hero
+        .unwrap()
+        .title
+        .ends_with("63%"));
+    assert_eq!(pages::update_summary(&m), "Checking · 63%");
+    m.platform.busy = None;
+    m.platform.download = None;
     m.platform.snapshot.update.phase = UpdatePhase::Downloading;
     m.platform.snapshot.update.download_percent = Some(40);
     assert!(pages::page(&ui, &m, &m.library.tracks)
@@ -1590,9 +1607,31 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
     assert!(ui.animating());
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(
-        text.contains("Downloading update") && !text.contains('%'),
+        text.contains("Downloading Update") && text.contains("Connecting") && !text.contains('%'),
         "{text}"
     );
+    // OTA-48: with the platform's live record, real numbers.
+    m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+    m.platform.download = Some(reborn_core::platform::DownloadLive {
+        verifying: false,
+        bytes_done: 23_400_000,
+        bytes_total: 58_700_000,
+        speed_bytes_per_s: Some(3_250_000),
+        seconds_left: Some(11),
+        check_percent: None,
+    });
+    ui.observe(&m);
+    assert!(ui.animating());
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    for want in [
+        "39%",
+        "23.4 of 58.7 MB",
+        "3.2 MB/s",
+        "About 10 seconds left",
+        "STEP 1 OF 2",
+    ] {
+        assert!(text.contains(want), "{want}: {text}");
+    }
     let mut m = app(Screen::Albums);
     m.library.tracks.clear();
     m.library.scanning = true;
