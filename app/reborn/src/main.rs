@@ -1392,6 +1392,12 @@ impl Runtime {
     }
     /// Give the held pipeline back (after a long pause, before sleep).
     fn release_hold(&mut self) {
+        self.release_hold_with(false);
+    }
+    /// `wait`: until the sink is closed. An open sink holds the platform's
+    /// activity lease, which refuses sleep before Reborn is asked to prepare
+    /// (Beta 6: Power while paused said "finishing another task").
+    fn release_hold_with(&mut self, wait: bool) {
         self.held_since = None;
         if !self.playback.is_held() {
             return;
@@ -1402,10 +1408,23 @@ impl Runtime {
             "pause_released",
             "Paused playback released its sink",
             None,
-            json!({"position_ms":self.model.position_ms}),
+            json!({"position_ms":self.model.position_ms,"for_sleep":wait}),
         );
         self.model.invalidate();
-        self.playback.stop(self.model.generation);
+        if wait {
+            if let Err(error) = self.playback.stop_and_wait(self.model.generation) {
+                self.log.emit(
+                    Level::Warn,
+                    "playback",
+                    "pause_release_slow",
+                    "Paused sink did not close in time",
+                    None,
+                    json!({"error":error}),
+                );
+            }
+        } else {
+            self.playback.stop(self.model.generation);
+        }
         self.active_transport_generation = None;
     }
     /// Continue a pause held in place: no decoder, file or device restart.
@@ -1666,6 +1685,10 @@ impl Runtime {
                         };
                         return Ok(());
                     }
+                    // A pause held in place keeps the sink, and its activity
+                    // lease, open: give it back first so the platform's lock
+                    // check passes (Play then restarts at the same place).
+                    self.release_hold_with(true);
                     self.checkpoint();
                 }
                 let worker = self.platform.as_ref().ok_or("System service is starting")?;
@@ -2348,6 +2371,16 @@ impl Runtime {
                         // charging. Power must still save display power; the page keeps saying the player
                         // stayed awake, so this never implies deep sleep.
                         blank_screen = state.refused_but_screen_can_blank();
+                        if state.phase == reborn_core::platform::SleepPhase::SleepRefused {
+                            self.log.emit(
+                                Level::Info,
+                                "power",
+                                "sleep_refused",
+                                "Platform refused sleep",
+                                None,
+                                json!({"problem":format!("{:?}", state.problem)}),
+                            );
+                        }
                         p.snapshot.sleep = state;
                         p.failure = None;
                     }
