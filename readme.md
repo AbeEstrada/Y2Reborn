@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.5, part of Y2Linux 1.0 Beta 5 (Baseline 55, 2026-10-15), public beta.**
-> Git tag `baseline-55` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.5.1, part of Y2Linux 1.0 Beta 5.1 (Baseline 56, 2026-10-15), public beta.**
+> Git tag `baseline-56` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -28,10 +28,12 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 - Internet radio (Home → Radio): Favorites, Popular, Countries, Genres and Search from the free
   community directory radio-browser.info, plus your own .m3u/.pls lists in a `Radio` folder on
   Internal Storage or the SD card. MP3, AAC and Ogg streams over Wi-Fi with the station's song
-  title on Now Playing and automatic reconnect; HLS-only stations are not supported yet. FFmpeg
+  title on Now Playing and automatic reconnect; HLS-only stations are not supported yet. Station
+  logos, Station Info, lists A to Z with each country's ten most listened stations on top, and
+  Previous/Next between stations. FFmpeg
   stays built without networking: `curl` receives the stream and hands Reborn plain audio.
-- Search (Home → Search) across artists, albums and songs: every typed word must begin a word of
-  the name (case, accents and a leading "The" ignored), with a live count while typing.
+- Search (Home → Search) across artists, albums and songs, with results shown live while typing:
+  every typed word must begin a word of the name (case, accents and a leading "The" ignored).
 - A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
   Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
   when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.

@@ -1,6 +1,6 @@
 # Current Reborn state on the Y2
 
-## Since 1.0.0-beta.5 (not yet released): live search, a faster search index, Radio as its own section
+## 1.0.0-beta.5.1 — Y2Linux 1.0 Beta 5.1 (Baseline 56), 2026-10-15 (latest): live search, a faster search index, Radio as its own section
 
 **Radio, reworked** (`views_radio`, owner: "radio should feel like its own premium section", "sort
 everything by alphabet", "top 10 radio stations for each country on top"):
@@ -40,7 +40,7 @@ host, a few hundred ms on the player for 20 000 songs) happens when the keyboard
 longer scans the library once per artist. Benchmark: `cargo test -p reborn-ui --release -- --ignored
 --nocapture speed`.
 
-## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5 (Baseline 55), 2026-10-15 (latest): keyboard and search
+## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5 (Baseline 55), 2026-10-15: keyboard and search
 
 **Full-screen keyboard** (`reborn_ui::keyboard`) for the Wi-Fi password, radio station search and the
 new library search, replacing the one-row letter wheel. QWERTY in four rows (owner's choice), pages
