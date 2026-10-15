@@ -353,8 +353,33 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
         ));
     } else if let Some(k) = &ui.keyboard {
         let at = c.draw.len();
-        crate::keyboard::draw(c, ui, m, tracks, k);
-        skin::remap(c, at, &skin.palette, ui.accent());
+        match skin.layout("keyboard") {
+            // The skin's title bar over Reborn's keys in the skin's colours.
+            Some(layout) => {
+                let title = k.purpose.title();
+                let body = |c: &mut Canvas| {
+                    let at = c.draw.len();
+                    crate::keyboard::draw_body(c, ui, m, tracks, k);
+                    skin::remap(c, at, &skin.palette, ui.accent());
+                };
+                let s = Scene {
+                    native: Some(&body),
+                    sheet: Some(Sheet {
+                        title: &title,
+                        body: "",
+                        rows: &[],
+                        focus: 0,
+                        danger: false,
+                    }),
+                    ..scene(None, None, 1.)
+                };
+                skin::draw_layout(c, &s, layout);
+            }
+            None => {
+                crate::keyboard::draw(c, ui, m, tracks, k);
+                skin::remap(c, at, &skin.palette, ui.accent());
+            }
+        }
     } else if m.navigation.modal.is_some() {
         let (title, body) = ui.modal_copy(m);
         let rows = ui.modal_rows_public(m, tracks);

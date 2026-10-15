@@ -47,14 +47,14 @@ impl Purpose {
             Self::PlaylistRename => "Rename",
         }
     }
-    fn title(&self) -> String {
+    pub(crate) fn title(&self) -> String {
         match self {
             // The prompt names the network; the title says what this is.
-            Self::WifiPassword { .. } => "WI-FI PASSWORD".into(),
-            Self::RadioSearch => "RADIO SEARCH".into(),
-            Self::LibrarySearch => "SEARCH".into(),
-            Self::PlaylistNew => "NEW PLAYLIST".into(),
-            Self::PlaylistRename => "RENAME PLAYLIST".into(),
+            Self::WifiPassword { .. } => "Wi-Fi Password".into(),
+            Self::RadioSearch => "Radio Search".into(),
+            Self::LibrarySearch => "Search".into(),
+            Self::PlaylistNew => "New Playlist".into(),
+            Self::PlaylistRename => "Rename Playlist".into(),
         }
     }
     fn prompt(&self) -> String {
@@ -443,11 +443,35 @@ pub fn draw(
     tracks: &[reborn_core::Track],
     k: &Keyboard,
 ) {
+    draw_with(c, ui, m, tracks, k, true);
+}
+
+/// The keyboard under a skin's own title bar (its `keyboard` layout).
+pub(crate) fn draw_body(
+    c: &mut Canvas,
+    ui: &crate::Ui,
+    m: &reborn_core::AppModel,
+    tracks: &[reborn_core::Track],
+    k: &Keyboard,
+) {
+    draw_with(c, ui, m, tracks, k, false);
+}
+
+fn draw_with(
+    c: &mut Canvas,
+    ui: &crate::Ui,
+    m: &reborn_core::AppModel,
+    tracks: &[reborn_core::Track],
+    k: &Keyboard,
+    header: bool,
+) {
     let accent = ui.accent();
     let live = k.live();
     let at = if live { &COMPACT } else { &ROOMY };
     c.rect(0., 0., WIDTH, crate::theme::HEIGHT, color::BG);
-    components::status_bar(c, ui, m, &k.purpose.title(), false);
+    if header {
+        components::status_bar(c, ui, m, &k.purpose.title().to_uppercase(), false);
+    }
     if !live {
         c.text(
             LEFT + 4.,

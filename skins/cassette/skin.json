@@ -1599,7 +1599,21 @@
     "font": "bartitle",
     "color": "bar_text",
     "align": "center",
-    "tracking": 1
+    "tracking": 1,
+    "if": "!live"
+   },
+   {
+    "type": "text",
+    "x": 60,
+    "y": 0,
+    "w": 360,
+    "h": 32,
+    "text": "{station}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "tracking": 1,
+    "if": "live"
    },
    {
     "type": "image",
@@ -1708,6 +1722,15 @@
     "font": "small",
     "color": "dim",
     "align": "center"
+   },
+   {
+    "type": "icon",
+    "if": "favorite",
+    "icon": "heart",
+    "x": 428,
+    "y": 144,
+    "size": 16,
+    "color": "#FF5A7A"
    }
   ],
   "home": [
@@ -1841,6 +1864,45 @@
     "font": "bartitle",
     "color": "bar_text",
     "align": "center"
+   }
+  ],
+  "keyboard": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": false
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "text",
+    "x": 60,
+    "y": 0,
+    "w": 360,
+    "h": 32,
+    "text": "{sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "case": "upper",
+    "tracking": 2,
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 104,
+    "y": 0,
+    "w": 272,
+    "h": 32,
+    "text": "{sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "case": "upper",
+    "tracking": 2,
+    "if": "has_clock"
    }
   ]
  }

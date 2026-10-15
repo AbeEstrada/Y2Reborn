@@ -410,26 +410,46 @@ fn radio_info(ui: &Ui) -> Page {
         .now
         .as_ref()
         .is_some_and(|now| now.key() == station.key());
-    Page::rows(vec![
-        row(
-            if playing { "Now Playing" } else { "Play" },
-            if playing {
-                "radio_now"
-            } else {
-                "radio_info_play"
-            },
-            "",
-        ),
-        row(
-            if ui.radio.is_favorite(station) {
-                "Remove from Favorites"
-            } else {
-                "Add to Favorites"
-            },
-            "radio_info_favorite",
-            "",
-        ),
-    ])
+    // Skins show the station as a page: its name, the directory's facts and
+    // the two actions (Reborn's own Station Info draws these itself).
+    let mut state = vec![];
+    if playing {
+        state.push("On Air");
+    }
+    if ui.radio.is_favorite(station) {
+        state.push("Favorite");
+    }
+    let facts = crate::views_radio::station_facts(station)
+        .into_iter()
+        .map(|(label, value)| (label.to_owned(), value))
+        .collect();
+    Page {
+        hero: Some(Hero {
+            title: station.name.clone(),
+            body: state.join(" · "),
+        }),
+        facts,
+        ..Page::rows(vec![
+            row(
+                if playing { "Now Playing" } else { "Play" },
+                if playing {
+                    "radio_now"
+                } else {
+                    "radio_info_play"
+                },
+                "",
+            ),
+            row(
+                if ui.radio.is_favorite(station) {
+                    "Remove from Favorites"
+                } else {
+                    "Add to Favorites"
+                },
+                "radio_info_favorite",
+                "",
+            ),
+        ])
+    }
 }
 
 fn radio_back() -> Vec<Item> {

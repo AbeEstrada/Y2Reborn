@@ -1299,7 +1299,19 @@
     "h": 20,
     "text": "Track {queue_index} of {queue_length}",
     "font": "small",
-    "color": "dim"
+    "color": "dim",
+    "if": "!live"
+   },
+   {
+    "type": "text",
+    "x": 214,
+    "y": 192,
+    "w": 248,
+    "h": 20,
+    "text": "On Air",
+    "font": "small",
+    "color": "dim",
+    "if": "live"
    },
    {
     "type": "bar",
@@ -1350,6 +1362,15 @@
     "font": "small",
     "color": "muted",
     "align": "center"
+   },
+   {
+    "type": "icon",
+    "if": "favorite",
+    "icon": "heart",
+    "x": 446,
+    "y": 170,
+    "size": 16,
+    "color": "text"
    }
   ],
   "home": [
@@ -1425,6 +1446,28 @@
     "value": "progress",
     "track": "rule",
     "fill": "text"
+   }
+  ],
+  "keyboard": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": false
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "text",
+    "x": 80,
+    "y": 0,
+    "w": 320,
+    "h": 34,
+    "text": "{sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center"
    }
   ]
  }

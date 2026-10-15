@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn every_shipped_skin_loads_cleanly_and_shows_the_clock() {
+    fn every_shipped_skin_loads_cleanly_with_clock_keyboard_and_live_radio() {
         // Pictures by their PNG header size; the layouts are what is checked.
         let png = |path: &Path, _: u32, _: u32| -> Result<(u32, u32, Vec<u8>), String> {
             let b = fs::read(path).map_err(|e| e.to_string())?;
@@ -187,9 +187,17 @@ mod tests {
         for info in found {
             let skin = load(&info.dir, &info.id, &png).unwrap();
             assert!(skin.warnings.is_empty(), "{}: {:?}", info.id, skin.warnings);
+            let text = manifest(&info.dir).unwrap();
+            assert!(text.contains("{clock}"), "{} has no clock", info.id);
+            // Today's screens: its own keyboard header, and a station is live.
             assert!(
-                manifest(&info.dir).unwrap().contains("{clock}"),
-                "{} has no clock",
+                skin.layout_names().contains(&"keyboard"),
+                "{} keyboard",
+                info.id
+            );
+            assert!(
+                text.contains("live") || !text.contains("{queue_index}"),
+                "{} shows a queue position for a station",
                 info.id
             );
         }

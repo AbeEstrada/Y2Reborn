@@ -120,13 +120,16 @@ most specific name first:
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
 | `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`) |
 | `time_zone` | the time zone picker (else `page` or `list`) |
+| `search`, `playlists`, `playlist`, `radio`, `radio_stations`, `radio_categories` | search results, Playlists, one playlist, Radio, a station list, countries or genres (else `list`) |
+| `radio_info` | Station Info: the station as heading, its facts and two actions (else `page`) |
 | `equalizer` | the equalizer (only this name; else Reborn's) |
 | `sheet` | option sheets and pickers that slide over a screen |
 | `dialog` | questions such as “Reset settings?” (else `sheet`) |
 | `toast` | short messages |
 | `volume` | the volume indicator (drawn fading out) |
+| `keyboard` | the full-screen keyboard (search, Wi-Fi password, playlist names): draw your title bar and `{sheet_title}` over a `native` `screen` part, which is Reborn's field and keys in your palette without its own header (else all Reborn's) |
 
-Text entry, the USB computer screen, installing an update, the Power hold and
+Pairing, the USB computer screen, installing an update, the Power hold and
 the start/shut-down screens are always Reborn's, in the skin's palette.
 
 ## Elements
@@ -143,7 +146,7 @@ relative to the row or group.
 | `text` | `x y w h text` · `font` (default `R15`) · `color` (default `text`) · `align` `left`/`center`/`right` · `lines` 1–6 · `line_height` · `tracking` · `case` `upper`/`lower` |
 | `icon` | `x y size icon` · `color` |
 | `bar` | `x y w h value` · `track` `fill` colours or `track_image` `fill_image` (+ `slice`) · `radius` · `vertical` · `knob` (colour) `knob_radius` |
-| `art` | `x y size` · `source` `current` (playing cover) or `row` (inside rows) · `radius` (corners take `bg`) |
+| `art` | `x y size` · `source` `current` (playing cover; a station's logo or initials) or `row` (inside rows: the song's cover, a station's logo) · `radius` (corners take `bg`) |
 | `list` | `x y w rows row_height row` · `focused` · `source` `rows`/`facts`/`sheet` · `scrollbar` `{x, w, track, thumb}` |
 | `group` | `elements` · `x y` offset |
 | `part` | `name` (from `parts`) · `x y` offset |
@@ -164,7 +167,8 @@ Write `{name}` inside `text`:
 
 | Value | |
 | --- | --- |
-| `title` `artist` `album` `album_artist` `genre` `track_number` | the playing song |
+| `title` `artist` `album` `album_artist` `genre` `track_number` | the playing song; for a station the song it announces, its artist and the station with its country, as Reborn's own Now Playing |
+| `station` | the station playing (empty for a song) |
 | `elapsed` `remaining` `duration` | `1:23`, `-2:05`, `3:28` |
 | `queue_index` `queue_length` | for “3 of 12” |
 | `quality` | `LOSSLESS · 96 kHz`, `MP3 · 44.1 kHz` |
@@ -190,7 +194,9 @@ Anywhere: `playing`, `paused`, `has_track`, `has_art`, `shuffle`, `repeat`,
 `repeat_one`, `charging`, `battery_low`, `bluetooth`, `bluetooth_connected`,
 `wifi`, `wifi_connected`, `back` (not Home), `empty`, `error` (toast),
 `danger` (dialog), `eq`, `gapless`, `crossfade`, `normalise`, `has_status`,
-`has_clock` (the time is known; give the title less room),
+`has_clock` (the time is known; give the title less room), `live` (a
+station plays: `remaining` and `duration` read LIVE, the `progress` bar is full;
+hide the queue position), `favorite` (the song playing is in Favorites),
 `has_body`, `has_title`, `has_action`, `has_facts`, `interactive`.
 
 Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,
@@ -202,7 +208,7 @@ Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,
 `back chevron check close play pause prev next play_large pause_large
 prev_large next_large shuffle repeat repeat_one gapless eq normalise bluetooth
 wifi lock bolt folder note speaker headphones sd usb warning info sun drive
-power download refresh search vinyl person crossfade`, and three that follow
+power download refresh search vinyl person crossfade heart`, and three that follow
 the state: `play_pause`, `play_pause_large`, `repeat_mode`.
 
 ## Limits and checks

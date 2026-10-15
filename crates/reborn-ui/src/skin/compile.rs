@@ -314,6 +314,7 @@ pub(crate) const ICONS: &[(&str, Icon)] = &[
     ("vinyl", Icon::Vinyl),
     ("person", Icon::Person),
     ("crossfade", Icon::Crossfade),
+    ("heart", Icon::HeartOn),
 ];
 
 pub(crate) fn token(p: &Palette, name: &str) -> Option<u32> {

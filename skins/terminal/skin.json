@@ -1293,7 +1293,19 @@
     "h": 22,
     "text": "QUEUE  : {queue_index}/{queue_length}",
     "font": "detail",
-    "color": "muted"
+    "color": "muted",
+    "if": "!live"
+   },
+   {
+    "type": "text",
+    "x": 16,
+    "y": 140,
+    "w": 300,
+    "h": 22,
+    "text": "STATION: {station}",
+    "font": "detail",
+    "color": "muted",
+    "if": "live"
    },
    {
     "type": "text",
@@ -1387,6 +1399,15 @@
     "w": 480,
     "h": 360,
     "image": "scan"
+   },
+   {
+    "type": "icon",
+    "if": "favorite",
+    "icon": "heart",
+    "x": 298,
+    "y": 119,
+    "size": 16,
+    "color": "text"
    }
   ],
   "home": [
@@ -1449,6 +1470,39 @@
     "w": 480,
     "h": 360,
     "image": "scan"
+   }
+  ],
+  "keyboard": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": false
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "text",
+    "x": 10,
+    "y": 0,
+    "w": 360,
+    "h": 29,
+    "text": "reborn:~/{sheet_title} $",
+    "font": "bartitle",
+    "color": "bar_text",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 10,
+    "y": 0,
+    "w": 280,
+    "h": 29,
+    "text": "reborn:~/{sheet_title} $",
+    "font": "bartitle",
+    "color": "bar_text",
+    "if": "has_clock"
    }
   ]
  }

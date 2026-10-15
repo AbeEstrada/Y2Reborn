@@ -1757,6 +1757,15 @@
     "align": "center",
     "case": "upper",
     "tracking": 2
+   },
+   {
+    "type": "icon",
+    "if": "favorite",
+    "icon": "heart",
+    "x": 448,
+    "y": 175,
+    "size": 16,
+    "color": "#FF5A7A"
    }
   ],
   "home": [
@@ -1860,6 +1869,43 @@
     "color": "bar_text",
     "case": "upper",
     "tracking": 3
+   }
+  ],
+  "keyboard": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": false
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "text",
+    "x": 18,
+    "y": 0,
+    "w": 360,
+    "h": 38,
+    "text": "{sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "case": "upper",
+    "tracking": 3,
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 18,
+    "y": 0,
+    "w": 296,
+    "h": 38,
+    "text": "{sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "case": "upper",
+    "tracking": 3,
+    "if": "has_clock"
    }
   ]
  }

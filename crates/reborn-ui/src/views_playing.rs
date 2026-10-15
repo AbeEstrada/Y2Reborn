@@ -63,49 +63,8 @@ pub fn now_playing(
             1.8,
         );
     }
-    // A station: the song it announces as the title, its artist below and the
-    // station under that; before a song is known, the station and its genres.
     let song = ui.radio.song.as_ref().filter(|_| radio);
-    let (title, second, third) = match (station, song) {
-        (Some(s), Some((title, artist))) => (
-            title.clone(),
-            if artist.is_empty() {
-                s.name.clone()
-            } else {
-                artist.clone()
-            },
-            if artist.is_empty() {
-                s.country.clone()
-            } else {
-                [s.name.clone(), s.country.clone()]
-                    .into_iter()
-                    .filter(|p| !p.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            },
-        ),
-        (Some(s), None) => (
-            s.name.clone(),
-            {
-                let genres = s.genres(3).join(", ");
-                if genres.is_empty() {
-                    "Live".to_owned()
-                } else {
-                    genres
-                }
-            },
-            [s.country.clone(), s.languages()]
-                .into_iter()
-                .filter(|p| !p.is_empty())
-                .collect::<Vec<_>>()
-                .join(" · "),
-        ),
-        _ => (
-            crate::track_title(t).to_owned(),
-            crate::display_or_unknown(&t.artist).to_owned(),
-            crate::display_or_unknown(&t.album).to_owned(),
-        ),
-    };
+    let (title, second, third) = lines(ui, t);
     let lines = text::wrap(Face::S25, &title, 236., 2);
     let mut baseline = 107.;
     for line in &lines {
@@ -361,4 +320,53 @@ pub fn power_hold(c: &mut Canvas, ui: &Ui) {
         fade(color::DIM, appear),
     );
     let _ = SdCard::Absent;
+}
+
+/// The three lines under the cover: title, artist, album. A station: the song
+/// it announces as the title, its artist below and the station under that;
+/// before a song is known, the station and its genres. Skins use the same.
+pub(crate) fn lines(ui: &Ui, t: &Track) -> (String, String, String) {
+    let radio = t.is_radio();
+    let station = ui.radio.now.as_ref().filter(|_| radio);
+    let song = ui.radio.song.as_ref().filter(|_| radio);
+    match (station, song) {
+        (Some(s), Some((title, artist))) => (
+            title.clone(),
+            if artist.is_empty() {
+                s.name.clone()
+            } else {
+                artist.clone()
+            },
+            if artist.is_empty() {
+                s.country.clone()
+            } else {
+                [s.name.clone(), s.country.clone()]
+                    .into_iter()
+                    .filter(|p| !p.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            },
+        ),
+        (Some(s), None) => (
+            s.name.clone(),
+            {
+                let genres = s.genres(3).join(", ");
+                if genres.is_empty() {
+                    "Live".to_owned()
+                } else {
+                    genres
+                }
+            },
+            [s.country.clone(), s.languages()]
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · "),
+        ),
+        _ => (
+            crate::track_title(t).to_owned(),
+            crate::display_or_unknown(&t.artist).to_owned(),
+            crate::display_or_unknown(&t.album).to_owned(),
+        ),
+    }
 }

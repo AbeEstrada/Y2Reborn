@@ -1567,7 +1567,19 @@
     "h": 22,
     "text": "{queue_index}. {artist} - {title}",
     "font": "detail",
-    "color": "lcd"
+    "color": "lcd",
+    "if": "!live"
+   },
+   {
+    "type": "text",
+    "x": 214,
+    "y": 42,
+    "w": 244,
+    "h": 22,
+    "text": "{artist} - {title}",
+    "font": "detail",
+    "color": "lcd",
+    "if": "live"
    },
    {
     "type": "text",
@@ -1621,7 +1633,20 @@
     "text": "-{duration}",
     "font": "small",
     "color": "lcd_dim",
-    "align": "right"
+    "align": "right",
+    "if": "!live"
+   },
+   {
+    "type": "text",
+    "x": 334,
+    "y": 112,
+    "w": 124,
+    "h": 26,
+    "text": "LIVE",
+    "font": "small",
+    "color": "lcd_dim",
+    "align": "right",
+    "if": "live"
    },
    {
     "type": "bar",
@@ -1729,6 +1754,15 @@
     "font": "small",
     "color": "lcd",
     "case": "upper"
+   },
+   {
+    "type": "icon",
+    "if": "favorite",
+    "icon": "heart",
+    "x": 442,
+    "y": 68,
+    "size": 16,
+    "color": "lcd"
    }
   ],
   "home": [
@@ -1777,6 +1811,30 @@
     "color": "bar_text",
     "align": "center",
     "tracking": 2
+   }
+  ],
+  "keyboard": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": false
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "text",
+    "x": 130,
+    "y": 0,
+    "w": 220,
+    "h": 24,
+    "text": "REBORN · {sheet_title}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "case": "upper",
+    "tracking": 1
    }
   ]
  }

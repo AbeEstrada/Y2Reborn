@@ -19,7 +19,9 @@ fn ambience(c: &mut Canvas) {
 
 pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let page = pages::page(ui, m, tracks);
-    if page.hero.is_some() {
+    // Station Info's heading is for skins; Reborn draws the station itself.
+    let station_info = m.screen == Screen::RadioInfo && ui.radio.info.is_some();
+    if page.hero.is_some() && !station_info {
         views_system::page(c, ui, m, tracks, interactive);
         return;
     }
@@ -403,38 +405,7 @@ fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
         y += 20.;
     }
     // Facts, label over value, in two columns under the logo.
-    let mut facts: Vec<(&str, String)> = vec![];
-    if !s.country.is_empty() {
-        facts.push(("COUNTRY", s.country.clone()));
-    }
-    let languages = s.languages();
-    if !languages.is_empty() {
-        facts.push(("LANGUAGE", languages));
-    }
-    let format = s.format();
-    if !format.is_empty() {
-        facts.push(("FORMAT", format));
-    }
-    if s.votes > 0 {
-        facts.push(("VOTES", count_label(s.votes as usize)));
-    }
-    let genres = s.genres(3).join(", ");
-    if !genres.is_empty() {
-        facts.push(("GENRES", genres));
-    }
-    if !s.homepage.is_empty() {
-        let host = s
-            .homepage
-            .split("://")
-            .nth(1)
-            .unwrap_or(&s.homepage)
-            .split('/')
-            .next()
-            .unwrap_or("")
-            .trim_start_matches("www.")
-            .to_owned();
-        facts.push(("HOMEPAGE", host));
-    }
+    let facts = station_facts(s);
     let _ = y;
     let top = 192.;
     for (i, (label, value)) in facts.iter().take(6).enumerate() {
@@ -444,7 +415,7 @@ fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
         c.text_tracked(
             fx,
             fy + Face::S10.mid_offset(),
-            label,
+            &label.to_uppercase(),
             Face::S10,
             color::DIM,
             1.4,
@@ -472,4 +443,42 @@ fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
             if selected { color::INK } else { color::TEXT },
         );
     }
+}
+
+/// What the directory knows about a station, as label and value (Station
+/// Info draws them; skins get them as the page's facts).
+pub(crate) fn station_facts(s: &reborn_core::RadioStation) -> Vec<(&'static str, String)> {
+    let mut facts: Vec<(&'static str, String)> = vec![];
+    if !s.country.is_empty() {
+        facts.push(("Country", s.country.clone()));
+    }
+    let languages = s.languages();
+    if !languages.is_empty() {
+        facts.push(("Language", languages));
+    }
+    let format = s.format();
+    if !format.is_empty() {
+        facts.push(("Format", format));
+    }
+    if s.votes > 0 {
+        facts.push(("Votes", count_label(s.votes as usize)));
+    }
+    let genres = s.genres(3).join(", ");
+    if !genres.is_empty() {
+        facts.push(("Genres", genres));
+    }
+    if !s.homepage.is_empty() {
+        let host = s
+            .homepage
+            .split("://")
+            .nth(1)
+            .unwrap_or(&s.homepage)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches("www.")
+            .to_owned();
+        facts.push(("Homepage", host));
+    }
+    facts
 }

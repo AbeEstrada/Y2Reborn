@@ -106,6 +106,17 @@ impl Scene<'_> {
             Flag::Normalise => s.replay_gain != reborn_core::ReplayGainMode::Off,
             Flag::HasStatus => self.page.and_then(|p| p.status.as_ref()).is_some(),
             Flag::HasClock => self.ui.clock(m).is_some(),
+            Flag::Live => m.current().is_some_and(Track::is_radio),
+            // The song playing is in Favorites (Reborn's own Now Playing heart).
+            Flag::Favorite => m
+                .current()
+                .filter(|t| !t.is_radio())
+                .and_then(|t| {
+                    self.tracks
+                        .iter()
+                        .position(|x| x.id == t.id && x.source_id == t.source_id)
+                })
+                .is_some_and(|i| self.ui.is_favorite_track(m, self.tracks, i)),
             Flag::HasBody => !self.text(Var::PageBody, None).is_empty(),
             Flag::HasTitle => !screen_title(m).is_empty(),
             Flag::HasAction => self.empty_copy().2.is_some(),
@@ -119,12 +130,23 @@ impl Scene<'_> {
             Flag::Checked => row.is_some_and(|r| r.item.kind == RowKind::Check(true)),
             Flag::Chevron => row.is_some_and(|r| r.item.kind == RowKind::Chevron),
             Flag::HasDetail => row.is_some_and(|r| !r.item.secondary.is_empty()),
-            Flag::RowArt => row.is_some_and(|r| r.item.art.is_some()),
+            Flag::RowArt => {
+                row.is_some_and(|r| r.item.art.is_some() || self.row_station(r).is_some())
+            }
             Flag::Current => row.is_some_and(|r| r.current),
             Flag::First => row.is_some_and(|r| r.index == 0),
             Flag::Last => row.is_some_and(|r| r.index + 1 == r.count),
             Flag::Odd => row.is_some_and(|r| r.index % 2 == 1),
         }
+    }
+
+    /// The station a row of a station list stands for.
+    fn row_station(&self, r: &Row) -> Option<&reborn_core::RadioStation> {
+        r.item
+            .key
+            .strip_prefix("station:")
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| self.ui.radio.stations.get(i))
     }
 
     fn when(&self, node: &Node, row: Option<&Row>) -> bool {
@@ -143,9 +165,26 @@ impl Scene<'_> {
         let t = m.current();
         let track = |f: fn(&Track) -> String| t.map(f).unwrap_or_default();
         match v {
-            Var::Title => track(|t| crate::track_title(t).to_owned()),
-            Var::Artist => track(|t| crate::display_or_unknown(&t.artist).to_owned()),
-            Var::Album => track(|t| crate::display_or_unknown(&t.album).to_owned()),
+            // A station: the song it announces, as Reborn's own Now Playing.
+            Var::Title => t
+                .map(|t| crate::views_playing::lines(self.ui, t).0)
+                .unwrap_or_default(),
+            Var::Artist => t
+                .map(|t| crate::views_playing::lines(self.ui, t).1)
+                .unwrap_or_default(),
+            Var::Station => t
+                .filter(|t| t.is_radio())
+                .map(|t| {
+                    self.ui
+                        .radio
+                        .now
+                        .as_ref()
+                        .map_or_else(|| crate::track_title(t).to_owned(), |s| s.name.clone())
+                })
+                .unwrap_or_default(),
+            Var::Album => t
+                .map(|t| crate::views_playing::lines(self.ui, t).2)
+                .unwrap_or_default(),
             Var::AlbumArtist => track(|t| {
                 crate::display_or_unknown(if t.album_artist.is_empty() {
                     &t.artist
@@ -158,6 +197,8 @@ impl Scene<'_> {
             Var::Elapsed => t
                 .map(|_| components::time(m.position_ms))
                 .unwrap_or_default(),
+            // A station has no length: what is left reads LIVE.
+            Var::Remaining | Var::Duration if t.is_some_and(Track::is_radio) => "LIVE".into(),
             Var::Remaining => t
                 .map(|t| {
                     format!(
@@ -229,9 +270,16 @@ impl Scene<'_> {
     fn level(&self, l: Level) -> f32 {
         let m = self.m;
         match l {
+            // A station: a full bar, as in Reborn's own Now Playing.
             Level::Progress => m
                 .current()
-                .map(|t| components::progress(m.position_ms, t.duration_ms))
+                .map(|t| {
+                    if t.is_radio() {
+                        1.
+                    } else {
+                        components::progress(m.position_ms, t.duration_ms)
+                    }
+                })
                 .unwrap_or(0.),
             Level::Volume => f32::from(m.settings.volume.min(100)) / 100.,
             Level::Battery => m
@@ -711,8 +759,18 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                         if *radius >= 2. {
                             c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
                         }
+                    } else if let Some(t) = s.m.current().filter(|t| t.is_radio()) {
+                        // A station without its logo (yet): its initials.
+                        components::initials_tile(c, crate::track_title(t), b.x, b.y, b.w);
                     } else {
                         components::placeholder(c, b.x, b.y, b.w, *radius, 0);
+                    }
+                }
+                ArtSource::Row if row.and_then(|r| s.row_station(r)).is_some() => {
+                    let station = row.and_then(|r| s.row_station(r)).unwrap();
+                    components::station_logo(c, s.ui, station, b.x, b.y, b.w);
+                    if *radius >= 2. {
+                        c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
                     }
                 }
                 ArtSource::Row => {
