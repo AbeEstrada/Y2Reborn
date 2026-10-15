@@ -113,6 +113,7 @@ Indexed pages: **64**. Explicit historical/contract scope notices:
 | --- | --- |
 | [Reborn audio fixtures](../assets/fixtures/README.md) | Source asset reference |
 | [Reborn UI v1 font](../assets/fonts/README.md) | Source asset reference |
+| [Pixelify Sans (Bunny Bow skin font)](../assets/fonts/pixelify/README.md) | Source asset reference |
 | [Reborn Simple icon atlas](../assets/icons/README.md) | Source asset reference |
 
 ## Platform 1.0 integration source and evidence
