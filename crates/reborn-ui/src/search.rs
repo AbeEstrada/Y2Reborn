@@ -56,10 +56,8 @@ pub struct Results {
 impl Results {
     /// "2 artists · 1 album · 14 songs", or "No matches".
     pub fn summary(&self) -> String {
-        let part = |n: usize, one: &str, many: &str| match n {
-            0 => None,
-            1 => Some(format!("1 {one}")),
-            n => Some(format!("{n} {many}")),
+        let part = |n: usize, one: &str, many: &str| {
+            (n > 0).then(|| crate::components::count(n, one, many))
         };
         let parts: Vec<String> = [
             part(self.artists.len(), "artist", "artists"),
@@ -88,7 +86,7 @@ fn matches(words: &[&str], inner: &[String], name: &str) -> bool {
 
 impl Index {
     fn ensure(&mut self, tracks: &[Track]) {
-        let stamp = (tracks.as_ptr() as usize, tracks.len());
+        let stamp = crate::library_stamp(tracks);
         if self.stamp == Some(stamp) {
             return;
         }
@@ -253,6 +251,9 @@ impl Index {
                 ),
             },
         };
+        // Only beginnings of this text can serve again (typing on, Delete):
+        // results of other searches go, so the cache stays small.
+        self.cache.retain(|(q, _)| folded.starts_with(q.as_str()));
         if self.cache.len() >= CACHED_SEARCHES {
             self.cache.remove(0);
         }

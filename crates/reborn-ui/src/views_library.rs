@@ -167,20 +167,13 @@ pub fn browse(
     }
 }
 
-fn window(m: &AppModel, focus: usize, visible: usize) -> usize {
-    m.navigation
-        .scroll
-        .min(focus)
-        .max(focus.saturating_add(1).saturating_sub(visible))
-}
-
 /// Songs, artists and queue entries: a cover, two lines and a duration.
 fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(m.screen);
-    let scroll = window(m, focus, visible);
+    let scroll = components::list_window(m, focus, visible);
     components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
     let artists = m.screen == Screen::Artists;
     let queue = m.screen == Screen::Queue;
@@ -409,7 +402,7 @@ fn album_page(
     components::status_bar(c, ui, m, "ALBUM", true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let scroll = window(m, focus, visible_rows_for(Screen::Album));
+    let scroll = components::list_window(m, focus, visible_rows_for(Screen::Album));
     let rows_all = ui.visible_rows(m, tracks, scroll, 6);
     // Opening from Cover Flow: the centre cover flies into the header box.
     let opening = ui
@@ -594,11 +587,7 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
         let albums = all.len().saturating_sub(1);
         let sub = format!(
             "{} · {}",
-            if albums == 1 {
-                "1 album".to_owned()
-            } else {
-                format!("{albums} albums")
-            },
+            components::count(albums, "album", "albums"),
             play.map(|p| p.secondary.split(" · ").next().unwrap_or("").to_owned())
                 .unwrap_or_default()
         );
@@ -700,7 +689,7 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(Screen::Folders);
-    let scroll = window(m, focus, visible);
+    let scroll = components::list_window(m, focus, visible);
     for (i, row) in ui
         .visible_rows(m, tracks, scroll, visible)
         .iter()
@@ -736,11 +725,7 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
                 c.text_mid(64., y + 25., 310., &row.label, Face::R15, color::TEXT);
                 let songs = songs_under(tracks, &row.key);
                 if songs > 0 {
-                    let label = if songs == 1 {
-                        "1 song".to_owned()
-                    } else {
-                        format!("{songs} songs")
-                    };
+                    let label = components::count(songs, "song", "songs");
                     c.text_mid_right(WIDTH - 36., y + 25., &label, Face::R11, color::DIM);
                 }
             }

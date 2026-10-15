@@ -367,8 +367,7 @@ fn radio_menu(ui: &Ui) -> Page {
     let r = &ui.radio;
     let favorites = match r.favorites.len() {
         0 => "Hold Select on a station to add it".to_owned(),
-        1 => "1 station".into(),
-        n => format!("{n} stations"),
+        n => crate::components::count(n, "station", "stations"),
     };
     let mut rows = vec![];
     if let Some(now) = &r.now {
@@ -735,10 +734,7 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
             })
             .count()
     };
-    let songs = |n: usize| match n {
-        1 => "1 song".to_owned(),
-        n => format!("{n} songs"),
-    };
+    let songs = |n: usize| crate::components::count(n, "song", "songs");
     let sd_online = m
         .sources
         .iter()

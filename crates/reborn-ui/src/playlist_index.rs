@@ -18,8 +18,6 @@ type Resolved = ((u64, i64), Vec<Option<usize>>);
 pub struct Index {
     stamp: Option<(usize, usize)>,
     by_path: HashMap<String, u32>,
-    /// Lower-case path per track (empty for stations).
-    lower: Vec<String>,
     /// Lower-case file name → tracks with that name.
     by_name: HashMap<String, Vec<u32>>,
     /// Resolved playlists: (path, file stamp) → entry → track.
@@ -61,7 +59,7 @@ fn percent_decode(text: &str) -> String {
 
 impl Index {
     fn ensure(&mut self, tracks: &[Track]) {
-        let stamp = (tracks.as_ptr() as usize, tracks.len());
+        let stamp = crate::library_stamp(tracks);
         if self.stamp == Some(stamp) {
             return;
         }
@@ -69,14 +67,12 @@ impl Index {
             stamp: Some(stamp),
             ..Default::default()
         };
-        self.lower = vec![String::new(); tracks.len()];
         for (i, t) in tracks.iter().enumerate() {
             if t.is_radio() {
                 continue;
             }
-            let path = t.path.to_string_lossy().to_lowercase();
-            self.by_path.insert(path.clone(), i as u32);
-            self.lower[i] = path;
+            self.by_path
+                .insert(t.path.to_string_lossy().to_lowercase(), i as u32);
             if let Some(name) = t.path.file_name() {
                 self.by_name
                     .entry(name.to_string_lossy().to_lowercase())
@@ -89,10 +85,10 @@ impl Index {
     /// The library track an entry names, if it is in the library.
     pub fn resolve(&mut self, tracks: &[Track], dir: &Path, location: &str) -> Option<usize> {
         self.ensure(tracks);
-        self.lookup(dir, location)
+        self.lookup(tracks, dir, location)
     }
 
-    fn lookup(&self, dir: &Path, location: &str) -> Option<usize> {
+    fn lookup(&self, tracks: &[Track], dir: &Path, location: &str) -> Option<usize> {
         let mut text = location.trim().to_owned();
         if text.len() > 7 && text[..7].eq_ignore_ascii_case("file://") {
             text = percent_decode(&text[7..]);
@@ -123,8 +119,13 @@ impl Index {
             .collect();
         let name = parts.last()?;
         let candidates = self.by_name.get(name)?;
+        // Only the few songs with this file name are compared, so their
+        // paths are lower-cased here rather than kept twice for every song.
         let score = |i: u32| -> usize {
-            self.lower[i as usize]
+            tracks[i as usize]
+                .path
+                .to_string_lossy()
+                .to_lowercase()
                 .split('/')
                 .rev()
                 .zip(parts.iter().rev())
@@ -163,7 +164,7 @@ impl Index {
             let list = playlist
                 .entries
                 .iter()
-                .map(|e| self.lookup(&dir, &e.location))
+                .map(|e| self.lookup(tracks, &dir, &e.location))
                 .collect();
             self.resolved
                 .insert(playlist.path.clone(), (playlist.stamp, list));

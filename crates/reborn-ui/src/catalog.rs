@@ -80,10 +80,10 @@ impl Catalog {
                 for (artist, i, albums) in results.artists {
                     let mut item =
                         Item::new(display_or_unknown(&artist), format!("artist:{artist}"))
-                            .with_secondary(match albums {
-                                1 => "Artist · 1 album".to_owned(),
-                                n => format!("Artist · {n} albums"),
-                            });
+                            .with_secondary(format!(
+                                "Artist · {}",
+                                crate::components::count(albums, "album", "albums")
+                            ));
                     item.art = Some(i);
                     self.push(item);
                 }
@@ -119,10 +119,8 @@ impl Catalog {
                         .filter(|t| track_matches(t, &m.navigation.filter))
                         .count();
                     self.push(
-                        Item::new("All Songs", "all_songs").with_secondary(match songs {
-                            1 => "1 song".to_owned(),
-                            n => format!("{n} songs"),
-                        }),
+                        Item::new("All Songs", "all_songs")
+                            .with_secondary(crate::components::count(songs, "song", "songs")),
                     );
                 }
                 for ((album, artist), (i, t)) in albums {
@@ -152,14 +150,8 @@ impl Catalog {
                 named.sort_by_cached_key(|(genre, _)| title_key(genre));
                 for (genre, (i, albums, songs, _)) in named.into_iter().chain(untagged) {
                     let label = if genre.is_empty() { "No Genre" } else { genre };
-                    let albums = match albums.len() {
-                        1 => "1 album".to_owned(),
-                        n => format!("{n} albums"),
-                    };
-                    let songs = match songs {
-                        1 => "1 song".to_owned(),
-                        n => format!("{n} songs"),
-                    };
+                    let albums = crate::components::count(albums.len(), "album", "albums");
+                    let songs = crate::components::count(songs, "song", "songs");
                     let mut item = Item::new(label, format!("genre:{genre}"))
                         .with_secondary(format!("{albums} · {songs}"));
                     item.art = Some(i);
@@ -184,10 +176,11 @@ impl Catalog {
                 for (artist, (i, albums, _)) in artists {
                     let mut item =
                         Item::new(display_or_unknown(artist), format!("artist:{artist}"))
-                            .with_secondary(match albums.len() {
-                                1 => "1 album".to_owned(),
-                                n => format!("{n} albums"),
-                            });
+                            .with_secondary(crate::components::count(
+                                albums.len(),
+                                "album",
+                                "albums",
+                            ));
                     item.art = Some(i);
                     self.push(item);
                 }

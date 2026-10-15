@@ -34,6 +34,24 @@ pub struct PlaylistsView {
     generation: u64,
 }
 
+/// What a playlist holds in the library, worked out once per change of the
+/// file or the library (views read it every frame).
+pub(crate) struct Facts {
+    /// Per entry, its library track.
+    pub resolved: Vec<Option<usize>>,
+    /// Library songs that can play now, in order.
+    pub playable: Vec<usize>,
+    /// Up to four tracks of different albums (the mosaic).
+    pub mosaic: Vec<usize>,
+    /// Length of the songs found, and entries not found.
+    pub ms: u64,
+    pub missing: usize,
+    pub members: std::collections::HashSet<usize>,
+}
+
+/// A playlist's file stamp, entry count and the library it was matched in.
+pub(crate) type FactsKey = ((u64, i64), usize, (usize, usize));
+
 /// What the rows of a Playlist screen depend on.
 pub(crate) type RowsKey = (Screen, String, u64, usize, usize, Option<(usize, usize)>);
 
@@ -93,10 +111,7 @@ fn roots(m: &AppModel) -> Vec<PathBuf> {
 
 /// "24 songs · 1 h 32 min".
 pub fn summary(count: usize, ms: u64) -> String {
-    let songs = match count {
-        1 => "1 song".to_owned(),
-        n => format!("{n} songs"),
-    };
+    let songs = crate::components::count(count, "song", "songs");
     let minutes = ms / 60_000;
     let length = if minutes >= 60 {
         format!("{} h {} min", minutes / 60, minutes % 60)
@@ -132,33 +147,78 @@ impl Ui {
             .collect()
     }
 
-    /// Each entry of a playlist as a library song (None: not on the player).
-    pub(crate) fn resolved(&self, tracks: &[Track], playlist: &Playlist) -> Vec<Option<usize>> {
-        self.playlist_index
+    /// What a playlist holds in the library, cached until it or the
+    /// library changes.
+    pub(crate) fn facts(&self, tracks: &[Track], playlist: &Playlist) -> std::rc::Rc<Facts> {
+        let key: FactsKey = (
+            playlist.stamp,
+            playlist.entries.len(),
+            crate::library_stamp(tracks),
+        );
+        if let Some((k, facts)) = self.playlist_facts.borrow().get(&playlist.path) {
+            if *k == key {
+                return facts.clone();
+            }
+        }
+        let resolved = self
+            .playlist_index
             .borrow_mut()
             .resolve_all(tracks, playlist)
-            .to_vec()
+            .to_vec();
+        let online = |&i: &usize| tracks.get(i).is_some_and(|t| t.online);
+        let playable: Vec<usize> = resolved.iter().flatten().copied().filter(online).collect();
+        let mut mosaic: Vec<usize> = vec![];
+        for &t in resolved.iter().flatten() {
+            if mosaic.len() == 4 {
+                break;
+            }
+            let track = &tracks[t];
+            if !mosaic.iter().any(|&o| {
+                tracks[o].album == track.album && tracks[o].album_artist == track.album_artist
+            }) {
+                mosaic.push(t);
+            }
+        }
+        let facts = std::rc::Rc::new(Facts {
+            ms: resolved
+                .iter()
+                .flatten()
+                .map(|&t| tracks[t].duration_ms)
+                .sum(),
+            missing: resolved.iter().filter(|r| r.is_none()).count(),
+            members: resolved.iter().flatten().copied().collect(),
+            playable,
+            mosaic,
+            resolved,
+        });
+        self.playlist_facts
+            .borrow_mut()
+            .insert(playlist.path.clone(), (key, facts.clone()));
+        facts
+    }
+
+    /// Each entry of a playlist as a library song (None: not on the player).
+    pub(crate) fn resolved(&self, tracks: &[Track], playlist: &Playlist) -> Vec<Option<usize>> {
+        self.facts(tracks, playlist).resolved.clone()
     }
 
     /// The library songs of a playlist that can play now, in order.
     fn playable(&self, tracks: &[Track], playlist: &Playlist) -> Vec<usize> {
-        self.resolved(tracks, playlist)
-            .into_iter()
-            .flatten()
-            .filter(|&i| tracks.get(i).is_some_and(|t| t.online))
-            .collect()
+        self.facts(tracks, playlist).playable.clone()
     }
 
     /// Track indices in Favorites (for the heart).
     pub fn favorite_tracks(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
         self.playlists
             .get(&favorites_path(&m.settings.music_directory))
-            .map(|f| self.resolved(tracks, f).into_iter().flatten().collect())
+            .map(|f| self.facts(tracks, f).playable.clone())
             .unwrap_or_default()
     }
 
     pub fn is_favorite_track(&self, m: &AppModel, tracks: &[Track], index: usize) -> bool {
-        self.favorite_tracks(m, tracks).contains(&index)
+        self.playlists
+            .get(&favorites_path(&m.settings.music_directory))
+            .is_some_and(|f| self.facts(tracks, f).members.contains(&index))
     }
 
     /// The heart: add the song to Favorites, or take every copy out.
@@ -232,16 +292,10 @@ impl Ui {
                 let mut rows = vec![Item::new("New Playlist", "pl_new")
                     .with_secondary("Name it, then add songs from anywhere")];
                 for (i, p) in self.playlists.lists.iter().enumerate() {
-                    let resolved = self.resolved(tracks, p);
-                    let ms = resolved
-                        .iter()
-                        .flatten()
-                        .filter_map(|&t| tracks.get(t))
-                        .map(|t| t.duration_ms)
-                        .sum();
+                    let facts = self.facts(tracks, p);
                     let mut item = Item::new(&p.name, format!("playlist:{i}"))
-                        .with_secondary(summary(p.entries.len(), ms));
-                    item.art = resolved.iter().flatten().next().copied();
+                        .with_secondary(summary(p.entries.len(), facts.ms));
+                    item.art = facts.mosaic.first().copied();
                     rows.push(item);
                 }
                 rows
@@ -250,14 +304,10 @@ impl Ui {
                 let Some(p) = self.playlists.get(Path::new(&m.navigation.filter)) else {
                     return vec![];
                 };
-                let resolved = self.resolved(tracks, p);
-                let playable = resolved
-                    .iter()
-                    .flatten()
-                    .filter(|&&i| tracks.get(i).is_some_and(|t| t.online))
-                    .count();
+                let facts = self.facts(tracks, p);
+                let resolved = &facts.resolved;
                 let mut rows = vec![];
-                if playable > 0 {
+                if !facts.playable.is_empty() {
                     rows.push(Item::new("Play", "pl_play"));
                     rows.push(Item::new("Shuffle", "pl_shuffle"));
                 }
@@ -507,7 +557,7 @@ impl Ui {
         let p = self.playlists.get(Path::new(&m.navigation.filter))?.clone();
         let last = p.entries.len().saturating_sub(1);
         // Play and Shuffle come first when anything can play.
-        let lead = if self.playable(tracks, &p).is_empty() {
+        let lead = if self.facts(tracks, &p).playable.is_empty() {
             0
         } else {
             2

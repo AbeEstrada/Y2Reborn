@@ -12,19 +12,12 @@ use crate::{
     views_library::pill_row,
     Ui,
 };
-use reborn_core::{playlist::Playlist, AppModel, Screen, Track};
+use reborn_core::{AppModel, Screen, Track};
 use std::path::Path;
 
 /// Playlists' own colour: a warm pink, as Radio has its red.
 const TINT: u32 = 0xFF6FA5FF;
 const FAVORITE: u32 = 0xFF5A7AFF;
-
-fn window(m: &AppModel, focus: usize, visible: usize) -> usize {
-    m.navigation
-        .scroll
-        .min(focus)
-        .max((focus + 1).saturating_sub(visible))
-}
 
 pub fn screen(
     c: &mut Canvas,
@@ -42,31 +35,20 @@ pub fn screen(
     }
 }
 
-/// Up to four covers of different albums, for a playlist's mosaic.
-fn mosaic_tracks(ui: &Ui, tracks: &[Track], p: &Playlist) -> Vec<usize> {
-    let mut picked: Vec<usize> = vec![];
-    for t in ui.resolved(tracks, p).into_iter().flatten() {
-        let Some(track) = tracks.get(t) else {
-            continue;
-        };
-        if !picked.iter().any(|&o| {
-            tracks[o].album == track.album && tracks[o].album_artist == track.album_artist
-        }) {
-            picked.push(t);
-            if picked.len() == 4 {
-                break;
-            }
-        }
-    }
-    picked
-}
-
 /// A playlist's picture: one cover, or four in a 2×2 grid.
 fn mosaic(c: &mut Canvas, ui: &Ui, tracks: &[Track], picked: &[usize], x: f32, y: f32, size: f32) {
     match picked.len() {
         0 => {
-            c.rrect(x, y, size, size, (size * 0.11).max(4.), alpha(TINT, 0x30));
-            c.icon(Icon::Note, x + size / 2., y + size / 2., size * 0.45, TINT);
+            components::icon_tile(
+                c,
+                x,
+                y,
+                size,
+                (size * 0.11).max(4.),
+                TINT,
+                Icon::Note,
+                size * 0.45,
+            );
         }
         1..=3 => cover(c, ui, Some((picked[0], &tracks[picked[0]])), x, y, size),
         _ => {
@@ -102,7 +84,7 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     components::status_bar(c, ui, m, "PLAYLISTS", true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let first = window(m, focus, ROWS);
+    let first = components::list_window(m, focus, ROWS);
     for (n, row) in ui.visible_rows(m, tracks, first, ROWS).iter().enumerate() {
         let i = first + n;
         let y = 38. + (i - first) as f32 * ROW_H;
@@ -118,15 +100,13 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             .and_then(|i| ui.playlists.lists.get(i));
         match playlist {
             None => {
-                c.rrect(tx, ty, tile, tile, 9., alpha(TINT, 0x30));
-                c.icon(Icon::Plus, tx + tile / 2., ty + tile / 2., 20., TINT);
+                components::icon_tile(c, tx, ty, tile, 9., TINT, Icon::Plus, 20.);
             }
             Some(p) if is_favorites(&p.path) => {
-                c.rrect(tx, ty, tile, tile, 9., alpha(FAVORITE, 0x30));
-                c.icon(Icon::HeartOn, tx + tile / 2., ty + tile / 2., 20., FAVORITE);
+                components::icon_tile(c, tx, ty, tile, 9., FAVORITE, Icon::HeartOn, 20.);
             }
             Some(p) => {
-                let picked = mosaic_tracks(ui, tracks, p);
+                let picked = ui.facts(tracks, p).mosaic.clone();
                 mosaic(c, ui, tracks, &picked, tx, ty, tile);
             }
         }
@@ -196,38 +176,26 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let moving = ui.playlists.moving.is_some();
     // The header (picture, name, Play and Shuffle) while the top is in view.
-    let scroll = window(m, focus.max(lead), 6).saturating_sub(lead);
+    let scroll = components::list_window(m, focus.max(lead), 6).saturating_sub(lead);
     let header = scroll == 0 && !(moving && focus >= lead + 3);
     let (top, first, shown) = if header {
         (178., lead, 3usize)
     } else {
-        let first = window(m, focus, 6).max(lead);
+        let first = components::list_window(m, focus, 6).max(lead);
         (38., first, 6usize)
     };
     if header {
         let favorite = is_favorites(&p.path);
         let size = 104.;
         if favorite {
-            c.rrect(24., 44., size, size, 11., alpha(FAVORITE, 0x30));
-            c.icon(
-                Icon::HeartOn,
-                24. + size / 2.,
-                44. + size / 2.,
-                52.,
-                FAVORITE,
-            );
+            components::icon_tile(c, 24., 44., size, 11., FAVORITE, Icon::HeartOn, 52.);
         } else {
-            let picked = mosaic_tracks(ui, tracks, p);
+            let picked = ui.facts(tracks, p).mosaic.clone();
             mosaic(c, ui, tracks, &picked, 24., 44., size);
         }
         c.text_mid(144., 70., 316., &screen_title(m), Face::S25, color::TEXT);
-        let resolved = ui.resolved(tracks, p);
-        let ms = resolved
-            .iter()
-            .flatten()
-            .filter_map(|&t| tracks.get(t))
-            .map(|t| t.duration_ms)
-            .sum();
+        let facts = ui.facts(tracks, p);
+        let ms = facts.ms;
         c.text_mid(
             144.,
             96.,
@@ -236,7 +204,7 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             Face::R15,
             color::TEXT,
         );
-        let missing = resolved.iter().filter(|r| r.is_none()).count();
+        let missing = facts.missing;
         let mut where_ = format!(
             "{} · {}",
             storage_of(m, &p.path),

@@ -1,5 +1,28 @@
 # Current Reborn state on the Y2
 
+## Since 1.0.0-beta.6 (not yet released): review of the day's changes
+
+Owner: "analyse the changes we made today … performance problems or code that is double and could be
+consolidated". Found and fixed:
+- **Logo redraw loop:** a station logo that could not be fetched (SVG, dead link) was asked for again every
+  frame and each answer asked for a new frame: with such a station in a list the player never idled.
+  `LogoFetcher` now settles failed (and undecodable) logos for the session and only a saved logo redraws.
+- **Playlists per frame:** each frame re-matched and copied every visible playlist's entries (mosaic, length,
+  missing count). Now `Facts` per playlist, built once per file or library change and shared (`Rc`);
+  the heart's Favorites lookup is a set.
+- Playlists are not re-read while a library scan walks the same storage (its end publishes again).
+- The playlist matcher no longer keeps every song path twice (≈1.5 MB at 20 000 songs); the search cache
+  keeps only beginnings of the current text.
+- Consolidated: one safe file writer (`reborn_core::atomic_write`, now with a hidden per-file temporary —
+  it used to replace the extension, so `a.json` and `a.ini` shared one, and a playlist briefly showed as
+  `Name.new` over USB) for favorites, logos and playlists; one curl setup; Radio's own station lists read
+  with the playlists' text rules (Windows-1252 names kept); one `count()` wording helper (thousands grouped),
+  one list window, one tinted icon tile, one library stamp.
+- Test isolation: tests that start a station take turns (`live()` names the process's latest station; a
+  parallel test replaced it — the "flaky" reconnect test).
+Checks: 462 tests three runs in a row, Clippy, previews pixel-identical before/after (109 screens × Reborn,
+Paper, Classic).
+
 ## 1.0.0-beta.6 — Y2Linux 1.0 Beta 6 (Baseline 57), 2026-10-15 (latest): Playlists, pause in place, collected seeking
 
 **Playlists** (owner: a playlist feature like Y2Player's, its own section, add/remove on the device, "highly

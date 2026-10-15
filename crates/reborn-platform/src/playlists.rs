@@ -3,7 +3,6 @@
 //! (`reborn_ui::playlist_index`); nothing here needs the library.
 
 use reborn_core::playlist::{Playlist, PlaylistEntry, TextEncoding, MAX_ENTRIES};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// A playlist file larger than this is not read.
@@ -269,33 +268,10 @@ pub fn write(playlist: &Playlist) -> Result<((u64, i64), TextEncoding), String> 
         return Err("This playlist is too large to change on the player.".into());
     }
     let (bytes, encoding) = encode(&serialize(playlist), playlist.encoding);
-    let dir = playlist.path.parent().ok_or("no folder")?;
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let file_name = playlist
-        .path
-        .file_name()
-        .ok_or("no file name")?
-        .to_string_lossy()
-        .into_owned();
-    let temporary = dir.join(format!(".{file_name}.reborn-new"));
-    let result = (|| {
-        let mut file = std::fs::File::create(&temporary)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, &playlist.path)?;
-        // The directory entry too, so the rename survives a power cut.
-        if let Ok(d) = std::fs::File::open(dir) {
-            let _ = d.sync_all();
-        }
-        std::fs::metadata(&playlist.path)
-    })();
-    match result {
-        Ok(meta) => Ok((stamp(&meta), encoding)),
-        Err(e) => {
-            let _ = std::fs::remove_file(&temporary);
-            Err(format!("Couldn't save the playlist: {e}"))
-        }
-    }
+    reborn_core::atomic_write(&playlist.path, &bytes)
+        .and_then(|()| std::fs::metadata(&playlist.path))
+        .map(|meta| (stamp(&meta), encoding))
+        .map_err(|e| format!("Couldn't save the playlist: {e}"))
 }
 
 /// Characters a file name on the SD card (exFAT) or a computer cannot hold.

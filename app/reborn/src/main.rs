@@ -44,11 +44,15 @@ const TOP_STATIONS: usize = 10;
 
 /// Station logos: one background download at a time, each logo once (a
 /// failure is remembered on disk for a few days). The player asks for the
-/// logos a frame wanted; finished ones are then decoded like covers.
+/// logos a frame wanted; finished ones are then decoded like covers. A logo
+/// that could not be fetched or decoded is not asked for again this session:
+/// asking every frame kept the player redrawing without end (Beta 5.1–6).
 struct LogoFetcher {
     requests: std::sync::mpsc::Sender<(u64, String)>,
-    done: std::sync::mpsc::Receiver<u64>,
+    /// (key, a logo file is on disk now).
+    done: std::sync::mpsc::Receiver<(u64, bool)>,
     pending: std::collections::HashSet<u64>,
+    settled: std::collections::HashSet<u64>,
 }
 impl LogoFetcher {
     fn spawn(cache: PathBuf) -> Option<Self> {
@@ -61,7 +65,8 @@ impl LogoFetcher {
                     if !reborn_platform::radio::logo_settled(&cache, key) {
                         let _ = reborn_platform::radio::fetch_logo(&url, &cache, key);
                     }
-                    if finished.send(key).is_err() {
+                    let saved = reborn_platform::radio::logo_file(&cache, key).exists();
+                    if finished.send((key, saved)).is_err() {
                         return;
                     }
                 }
@@ -71,21 +76,33 @@ impl LogoFetcher {
             requests,
             done,
             pending: Default::default(),
+            settled: Default::default(),
         })
     }
     fn want(&mut self, key: u64, url: &str) {
-        if self.pending.len() < 64 && self.pending.insert(key) {
+        if !self.settled.contains(&key) && self.pending.len() < 64 && self.pending.insert(key) {
             let _ = self.requests.send((key, url.to_owned()));
         }
     }
-    /// Downloads that finished since the last call.
+    /// No usable logo behind this key (none to fetch, or it did not decode).
+    fn settle(&mut self, key: u64) {
+        self.settled.insert(key);
+    }
+    fn is_settled(&self, key: u64) -> bool {
+        self.settled.contains(&key)
+    }
+    /// Logos saved since the last call (only those need a new frame).
     fn finished(&mut self) -> usize {
-        let mut n = 0;
-        while let Ok(key) = self.done.try_recv() {
+        let mut saved = 0;
+        while let Ok((key, ok)) = self.done.try_recv() {
             self.pending.remove(&key);
-            n += 1;
+            if ok {
+                saved += 1;
+            } else {
+                self.settled.insert(key);
+            }
         }
-        n
+        saved
     }
 }
 
@@ -3491,7 +3508,15 @@ fn run() -> Result<(), String> {
                             rt.dirty.mark_render();
                         }
                     }
-                    (None, _) => worker.record_failure(reply.thumb),
+                    (None, _) => {
+                        worker.record_failure(reply.thumb);
+                        // A logo that does not decode is not asked for again.
+                        if reply.thumb >> 63 == 1 {
+                            if let Some(fetcher) = &mut rt.radio_logos {
+                                fetcher.settle(reply.thumb);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -3530,7 +3555,9 @@ fn run() -> Result<(), String> {
                     rt.dirty.mark_render();
                 }
                 for (key, url) in rt.ui.take_wanted_logos() {
-                    if rt.graphics.as_ref().is_some_and(|g| g.thumb_resident(key)) {
+                    if rt.graphics.as_ref().is_some_and(|g| g.thumb_resident(key))
+                        || rt.radio_logos.as_ref().is_some_and(|f| f.is_settled(key))
+                    {
                         continue;
                     }
                     let file = reborn_platform::radio::logo_file(&cache, key);
@@ -3920,9 +3947,13 @@ fn run() -> Result<(), String> {
                         }
                         rt.model.library.tracks = t;
                         // Playlists are read again with the library (files
-                        // copied over USB, the heart's Favorites).
-                        if let Err(e) = rt.playlist(reborn_core::PlaylistRequest::Refresh) {
-                            rt.fail("playlists", e);
+                        // copied over USB, the heart's Favorites), but not
+                        // while a scan walks the same storage: its own
+                        // publish when it ends comes next.
+                        if !rt.model.library.scanning {
+                            if let Err(e) = rt.playlist(reborn_core::PlaylistRequest::Refresh) {
+                                rt.fail("playlists", e);
+                            }
                         }
                         if !initial_library_ready {
                             initial_library_ready = true;
@@ -4897,6 +4928,33 @@ mod runtime_dirty_tests {
         dirty.checkpoint_failed();
 
         assert!(dirty.checkpoint_due());
+    }
+}
+
+#[cfg(test)]
+mod logo_fetcher_tests {
+    use super::LogoFetcher;
+
+    /// A logo that cannot be fetched is settled: asking again sends nothing
+    /// and finishing it asks for no new frame (the redraw loop of 5.1–6).
+    #[test]
+    fn a_failed_logo_is_never_asked_for_again() {
+        let cache = std::env::temp_dir().join(format!("reborn-logos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        let mut fetcher = LogoFetcher::spawn(cache.clone()).unwrap();
+        let key = reborn_core::logo_key("not a web address");
+        fetcher.want(key, "not a web address");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut frames = 0;
+        while !fetcher.is_settled(key) && std::time::Instant::now() < deadline {
+            frames += fetcher.finished();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(fetcher.is_settled(key));
+        assert_eq!(frames, 0, "a failure asks for no frame");
+        fetcher.want(key, "not a web address");
+        assert!(fetcher.pending.is_empty(), "never sent again");
+        let _ = std::fs::remove_dir_all(cache);
     }
 }
 

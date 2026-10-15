@@ -66,13 +66,7 @@ pub fn save_favorites(path: &Path, favorites: &[Station]) -> io::Result<()> {
         favorites: favorites.to_vec(),
     })
     .map_err(io::Error::other)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("json.new");
-    std::fs::write(&temporary, bytes)?;
-    std::fs::File::open(&temporary)?.sync_all()?;
-    std::fs::rename(&temporary, path)
+    reborn_core::atomic_write(path, &bytes)
 }
 
 // ---------------------------------------------------------------- playlists
@@ -179,7 +173,9 @@ pub fn own_stations(storage_roots: &[PathBuf]) -> Vec<Station> {
                 let Ok(bytes) = std::fs::read(&file) else {
                     continue;
                 };
-                let text = String::from_utf8_lossy(&bytes);
+                // The same text rules as music playlists: a station list
+                // saved by older Windows tools keeps its accented names.
+                let (text, _) = crate::playlists::decode(&bytes);
                 if is_hls(&text) {
                     continue;
                 }
@@ -345,18 +341,20 @@ pub fn read_headers(reader: &mut impl BufRead) -> io::Result<Response> {
     }
 }
 
-fn spawn_curl(url: &str, stream: bool) -> io::Result<Child> {
+/// The player's curl for http(s) only: following redirects (at most five),
+/// never another protocol, its own user agent.
+fn curl_command() -> Command {
     let mut command = Command::new(curl());
     command
-        .args([
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-redirs",
-            "5",
-        ])
+        .args(["--silent", "--location", "--max-redirs", "5"])
         .args(["--proto", "=http,https", "--proto-redir", "=http,https"])
-        .args(["--connect-timeout", "10", "--user-agent", USER_AGENT]);
+        .args(["--user-agent", USER_AGENT]);
+    command
+}
+
+fn spawn_curl(url: &str, stream: bool) -> io::Result<Child> {
+    let mut command = curl_command();
+    command.args(["--show-error", "--connect-timeout", "10"]);
     if stream {
         // A live stream never ends; a stalled one is retried by the fetcher.
         command
@@ -426,12 +424,9 @@ pub fn fetch_logo(url: &str, cache: &Path, key: u64) -> Result<PathBuf, String> 
         if !http_url(url) {
             return Err("not an http(s) address".to_owned());
         }
-        let output = Command::new(curl())
-            .args(["--silent", "--fail", "--location", "--max-redirs", "4"])
-            .args(["--proto", "=http,https", "--proto-redir", "=http,https"])
-            .args(["--connect-timeout", "8", "--max-time", "15"])
-            .args(["--max-filesize", &LOGO_MAX_BYTES.to_string()])
-            .args(["--user-agent", USER_AGENT, "--", url])
+        let output = curl_command()
+            .args(["--fail", "--connect-timeout", "8", "--max-time", "15"])
+            .args(["--max-filesize", &LOGO_MAX_BYTES.to_string(), "--", url])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
@@ -446,10 +441,7 @@ pub fn fetch_logo(url: &str, cache: &Path, key: u64) -> Result<PathBuf, String> 
     let _ = std::fs::create_dir_all(file.parent().unwrap_or(cache));
     match result {
         Ok(bytes) => {
-            let temp = file.with_extension("tmp");
-            std::fs::write(&temp, &bytes)
-                .and_then(|()| std::fs::rename(&temp, &file))
-                .map_err(|e| e.to_string())?;
+            reborn_core::atomic_write(&file, &bytes).map_err(|e| e.to_string())?;
             Ok(file)
         }
         Err(e) => {
@@ -1013,6 +1005,10 @@ fn categories(value: &serde_json::Value, id_key: &str, minimum: u32) -> Vec<Cate
 mod tests {
     use super::*;
 
+    /// `live()` names the station started last in this process; tests that
+    /// start one take turns, or a parallel test's station replaces theirs.
+    static STREAMS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn icy_blocks_are_removed_and_titles_kept_across_any_split() {
         // metaint 4: 4 audio bytes, a length byte, 16*len metadata bytes, ...
@@ -1100,6 +1096,22 @@ mod tests {
     }
 
     #[test]
+    fn own_station_lists_in_windows_encoding_keep_their_names() {
+        let root = std::env::temp_dir().join(format!("reborn-radio-cp1252-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Radio")).unwrap();
+        // "#EXTINF:-1,Café Bleu" in Windows-1252 (é = 0xE9), not UTF-8.
+        let mut bytes = b"#EXTM3U\n#EXTINF:-1,Caf".to_vec();
+        bytes.extend([0xE9]);
+        bytes.extend(b" Bleu\nhttp://cafe.example/stream\n");
+        std::fs::write(root.join("Radio/mine.m3u"), bytes).unwrap();
+        let stations = own_stations(std::slice::from_ref(&root));
+        assert_eq!(stations.len(), 1);
+        assert_eq!(stations[0].name, "Café Bleu");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn own_stations_come_from_radio_folders_only() {
         let root = std::env::temp_dir().join(format!("rb-radio-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -1182,6 +1194,7 @@ mod tests {
     /// bytes, then the connection drops; the fetcher must reconnect.
     #[test]
     fn stream_strips_titles_and_reconnects_after_a_drop() {
+        let _turn = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
         use std::net::TcpListener;
         if !Path::new(&curl()).exists() {
             return; // no curl on this host
@@ -1228,6 +1241,7 @@ mod tests {
     /// return at once. Beta 4 deadlocked here on the player.
     #[test]
     fn stopping_a_station_with_a_full_pipe_returns_promptly() {
+        let _turn = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
         use std::net::TcpListener;
         if !Path::new(&curl()).exists() {
             return;
@@ -1292,6 +1306,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_directory_and_station() {
+        let _turn = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
         let directory = Directory::discover();
         let popular = directory.popular().expect("directory reachable");
         assert!(popular.len() > 50, "{} stations", popular.len());

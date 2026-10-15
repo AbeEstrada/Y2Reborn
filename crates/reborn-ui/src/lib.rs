@@ -330,6 +330,12 @@ pub struct Ui {
     /// Which library song each playlist entry names.
     playlist_index: RefCell<playlist_index::Index>,
     playlist_rows_cache: RefCell<Option<(playlists_ui::RowsKey, Vec<Item>)>>,
+    playlist_facts: RefCell<
+        std::collections::HashMap<
+            std::path::PathBuf,
+            (playlists_ui::FactsKey, std::rc::Rc<playlists_ui::Facts>),
+        >,
+    >,
     /// The last station and library searches, offered again when reopened.
     radio_query: String,
     library_query: String,
@@ -490,7 +496,7 @@ impl Ui {
     /// "9 songs · 38 min" for the album with filter `key`, computed once per
     /// album and library rather than on every animation frame.
     pub(crate) fn album_detail(&self, m: &AppModel, tracks: &[Track], key: &str) -> String {
-        let library = (tracks.as_ptr() as usize, tracks.len());
+        let library = crate::library_stamp(tracks);
         let mut detail = self.detail.borrow_mut();
         if let Some((l, k, text)) = detail.as_ref() {
             if *l == library && k == key {
@@ -756,7 +762,7 @@ impl Ui {
 
     /// Artists, albums and songs in the library, recounted only when it changes.
     pub(crate) fn library_counts(&self, tracks: &[Track]) -> [usize; 4] {
-        let stamp = (tracks.as_ptr() as usize, tracks.len());
+        let stamp = crate::library_stamp(tracks);
         if let Some((seen, counts)) = *self.counts.borrow() {
             if seen == stamp {
                 return counts;
@@ -2520,10 +2526,10 @@ impl Ui {
             let mut items = Vec::with_capacity(LIVE_RESULTS);
             for (artist, i, albums) in results.artists.iter().take(LIVE_RESULTS) {
                 let mut item = Item::new(display_or_unknown(artist), format!("artist:{artist}"))
-                    .with_secondary(match albums {
-                        1 => "Artist · 1 album".to_owned(),
-                        n => format!("Artist · {n} albums"),
-                    });
+                    .with_secondary(format!(
+                        "Artist · {}",
+                        crate::components::count(*albums, "album", "albums")
+                    ));
                 item.art = Some(*i);
                 items.push(item);
             }
@@ -2785,6 +2791,11 @@ fn display_or_unknown(value: &str) -> &str {
     } else {
         value
     }
+}
+/// Identifies one published library: a new scan publishes a new list, so
+/// caches built from the songs (search, playlists, catalog) start again.
+pub(crate) fn library_stamp(tracks: &[Track]) -> (usize, usize) {
+    (tracks.as_ptr() as usize, tracks.len())
 }
 fn track_matches(track: &Track, filter: &str) -> bool {
     if !track.online {

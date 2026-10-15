@@ -1204,20 +1204,32 @@ impl AppModel {
         atomic_write(path, &bytes)
     }
 }
+/// Replace a file so a power cut leaves the old or the new one: a hidden
+/// temporary next to it (`.name.reborn-new`, one per file, never shown over
+/// USB as a stray file), flushed, renamed over it, the folder flushed.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let parent = path.parent().ok_or_else(|| io::Error::other("no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::other("no file name"))?;
     fs::create_dir_all(parent)?;
-    let temp = path.with_extension("new");
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temp)?;
-    f.write_all(bytes)?;
-    f.sync_all()?;
-    fs::rename(temp, path)?;
+    let temp = parent.join(format!(".{}.reborn-new", name.to_string_lossy()));
+    let result = (|| {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&temp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result?;
     fs::File::open(parent)?.sync_all()
 }
 #[cfg(test)]

@@ -609,3 +609,37 @@ pub fn live_pill(c: &mut Canvas, x: f32, cy: f32, label: &str) -> f32 {
     );
     w
 }
+
+/// "1 song", "12 songs", "5 124 stations": a count with its noun.
+pub fn count(n: usize, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{} {many}", crate::screens::count_label(n))
+    }
+}
+
+/// The first row shown so the focused one is in view among `visible`.
+pub fn list_window(m: &AppModel, focus: usize, visible: usize) -> usize {
+    m.navigation
+        .scroll
+        .min(focus)
+        .max((focus + 1).saturating_sub(visible))
+}
+
+/// A rounded square tinted with `tint`, `icon` in the middle in that colour
+/// (Radio's categories, Playlists' New, Favorites and empty mosaics).
+#[allow(clippy::too_many_arguments)]
+pub fn icon_tile(
+    c: &mut Canvas,
+    x: f32,
+    y: f32,
+    size: f32,
+    radius: f32,
+    tint: u32,
+    icon: Icon,
+    icon_size: f32,
+) {
+    c.rrect(x, y, size, size, radius, alpha(tint, 0x30));
+    c.icon(icon, x + size / 2., y + size / 2., icon_size, tint);
+}

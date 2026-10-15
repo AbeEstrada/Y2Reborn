@@ -12,14 +12,6 @@ use crate::{
 };
 use reborn_core::{AppModel, RadioStation, Screen, Track};
 
-/// The first row shown so that `focus` is visible among `visible` rows.
-fn window(m: &AppModel, focus: usize, visible: usize) -> usize {
-    m.navigation
-        .scroll
-        .min(focus)
-        .max((focus + 1).saturating_sub(visible))
-}
-
 /// Radio's own light: a faint red glow in the top corner, "on air".
 fn ambience(c: &mut Canvas) {
     c.glow(70., 10., 260., 150., alpha(LIVE_RED, 0x1C));
@@ -152,15 +144,16 @@ fn entry(c: &mut Canvas, row: &Item, y: f32, selected: bool, accent: u32) {
         components::accent_row(c, 12., y + 2., WIDTH - 24., ENTRY_H - 4., accent);
     }
     let tile = 34.;
-    c.rrect(
+    components::icon_tile(
+        c,
         22.,
         y + (ENTRY_H - tile) / 2.,
         tile,
-        tile,
         10.,
-        alpha(tint, 0x30),
+        tint,
+        icon,
+        20.,
     );
-    c.icon(icon, 22. + tile / 2., y + ENTRY_H / 2., 20., tint);
     let x = 70.;
     c.text_mid(
         x,
@@ -211,7 +204,7 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
     let title = screen_title(m).to_uppercase();
     components::status_bar(c, ui, m, &title, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
-    let first = window(m, focus, STATION_ROWS);
+    let first = components::list_window(m, focus, STATION_ROWS);
     let bg_selected = mix(color::BG, accent, 0.18);
     for (i, row) in rows.iter().enumerate().skip(first).take(STATION_ROWS) {
         let y = 38. + (i - first) as f32 * STATION_H;
@@ -305,7 +298,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
     let genres = ui.radio.genres;
     components::status_bar(c, ui, m, if genres { "GENRES" } else { "COUNTRIES" }, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
-    let first = window(m, focus, CATEGORY_ROWS);
+    let first = components::list_window(m, focus, CATEGORY_ROWS);
     for (i, row) in rows.iter().enumerate().skip(first).take(CATEGORY_ROWS) {
         let y = 42. + (i - first) as f32 * CATEGORY_H;
         let selected = interactive && i == focus;
@@ -320,8 +313,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
         let tile = 34.;
         let (tx, ty) = (22., y + (CATEGORY_H - tile) / 2.);
         if genres {
-            c.rrect(tx, ty, tile, tile, 10., alpha(0xA07BFFFF, 0x30));
-            c.icon(Icon::Note, tx + tile / 2., ty + tile / 2., 18., 0xA07BFFFF);
+            components::icon_tile(c, tx, ty, tile, 10., 0xA07BFFFF, Icon::Note, 18.);
         } else {
             // The country's code on a tile tinted from it ("DE", "FR").
             let code = category
@@ -348,10 +340,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
             color::TEXT,
         );
         let count = category.map_or(0, |c| c.stations as usize);
-        let detail = match count {
-            1 => "1 station".to_owned(),
-            n => format!("{} stations", count_label(n)),
-        };
+        let detail = components::count(count, "station", "stations");
         c.text_mid(
             70.,
             y + 34.,
