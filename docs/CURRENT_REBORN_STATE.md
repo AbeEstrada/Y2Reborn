@@ -1,6 +1,6 @@
 # Current Reborn state on the Y2
 
-## Since 1.0.0-beta.5.1 (not yet released): Playlists, pause in place, collected seeking
+## 1.0.0-beta.6 — Y2Linux 1.0 Beta 6 (Baseline 57), 2026-10-15 (latest): Playlists, pause in place, collected seeking
 
 **Playlists** (owner: a playlist feature like Y2Player's, its own section, add/remove on the device, "highly
 optimized … fix issues Y2Player had"; decisions: playlists anywhere in the music, edits go into the file itself,
@@ -48,7 +48,7 @@ reconfiguration is still pending" (ten errors in one second).
   (`SEEK_SETTLE`) after the last step and never during a restart in progress, so no error.
 - Test: `a_held_pause_stops_writing_and_resumes_without_reopening`.
 
-## 1.0.0-beta.5.1 — Y2Linux 1.0 Beta 5.1 (Baseline 56), 2026-10-15 (latest): live search, a faster search index, Radio as its own section
+## 1.0.0-beta.5.1 — Y2Linux 1.0 Beta 5.1 (Baseline 56), 2026-10-15: live search, a faster search index, Radio as its own section
 
 **Radio, reworked** (`views_radio`, owner: "radio should feel like its own premium section", "sort
 everything by alphabet", "top 10 radio stations for each country on top"):
