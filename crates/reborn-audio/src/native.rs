@@ -46,7 +46,7 @@ unsafe extern "C" {
     fn rb_sink_wait(p: *mut c_void, ms: c_int) -> c_int;
     fn rb_sink_recover(p: *mut c_void, e: c_int) -> c_int;
     fn rb_sink_drop(p: *mut c_void) -> c_int;
-    fn rb_sink_pause(p: *mut c_void, on: c_int) -> c_int;
+    fn rb_sink_pause(p: *mut c_void, on: c_int, device_pause: c_int) -> c_int;
     fn rb_sink_delay(p: *mut c_void) -> c_int;
 }
 fn error(e: c_int) -> String {
@@ -534,8 +534,17 @@ impl AudioSink for AlsaSink {
         }
     }
     fn pause(&mut self, on: bool) -> Result<(), String> {
+        // BlueALSA's own pause left AirPods silent after resume (Beta 6
+        // device log): a Bluetooth stream drains and is prepared again.
+        let device_pause = !self.params.device.starts_with("bluealsa");
         // SAFETY: caller uniquely owns the PCM context.
-        let r = unsafe { rb_sink_pause(self.raw.as_ptr(), c_int::from(on)) };
+        let r = unsafe {
+            rb_sink_pause(
+                self.raw.as_ptr(),
+                c_int::from(on),
+                c_int::from(device_pause),
+            )
+        };
         self.log.emit(
             Level::Info,
             "alsa",

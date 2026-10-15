@@ -355,22 +355,33 @@ int rb_sink_drop(RbSink *s) {
   int r = snd_pcm_drop(s->pcm);
   return r < 0 ? r : snd_pcm_prepare(s->pcm);
 }
-/* Pause in place (Pause on Reborn keeps the output open): the device's own
- * pause where it has one (BlueALSA, most codecs); otherwise stop and drop its
- * few buffered milliseconds now and prepare again on resume. Returns 1 when
- * the device paused itself, 0 after the fallback, a negative error else. */
-int rb_sink_pause(RbSink *s, int on) {
+/* Pause in place (Pause on Reborn keeps the output open). With
+ * `device_pause` the device's own pause where it has one (most codecs);
+ * otherwise, and for BlueALSA (whose pause left the headphones silent after
+ * resume, Beta 6), the buffered few milliseconds play out (drain, as at the
+ * end of a song) and resume prepares the stream again, as a start does.
+ * Returns 1 when the device paused itself, 0 otherwise, negative on error. */
+int rb_sink_pause(RbSink *s, int on, int device_pause) {
   snd_pcm_state_t state = snd_pcm_state(s->pcm);
   if (on) {
-    if (state == SND_PCM_STATE_RUNNING && snd_pcm_pause(s->pcm, 1) == 0)
+    if (device_pause && state == SND_PCM_STATE_RUNNING && snd_pcm_pause(s->pcm, 1) == 0)
       return 1;
     if (state == SND_PCM_STATE_PAUSED)
       return 1;
-    int r = snd_pcm_drop(s->pcm);
-    return r < 0 ? r : 0;
+    if (state != SND_PCM_STATE_RUNNING)
+      return 0;
+    /* Non-blocking: -EAGAIN means the drain continues by itself. */
+    int r = snd_pcm_drain(s->pcm);
+    return r < 0 && r != -EAGAIN ? r : 0;
   }
   if (state == SND_PCM_STATE_PAUSED)
     return snd_pcm_pause(s->pcm, 0);
+  if (state == SND_PCM_STATE_DRAINING) {
+    int r = snd_pcm_drop(s->pcm);
+    if (r < 0)
+      return r;
+    state = snd_pcm_state(s->pcm);
+  }
   if (state == SND_PCM_STATE_SETUP || state == SND_PCM_STATE_XRUN)
     return snd_pcm_prepare(s->pcm);
   return 0;

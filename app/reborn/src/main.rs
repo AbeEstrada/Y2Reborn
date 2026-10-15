@@ -174,8 +174,9 @@ struct Runtime {
     pending_reconfiguration: Option<PendingReconfiguration>,
     /// Paused in place since (the open pipeline is held, see `Playback::hold`).
     held_since: Option<Instant>,
-    /// Seeking with held Previous/Next: playback restarts once at the target
-    /// when no further step came for a moment.
+    /// Playback restarts once at the model's song and place at this moment
+    /// (and only when no start is in progress): seeking with held
+    /// Previous/Next, skipping while a song is still starting.
     seek_until: Option<Instant>,
     reconfiguration_attempted: bool,
     sink_release_started: bool,
@@ -1578,6 +1579,45 @@ impl Runtime {
             if !self.model.current().is_some_and(Track::is_radio) {
                 self.seek_by(delta);
                 return Ok(());
+            }
+        }
+        // While a song is still starting (about a second on Bluetooth),
+        // Previous/Next move on at once and the restart follows when the
+        // start in progress ends; Play/Pause pauses. Beta 6 refused these
+        // ("Couldn't complete that").
+        if self.pending_reconfiguration.is_some() {
+            match e {
+                Effect::NextTrack | Effect::PreviousTrack => {
+                    let delta = if matches!(e, Effect::NextTrack) {
+                        1
+                    } else {
+                        -1
+                    };
+                    let target = self.model.queue_position as i64 + delta;
+                    let file = !self.model.current().is_some_and(Track::is_radio);
+                    if file && (0..self.model.queue.len() as i64).contains(&target) {
+                        self.model.step(delta as i32);
+                        self.playback.hold(true);
+                        self.seek_until = Some(Instant::now());
+                        self.dirty.mark_both();
+                    }
+                    return Ok(());
+                }
+                Effect::TogglePlayback => {
+                    // A song change keeps the chosen song, paused; an output
+                    // or codec change still goes back to what worked.
+                    let song_change = self.pending_reconfiguration.as_ref().is_some_and(|p| {
+                        p.previous.output == self.model.output
+                            && serde_json::to_value(&p.previous.settings).ok()
+                                == serde_json::to_value(&self.model.settings).ok()
+                    });
+                    if song_change {
+                        self.pending_reconfiguration = None;
+                    }
+                    self.pause();
+                    return Ok(());
+                }
+                _ => {}
             }
         }
         if matches!(
