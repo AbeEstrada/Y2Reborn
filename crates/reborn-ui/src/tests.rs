@@ -1272,6 +1272,39 @@ fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
 }
 
 #[test]
+fn aac_headphones_get_quality_and_auto_rate_rows() {
+    use reborn_core::platform::{AacQuality, BluetoothQuality};
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsSystem);
+    ui.bluetooth.codec_choices = vec![CodecPreference::Sbc, CodecPreference::Aac];
+    // No rows until the platform reports AAC settings.
+    assert!(!ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key == "aac_quality" || r.key == "aac_abr"));
+    m.platform.snapshot.bluetooth_quality = BluetoothQuality {
+        aac_supported: true,
+        requested_aac: Some(AacQuality::High),
+        aac_abr_supported: true,
+        requested_aac_abr: Some(true),
+        ..Default::default()
+    };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert!(rows
+        .iter()
+        .any(|r| r.key == "aac_quality" && r.secondary == "High · up to 256 kbps"));
+    assert!(!rows.iter().any(|r| r.key == "ldac_quality"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "aac_quality"),
+        Effect::Platform(PlatformTask::AacQuality(AacQuality::Standard))
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "aac_abr"),
+        Effect::Platform(PlatformTask::AacAbr(false))
+    );
+}
+
+#[test]
 fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
     use reborn_core::platform::{BluetoothQuality, SbcQuality};
     let mut ui = radios();

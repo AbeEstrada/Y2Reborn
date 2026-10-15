@@ -177,6 +177,15 @@ fn execute(task: PlatformTask) -> Reply {
             10,
         ),
         SbcQuality(quality) => call(&["codec-settings", "--sbc-quality", quality.argument()], 10),
+        AacQuality(quality) => call(&["codec-settings", "--aac-quality", quality.argument()], 10),
+        AacAbr(enabled) => call(
+            &[
+                "codec-settings",
+                "--aac-abr",
+                if enabled { "on" } else { "off" },
+            ],
+            10,
+        ),
         LdacAbr(enabled) => call(
             &[
                 "codec-settings",
@@ -585,6 +594,14 @@ fn ldac_quality(value: &Value) -> Option<LdacQuality> {
     }
 }
 
+fn aac_quality(value: &Value) -> Option<reborn_core::platform::AacQuality> {
+    match value.as_str() {
+        Some("standard") => Some(reborn_core::platform::AacQuality::Standard),
+        Some("high") => Some(reborn_core::platform::AacQuality::High),
+        _ => None,
+    }
+}
+
 fn sbc_quality(value: &Value) -> Option<SbcQuality> {
     match value.as_str() {
         Some("high") => Some(SbcQuality::High),
@@ -620,6 +637,16 @@ pub fn bluetooth_quality(value: &Value) -> BluetoothQuality {
         effective_quality: ldac_quality(&value["effective"]["ldac_quality"]),
         requested_abr: value["requested"]["ldac_abr"].as_bool(),
         effective_abr: value["effective"]["ldac_abr"].as_bool(),
+        aac_supported: value["supported"]["aac_quality"]
+            .as_array()
+            .is_some_and(|v| {
+                ["standard", "high"]
+                    .iter()
+                    .all(|name| v.iter().any(|x| x == name))
+            }),
+        requested_aac: aac_quality(&value["requested"]["aac_quality"]),
+        aac_abr_supported: value["supported"]["aac_abr"] == true,
+        requested_aac_abr: value["requested"]["aac_abr"].as_bool(),
         pending_restart: value["pending_restart"] == true,
     }
 }
@@ -1493,6 +1520,17 @@ mod feature_completion_tests {
             "pending_restart":true});
         let q = bluetooth_quality(&v);
         assert!(q.pending_restart && q.ldac_supported && q.abr_supported && q.sbc_supported);
+        assert!(!q.aac_supported && q.requested_aac.is_none());
+        let aac = json!({"schema":"org.y2linux.codec-settings/v1",
+            "requested":{"aac_quality":"high","aac_abr":false},
+            "supported":{"aac_quality":["standard","high"],"aac_abr":true}});
+        let a = bluetooth_quality(&aac);
+        assert!(a.aac_supported && a.aac_abr_supported);
+        assert_eq!(
+            a.requested_aac,
+            Some(reborn_core::platform::AacQuality::High)
+        );
+        assert_eq!(a.requested_aac_abr, Some(false));
         assert_eq!(q.requested_quality, Some(LdacQuality::High));
         assert_eq!(q.effective_quality, Some(LdacQuality::Standard));
         assert_eq!(q.requested_sbc, Some(SbcQuality::Xq));

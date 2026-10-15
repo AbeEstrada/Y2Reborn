@@ -642,6 +642,24 @@ fn system(ui: &Ui, m: &AppModel) -> Page {
             ));
         }
     }
+    if b.codec_choices.contains(&reborn_core::CodecPreference::Aac) {
+        if quality.aac_supported {
+            if let Some(q) = quality.requested_aac {
+                rows.push(disabled(
+                    row("AAC Quality", "aac_quality", q.label()),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+        if quality.aac_abr_supported {
+            if let Some(abr) = quality.requested_aac_abr {
+                rows.push(disabled(
+                    row("AAC Auto Rate", "aac_abr", on_off(abr)),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+    }
     if b.codec_choices
         .contains(&reborn_core::CodecPreference::Ldac)
     {

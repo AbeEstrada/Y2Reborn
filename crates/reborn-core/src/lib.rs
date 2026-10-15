@@ -434,6 +434,8 @@ pub enum PlatformTask {
     LdacQuality(platform::LdacQuality),
     LdacAbr(bool),
     SbcQuality(platform::SbcQuality),
+    AacQuality(platform::AacQuality),
+    AacAbr(bool),
     StorageBenchmark,
     LibraryBenchmark,
     NetworkCheck,

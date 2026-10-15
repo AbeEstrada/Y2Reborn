@@ -114,6 +114,35 @@ pub enum LdacQuality {
     High,
 }
 
+/// AAC encoder quality: "High" uses the FDK afterburner and the highest rate
+/// the headphones allow where a frame still fits one packet; "Standard" is
+/// BlueALSA's tested 220 kbit/s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AacQuality {
+    Standard,
+    High,
+}
+impl AacQuality {
+    pub const fn argument(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::High => "high",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard · 220 kbps",
+            Self::High => "High · up to 256 kbps",
+        }
+    }
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Standard => Self::High,
+            Self::High => Self::Standard,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SbcQuality {
     High,
@@ -178,6 +207,10 @@ pub struct BluetoothQuality {
     pub effective_quality: Option<LdacQuality>,
     pub requested_abr: Option<bool>,
     pub effective_abr: Option<bool>,
+    pub aac_supported: bool,
+    pub requested_aac: Option<AacQuality>,
+    pub aac_abr_supported: bool,
+    pub requested_aac_abr: Option<bool>,
     pub pending_restart: bool,
 }
 

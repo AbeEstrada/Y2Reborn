@@ -1770,7 +1770,8 @@ impl Runtime {
                             }
                             UpdateCheck | UpdateCancel => {}
                             Export => self.ui.flash("Player data exported"),
-                            LdacQuality(_) | LdacAbr(_) | SbcQuality(_) => {
+                            LdacQuality(_) | LdacAbr(_) | SbcQuality(_) | AacQuality(_)
+                            | AacAbr(_) => {
                                 self.ui.flash("Quality saved. Restart the player to apply.")
                             }
                             DiagnosticsExport => {

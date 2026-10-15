@@ -1579,6 +1579,20 @@ impl Ui {
                 }
                 Effect::Platform(PlatformTask::SbcQuality(q.requested_sbc?.next()))
             }
+            "aac_quality" => {
+                let q = m.platform.snapshot.bluetooth_quality;
+                if !q.aac_supported {
+                    return None;
+                }
+                Effect::Platform(PlatformTask::AacQuality(q.requested_aac?.next()))
+            }
+            "aac_abr" => {
+                let q = m.platform.snapshot.bluetooth_quality;
+                if !q.aac_abr_supported {
+                    return None;
+                }
+                Effect::Platform(PlatformTask::AacAbr(!q.requested_aac_abr?))
+            }
             "ldac_abr" => {
                 let q = m.platform.snapshot.bluetooth_quality;
                 if !q.abr_supported {
