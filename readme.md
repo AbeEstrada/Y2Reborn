@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.6, part of Y2Linux 1.0 Beta 6 (Baseline 57, 2026-10-15), public beta.**
-> Git tag `baseline-57` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.6.2, part of Y2Linux 1.0 Beta 6.2 (Baseline 59, 2026-10-16), public beta.**
+> Git tag `baseline-59` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -39,6 +39,11 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   rename, duplicate, delete), a Favorites playlist with a heart, and playlists exported by a
   computer (Windows, macOS or Linux paths) matched to your library. The file stays the playlist:
   edits are written back into it, songs the player cannot find are kept.
+- Pause and Play continue at once: a paused song keeps its file and audio output open for up to
+  three minutes (a station stops; it is live). Holding Previous/Next seeks, and Previous/Next work
+  even while a song is still starting.
+- A status-bar clock in the time zone chosen under Settings → Display → Time Zone (built-in zone
+  rules with daylight saving; shown once the player's clock is set).
 - A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
   Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
   when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.
