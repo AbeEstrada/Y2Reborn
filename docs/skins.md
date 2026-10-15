@@ -115,7 +115,7 @@ most specific name first:
 | `home` | the main menu (else `list`) |
 | `now_playing` | Now Playing |
 | `list` | every list: library lists, settings pages, pickers, diagnostics |
-| `page` | pages with a heading or facts (About, Storage, Song info, …) |
+| `page` | pages with a heading or facts (About, Storage, Song Info, …) |
 | `artists`, `albums`, `genres`, `songs`, `folders`, `album`, `artist`, `queue` | one library screen (else `list`) |
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
 | `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`) |
@@ -167,7 +167,7 @@ Write `{name}` inside `text`:
 | `elapsed` `remaining` `duration` | `1:23`, `-2:05`, `3:28` |
 | `queue_index` `queue_length` | for “3 of 12” |
 | `quality` | `LOSSLESS · 96 kHz`, `MP3 · 44.1 kHz` |
-| `output` | `Headphone jack` or the Bluetooth device |
+| `output` | `Headphone Jack` or the Bluetooth device |
 | `playback` | `Playing`, `Paused`, `Stopped` |
 | `screen` | the screen's title (empty on Home) |
 | `battery` `volume` | numbers 0–100 |

@@ -1011,15 +1011,15 @@ impl Ui {
                 ];
             }
             return vec![
-                Item::new("Up next", "show_queue"),
+                Item::new("Up Next", "show_queue"),
                 Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
                     "On"
                 } else {
                     "Off"
                 }),
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
-                Item::new("Go to album", "go_album"),
-                Item::new("Go to artist", "go_artist"),
+                Item::new("Go to Album", "go_album"),
+                Item::new("Go to Artist", "go_artist"),
             ];
         }
         let selected_key = m.navigation.context_key.clone().or_else(|| {
@@ -1030,10 +1030,10 @@ impl Ui {
         let key = selected_key.as_deref();
         if key.is_some_and(|key| key.starts_with("track:")) {
             return vec![
-                Item::new("Play next", "play_next"),
-                Item::new("Add to queue", "add_queue"),
-                Item::new("Go to album", "go_album"),
-                Item::new("Go to artist", "go_artist"),
+                Item::new("Play Next", "play_next"),
+                Item::new("Add to Queue", "add_queue"),
+                Item::new("Go to Album", "go_album"),
+                Item::new("Go to Artist", "go_artist"),
             ];
         }
         if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
@@ -1153,7 +1153,7 @@ impl Ui {
         match m.navigation.modal {
             Some(Modal::ContextMenu) => self.context_rows(m, tracks),
             Some(Modal::OutputPicker) => {
-                let mut rows = vec![Item::new("Headphone jack", "output:wired").with_secondary(
+                let mut rows = vec![Item::new("Headphone Jack", "output:wired").with_secondary(
                     if m.output == AudioOutput::Wired {
                         "Current"
                     } else {
@@ -2364,53 +2364,53 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
 fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
     match action {
         ConfirmAction::ClearQueue => (
-            "Clear upcoming songs?",
+            "Clear Upcoming Songs?",
             "The current song keeps playing. Songs after it are removed from the queue.",
         ),
         ConfirmAction::RebuildLibrary => (
-            "Rebuild music library?",
+            "Rebuild Music Library?",
             "Every music file is read again. Your music is not changed, and the library stays usable while this runs.",
         ),
         ConfirmAction::ForgetBluetooth => (
-            "Forget this device?",
+            "Forget This Device?",
             "You'll need to pair it again to use it.",
         ),
         ConfirmAction::ForgetWifi => (
-            "Forget this network?",
+            "Forget This Network?",
             "Its saved password is removed from the player.",
         ),
         ConfirmAction::ForgetAllWifi => (
-            "Forget all Wi-Fi networks?",
+            "Forget All Wi-Fi Networks?",
             "Every saved network and password is removed.",
         ),
         ConfirmAction::ForgetAllBluetooth => (
-            "Remove all Bluetooth pairings?",
+            "Remove All Bluetooth Pairings?",
             "Every paired headphone and speaker must be paired again.",
         ),
         ConfirmAction::ResetSettings => (
-            "Reset Reborn settings?",
+            "Reset Reborn Settings?",
             "Playback, audio and display settings return to their defaults. Music, queue and pairings stay.",
         ),
         ConfirmAction::ClearCache => (
-            "Clear cache?",
+            "Clear Cache?",
             "Saved artwork copies are removed and recreated when needed. Music is not affected.",
         ),
-        ConfirmAction::PowerOff => ("Power off?", "Your queue and position are saved."),
+        ConfirmAction::PowerOff => ("Power Off?", "Your queue and position are saved."),
         ConfirmAction::Reboot => ("Restart?", "Your queue and position are saved."),
         ConfirmAction::Platform(PlatformTask::UpdateApply) => (
-            "Restart and install?",
+            "Restart and Install?",
             "The player restarts, installs the update and starts the new version by itself. It takes about a minute. Use the charger or at least half a battery.",
         ),
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => (
-            "Cancel this update?",
+            "Cancel This Update?",
             "The installed software stays as it is.",
         ),
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => (
-            "Restore previous system?",
+            "Restore Previous System?",
             "The player restarts into the system that was installed before the last update.",
         ),
         ConfirmAction::Platform(_) => (
-            "Run this check?",
+            "Run This Check?",
             "It uses a private scratch area. Your music is not touched.",
         ),
     }

@@ -71,7 +71,7 @@ pub const BOOT_FAILURE_TOKENS: &[&str] = &["rescue"];
 /// Shown instead of the bar when startup failed or timed out: a headline and
 /// two plain lines of advice.
 pub const BOOT_FAILURE_LABELS: [&str; 3] = [
-    "Couldn't start",
+    "Couldn't Start",
     "Hold Power for 10 seconds,",
     "then turn it on again.",
 ];
@@ -282,7 +282,7 @@ pub fn with_overlay(mut quads: Vec<Quad>, alpha: f32) -> Vec<Quad> {
 /// What the player is doing once its data is saved.
 pub fn closing_label(restart: bool, low_battery: bool) -> &'static str {
     if low_battery {
-        "Battery empty"
+        "Battery Empty"
     } else if restart {
         "Restarting"
     } else {
@@ -360,7 +360,7 @@ fn low_battery_screen(c: &mut Canvas, opacity: f32) {
     c.text_center(
         240.,
         206. + Face::S20.mid_offset(),
-        "Battery empty",
+        "Battery Empty",
         Face::S20,
         fade(color::TEXT, opacity),
     );
@@ -646,12 +646,12 @@ mod tests {
         let low = shutdown_plan(true);
         assert!(low.frames < normal.frames && low.close_frame < normal.close_frame);
         let ui = vec![Quad::rect(0., 0., 480., 360., color::GLASS_STRONG)];
-        let hold = shutdown_frame(&ui, low.close_frame + 6, "Battery empty", low);
+        let hold = shutdown_frame(&ui, low.close_frame + 6, "Battery Empty", low);
         let glyphs = hold
             .iter()
             .filter(|q| matches!(q.tex, reborn_graphics::Tex::Font(_)))
             .count();
-        assert!(glyphs > "Battery empty".len());
+        assert!(glyphs > "Battery Empty".len());
         assert!(hold
             .iter()
             .any(|q| q.color & 0xFFFF_FF00 == color::DANGER & 0xFFFF_FF00));
@@ -661,6 +661,6 @@ mod tests {
     fn closing_labels_follow_the_real_action() {
         assert_eq!(closing_label(false, false), "Shutting down");
         assert_eq!(closing_label(true, false), "Restarting");
-        assert_eq!(closing_label(true, true), "Battery empty");
+        assert_eq!(closing_label(true, true), "Battery Empty");
     }
 }

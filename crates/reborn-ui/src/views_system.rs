@@ -106,7 +106,7 @@ pub fn usb(c: &mut Canvas, ui: &Ui, m: &AppModel) {
         c.text_center(
             240.,
             204. + Face::S20.mid_offset(),
-            "Copying files…",
+            "Copying Files…",
             Face::S20,
             color::TEXT,
         );
@@ -129,7 +129,7 @@ pub fn usb(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     c.text_center(
         240.,
         84. + Face::S25.mid_offset(),
-        "Connected to a computer",
+        "Connected to a Computer",
         Face::S25,
         color::TEXT,
     );

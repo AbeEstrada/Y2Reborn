@@ -23,7 +23,7 @@ pub const CHARGE_LIT: u32 = color::SUCCESS >> 8;
 pub const CHARGE_TRACK: u32 = color::RING_TRACK >> 8;
 pub const CHARGE_BG: u32 = color::BG >> 8;
 
-pub const CHARGE_TITLES: [&str; 3] = ["Charging", "Charged", "Charging paused"];
+pub const CHARGE_TITLES: [&str; 3] = ["Charging", "Charged", "Charging Paused"];
 pub const CHARGE_HINTS: [&str; 3] = [
     "Hold Power to turn on",
     "Release to start",

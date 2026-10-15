@@ -94,7 +94,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             "Nothing Playing",
             "Choose an album, artist or song to start listening.",
         )
-        .with_rows(vec![Item::new("Browse music", "home")]),
+        .with_rows(vec![Item::new("Browse Music", "home")]),
         Screen::NowPlaying => Page::default(),
         Screen::TrackInfo => track_info(m, tracks),
         Screen::Settings => settings(ui, m),
@@ -127,13 +127,13 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             }
             rows.push(
                 row(
-                    "Screen off after",
+                    "Screen Off After",
                     "screen_timeout",
                     crate::timeout_label(m.settings.screen_timeout_seconds),
                 )
                 .with_kind(RowKind::Chevron),
             );
-            rows.push(row("Album view", "album_view", m.settings.album_view.label()));
+            rows.push(row("Album View", "album_view", m.settings.album_view.label()));
             rows.push(
                 row(
                     "Theme",
@@ -176,7 +176,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
 
 pub fn output_name(ui: &Ui, m: &AppModel) -> String {
     match &m.output {
-        reborn_core::AudioOutput::Wired => "Headphone jack".into(),
+        reborn_core::AudioOutput::Wired => "Headphone Jack".into(),
         reborn_core::AudioOutput::Bluetooth(address) => ui
             .bluetooth
             .devices
@@ -215,9 +215,9 @@ fn settings(ui: &Ui, m: &AppModel) -> Page {
 /// (60 Hz, 250 Hz, 1 kHz, 4 kHz, 12 kHz).
 pub const EQ_PRESETS: [(&str, &str, [i8; 5]); 4] = [
     ("Flat", "flat", [0, 0, 0, 0, 0]),
-    ("Bass boost", "bass", [6, 4, 0, 0, 0]),
+    ("Bass Boost", "bass", [6, 4, 0, 0, 0]),
     ("Vocal", "vocal", [-2, 0, 4, 3, 0]),
-    ("Treble boost", "treble", [0, 0, 0, 4, 6]),
+    ("Treble Boost", "treble", [0, 0, 0, 4, 6]),
 ];
 
 pub(crate) fn eq_gains(m: &AppModel) -> [i8; 5] {
@@ -244,8 +244,8 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
     let normalise = m.settings.replay_gain != reborn_core::ReplayGainMode::Off;
     Page::rows(vec![
         row("Equalizer", "equalizer", eq_preset_name(m)).with_kind(RowKind::Chevron),
-        row("Normalise volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
-        row("Gapless playback", "gapless", "")
+        row("Normalise Volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
+        row("Gapless Playback", "gapless", "")
             .with_kind(RowKind::Toggle(m.settings.gapless_enabled)),
         row(
             "Crossfade",
@@ -330,8 +330,8 @@ fn theme(ui: &Ui, m: &AppModel) -> Page {
 fn usb_summary(m: &AppModel) -> &'static str {
     match m.platform.snapshot.usb {
         UsbTransfer::Ready => "Ready",
-        UsbTransfer::Copying => "Copying files…",
-        UsbTransfer::Developer => "Advanced transfer",
+        UsbTransfer::Copying => "Copying Files…",
+        UsbTransfer::Developer => "Advanced Transfer",
         UsbTransfer::Starting => "Preparing…",
         UsbTransfer::Error => "Reconnect cable",
         UsbTransfer::Disconnected | UsbTransfer::Unknown => "",
@@ -478,7 +478,7 @@ fn wifi(ui: &Ui) -> Page {
     }
     if !w.powered {
         return Page::hero(
-            "Wi-Fi is off",
+            "Wi-Fi Is Off",
             "Turn it on to sync the clock and get updates.",
         )
         .with_rows(vec![
@@ -489,7 +489,7 @@ fn wifi(ui: &Ui) -> Page {
     let connected = w.status.network();
     for n in &w.networks {
         let state = if connected == Some(n.ssid.as_str()) && w.problem.is_some() {
-            "Couldn't connect".into()
+            "Couldn't Connect".into()
         } else if connected == Some(n.ssid.as_str()) {
             match &w.status {
                 WifiStatus::Connecting(_) => "Connecting…".into(),
@@ -583,7 +583,7 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
     }
     if !b.powered {
         return Page::hero(
-            "Bluetooth is off",
+            "Bluetooth Is Off",
             "Turn it on to listen with wireless headphones.",
         )
         .with_rows(vec![
@@ -678,7 +678,7 @@ fn pc_transfer(m: &AppModel) -> Page {
         Some(free) => page.fact("Internal Storage", free),
         None => page,
     }
-    .with_rows(vec![Item::new("Scan for New Music", "scan_library")])
+    .with_rows(vec![Item::new("Scan for Music", "scan_library")])
 }
 
 fn library(m: &AppModel, tracks: &[Track]) -> Page {
@@ -723,7 +723,7 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
         row("Internal Storage", "storage", songs(count(true))),
         row("SD Card", "storage", sd),
         disabled(
-            row("Scan for New Music", "scan_library", scan),
+            row("Scan for Music", "scan_library", scan),
             !m.library.scanning,
         ),
         disabled(
@@ -986,7 +986,7 @@ fn storage(m: &AppModel) -> Page {
     page = page.with_rows(vec![
         disabled(
             row(
-                "Scan for music",
+                "Scan for Music",
                 "scan_library",
                 if m.library.scanning {
                     "Scanning…"
@@ -996,7 +996,7 @@ fn storage(m: &AppModel) -> Page {
             ),
             !m.library.scanning,
         ),
-        row("From a computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
+        row("From a Computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
     ]);
     page = page.fact(
         "Internal Storage",
@@ -1064,7 +1064,7 @@ fn update(m: &AppModel) -> Page {
     page.rows
         .push(row("Version", "version", reborn_core::VERSION));
     page.rows
-        .push(row("Reset settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
+        .push(row("Reset Settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
     page
 }
 

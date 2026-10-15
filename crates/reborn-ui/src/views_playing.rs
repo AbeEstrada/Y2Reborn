@@ -252,7 +252,8 @@ pub fn power_hold(c: &mut Canvas, ui: &Ui) {
         return;
     };
     let appear = (progress * 6.).min(1.);
-    components::scrim(c, true);
+    // Nearly opaque: the screen below must not run through the text.
+    c.rect(0., 0., WIDTH, HEIGHT, alpha(color::BG, 0xF4));
     let (cx, cy) = (240., 148.);
     c.ring(cx, cy, 52., 3., fade(color::GLASS, appear));
     c.arc(cx, cy, 52., progress, fade(color::DANGER, appear));
@@ -261,7 +262,7 @@ pub fn power_hold(c: &mut Canvas, ui: &Ui) {
     c.text_center(
         240.,
         238. + Face::S17.mid_offset(),
-        "Hold to turn off",
+        "Hold to Turn Off",
         Face::S17,
         fade(color::TEXT, appear),
     );

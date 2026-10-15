@@ -302,15 +302,15 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
     if let Some(alert) = &ui.alert {
         sheet = Some(match alert {
             Alert::BluetoothFailed { name, .. } => (
-                "Couldn't connect".into(),
+                "Couldn't Connect".into(),
                 format!("{name} did not answer. Check that it is on and in range."),
-                vec![Item::new("Cancel", ""), Item::new("Try again", "")],
+                vec![Item::new("Cancel", ""), Item::new("Try Again", "")],
                 ui.alert_focus(),
                 false,
                 true,
             ),
             Alert::BatteryLow => (
-                "Battery low".into(),
+                "Battery Low".into(),
                 m.platform
                     .battery
                     .percent
@@ -324,7 +324,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
         });
     } else if let Some(pair) = &ui.pairing {
         sheet = Some((
-            "Pair with this device?".into(),
+            "Pair with This Device?".into(),
             pair.clone(),
             vec![Item::new("Pair", ""), Item::new("Cancel", "")],
             ui.pairing_focus,
@@ -401,7 +401,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
                 .battery
                 .percent
                 .map(|p| format!("Battery low · {p}%"))
-                .unwrap_or_else(|| "Battery low".into()),
+                .unwrap_or_else(|| "Battery Low".into()),
             true,
         ))
     } else if !ui.notice.is_empty()
@@ -451,9 +451,9 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
         match alert {
             Alert::BluetoothFailed { name, .. } => components::dialog(
                 c,
-                "Couldn't connect",
+                "Couldn't Connect",
                 &format!("{name} did not answer. Check that it is on and in range."),
-                &[ok("Cancel"), ok("Try again")],
+                &[ok("Cancel"), ok("Try Again")],
                 ui.alert_focus(),
                 false,
             ),
@@ -464,13 +464,13 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
                     .percent
                     .map(|p| format!("{p}% left. Charge soon to keep playing."))
                     .unwrap_or_else(|| "Charge soon to keep playing.".into());
-                components::dialog(c, "Battery low", &body, &[ok("OK")], 0, false);
+                components::dialog(c, "Battery Low", &body, &[ok("OK")], 0, false);
             }
         }
     } else if let Some(pair) = &ui.pairing {
         components::dialog(
             c,
-            "Pair with this device?",
+            "Pair with This Device?",
             pair,
             &[
                 SheetRow {
@@ -501,7 +501,7 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
             .battery
             .percent
             .map(|p| format!("Battery low · {p}%"))
-            .unwrap_or_else(|| "Battery low".into());
+            .unwrap_or_else(|| "Battery Low".into());
         components::toast(c, &percent, Tone::Error);
     } else if !ui.notice.is_empty()
         && ui
@@ -603,8 +603,8 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Album => "Album".into(),
         Screen::Artist => "Artist".into(),
         Screen::NowPlaying => "Now Playing".into(),
-        Screen::Queue => "Up next".into(),
-        Screen::TrackInfo => "Song info".into(),
+        Screen::Queue => "Up Next".into(),
+        Screen::TrackInfo => "Song Info".into(),
         Screen::Settings => "Settings".into(),
         Screen::Wifi => "Wi-Fi".into(),
         Screen::Radio => "Radio".into(),
@@ -619,7 +619,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Equalizer => "Equalizer".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
-        Screen::ScreenTimeout => "Screen off after".into(),
+        Screen::ScreenTimeout => "Screen Off After".into(),
         Screen::Theme => "Theme".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
@@ -629,7 +629,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Storage => "Storage".into(),
         Screen::Update => "About & Updates".into(),
         Screen::About => "About".into(),
-        Screen::Maintenance => "Reset & maintenance".into(),
+        Screen::Maintenance => "Reset & Maintenance".into(),
         Screen::Diagnostics => "Diagnostics".into(),
         Screen::DiagnosticSection => crate::diagnostics::title(&m.navigation.filter).into(),
         Screen::ValueDetail | Screen::TextEntry | Screen::Pairing => "Reborn".into(),

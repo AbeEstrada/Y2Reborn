@@ -400,7 +400,7 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
         }
         c.text_mid(28., y + 21., 340., &row.secondary, Face::S15, color::TEXT);
         let detail = match &m.output {
-            reborn_core::AudioOutput::Wired => "Headphone jack".to_owned(),
+            reborn_core::AudioOutput::Wired => "Headphone Jack".to_owned(),
             reborn_core::AudioOutput::Bluetooth(address) => ui
                 .bluetooth
                 .devices
@@ -599,7 +599,7 @@ fn storage(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
         28.,
         top + 24.,
         250.,
-        "Songs in library",
+        "Songs in Library",
         Face::R15,
         color::TEXT,
     );

@@ -597,7 +597,7 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
         );
         c.text_mid(108., 96., 350., &sub, Face::R13, color::MUTED);
     }
-    pill_row(c, ui, 108., 112., &[("Play all", focus == 0)], interactive);
+    pill_row(c, ui, 108., 112., &[("Play All", focus == 0)], interactive);
     components::section_label(c, 28., 172., "Albums");
     // Three covers at a time, the focused one lifted.
     let albums = all.len().saturating_sub(1);
@@ -813,36 +813,36 @@ fn empty(c: &mut Canvas, ui: &Ui, m: &AppModel, interactive: bool) {
 pub(crate) fn empty_copy(m: &AppModel) -> (&'static str, &'static str, Option<&'static str>) {
     if m.screen == Screen::Queue {
         return (
-            "Nothing up next",
+            "Nothing Up Next",
             "Choose an album, artist or song to start listening.",
-            Some("Browse music"),
+            Some("Browse Music"),
         );
     }
     if m.library.scanning {
         return (
-            "Finding your music…",
+            "Finding Your Music…",
             "Your library appears here as music is found.",
             None,
         );
     }
     if !m.sources.iter().any(|s| s.online) {
         return (
-            "Can't read your music",
+            "Can't Read Your Music",
             "Restart the player. If an SD card was removed, reinsert it.",
             None,
         );
     }
     if m.library.error.is_some() {
         return (
-            "Scan didn't finish",
+            "Scan Didn't Finish",
             "Your existing music was kept. Scan again to finish.",
-            Some("Scan for music"),
+            Some("Scan for Music"),
         );
     }
     (
-        "No music yet",
+        "No Music Yet",
         "Connect Y2 to a computer and copy songs to Internal Storage or the SD card.",
-        Some("Scan for music"),
+        Some("Scan for Music"),
     )
 }
 

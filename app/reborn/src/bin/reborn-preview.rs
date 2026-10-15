@@ -725,19 +725,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.radio.online = true;
         m.navigation.focus = 4;
         ui.model_action(m, Action::Select);
-        // Type "jaz" on the wheel keyboard (a = 0, j = 9, z = 25).
-        let mut at = 0i32;
-        for target in [9i32, 0, 25] {
-            while at < target {
-                ui.model_action(m, Action::WheelClockwise(1));
-                at += 1;
+        // Type "jaz" with the buttons: j and a on the middle row, z below.
+        let right = |ui: &mut Ui, m: &mut AppModel, n: usize, a: Action| {
+            for _ in 0..n {
+                ui.model_action(m, a);
             }
-            while at > target {
-                ui.model_action(m, Action::WheelCounterClockwise(1));
-                at -= 1;
-            }
-            ui.model_action(m, Action::Select);
-        }
+        };
+        ui.model_action(m, Action::NavigateDown);
+        right(ui, m, 6, Action::NavigateRight);
+        ui.model_action(m, Action::Select);
+        right(ui, m, 6, Action::NavigateLeft);
+        ui.model_action(m, Action::Select);
+        ui.model_action(m, Action::NavigateDown);
+        ui.model_action(m, Action::NavigateRight);
+        ui.model_action(m, Action::Select);
     });
     case!(
         "65-radio-playing",

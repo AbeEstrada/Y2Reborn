@@ -41,7 +41,8 @@ impl Purpose {
     }
     fn title(&self) -> String {
         match self {
-            Self::WifiPassword { ssid } => ssid.to_uppercase(),
+            // The prompt names the network; the title says what this is.
+            Self::WifiPassword { .. } => "WI-FI PASSWORD".into(),
             Self::RadioSearch => "RADIO SEARCH".into(),
             Self::LibrarySearch => "SEARCH".into(),
         }

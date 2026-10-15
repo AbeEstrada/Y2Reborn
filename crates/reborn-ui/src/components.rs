@@ -25,7 +25,7 @@ pub fn progress(position: u64, duration: u64) -> f32 {
 
 pub fn output_label(output: &AudioOutput) -> String {
     match output {
-        AudioOutput::Wired => "Headphone jack".into(),
+        AudioOutput::Wired => "Headphone Jack".into(),
         AudioOutput::Bluetooth(_) => "Bluetooth".into(),
     }
 }
@@ -480,10 +480,12 @@ pub enum Tone {
 
 /// A short message at the top of the screen.
 pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
-    let w = (text::width(Face::S13, message) + 52.).min(WIDTH - 32.);
+    // In the status bar, over the screen's title: a notice never hides the
+    // focused row, the cover or a text being typed.
+    let w = (text::width(Face::S13, message) + 52.).min(WIDTH - 24.);
     let x = (WIDTH - w) / 2.;
-    let y = 44.;
-    c.rrect(x, y, w, 34., 17., 0x14161CF4);
+    let y = 2.;
+    c.rrect(x, y, w, 34., 17., 0x14161CFC);
     c.rrect_outline(x, y, w, 34., 17., 1., color::GLASS);
     let dot = match tone {
         Tone::Info => color::MUTED,

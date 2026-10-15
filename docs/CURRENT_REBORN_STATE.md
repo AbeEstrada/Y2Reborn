@@ -21,6 +21,12 @@ Since 1.0.0-beta.4 (in Beta 4.1): a stopped or paused station no longer hangs pl
 closes its pipe first); Radio follows the Wi-Fi view every loop pass; a late platform network record no
 longer shows a connected player as offline.
 
+**UI pass** (all 95 preview states, Reborn's look and skins): one capitalization rule (Title Case for titles,
+rows, buttons and menu entries; sentence case for descriptions, hints and status values), so "Play Next",
+"Go to Album", "Scan for Music" (one name instead of two), "Reset Settings", "Wi-Fi Is Off" and so on; notices
+sit in the status bar instead of over the focused row or the cover; the turn-off hold has a nearly opaque
+backdrop; the password keyboard's title is "Wi-Fi Password" (the prompt names the network).
+
 Host checks: 437 workspace tests (keyboard layout, movement, pages, limits, Done/Cancel; router keyboard
 mode with held buttons; search matching; the Wi-Fi, radio and library flows), fmt, strict Clippy; preview
 renders of the keyboard pages and search results in Reborn's look and in skins. Not yet on the device.

@@ -554,10 +554,10 @@ fn power_hold_fills_a_ring_and_release_cancels_it_without_any_menu() {
     );
     ui.power_hold = Some(Instant::now() - POWER_HOLD / 3);
     let quads = ui.draw(&m, &m.library.tracks, false);
-    assert!(drawn_text(&quads).contains("Hold to turn off"));
+    assert!(drawn_text(&quads).contains("Hold to Turn Off"));
     ui.model_action(&mut m, Action::PowerHoldCancel);
     assert_eq!(ui.power_hold_progress(), None);
-    assert!(!drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Hold to turn off"));
+    assert!(!drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Hold to Turn Off"));
     // Held to the end it turns the player off, once.
     ui.model_action(&mut m, Action::PowerHold);
     ui.power_hold = Some(Instant::now() - POWER_HOLD);
@@ -628,7 +628,7 @@ fn sound_pickers_set_exact_values_and_show_the_current_one() {
     m.settings.eq_bands = reborn_core::flat_eq_bands();
     m.settings.eq_bands[0].gain_db = 6.;
     m.settings.eq_bands[1].gain_db = 4.;
-    assert_eq!(pages::eq_preset_name(&m), "Bass boost");
+    assert_eq!(pages::eq_preset_name(&m), "Bass Boost");
     m.settings.eq_bands[2].gain_db = 1.;
     assert_eq!(pages::eq_preset_name(&m), "Custom");
 }
@@ -686,8 +686,8 @@ fn now_playing_wheel_is_a_fixed_volume_step_and_select_opens_options() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(labels[0], "Up next");
-    assert!(labels.contains(&"Go to album".to_owned()));
+    assert_eq!(labels[0], "Up Next");
+    assert!(labels.contains(&"Go to Album".to_owned()));
     assert!(!labels
         .iter()
         .any(|l| l.contains("info") || l.contains("Info")));
@@ -812,7 +812,7 @@ fn wifi_off_absent_and_failed_states_offer_one_useful_action() {
     ui.wifi.powered = false;
     let m = app(Screen::Wifi);
     let page = pages::page(&ui, &m, &m.library.tracks);
-    assert_eq!(page.hero.unwrap().title, "Wi-Fi is off");
+    assert_eq!(page.hero.unwrap().title, "Wi-Fi Is Off");
     assert_eq!(page.rows.len(), 1);
     assert_eq!(page.rows[0].key, "wifi_power");
 
@@ -820,7 +820,7 @@ fn wifi_off_absent_and_failed_states_offer_one_useful_action() {
     ui.wifi.problem = Some(WifiProblem::WrongPassword);
     let page = pages::page(&ui, &m, &m.library.tracks);
     assert!(page.status.unwrap().contains("Check the password"));
-    assert_eq!(page.rows[1].secondary, "Couldn't connect");
+    assert_eq!(page.rows[1].secondary, "Couldn't Connect");
 
     for (problem, words) in [
         (WifiProblem::NoAddress, "couldn't get a network address"),
@@ -1616,7 +1616,7 @@ fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
     assert!(ui.observe(&m) || ui.usb_overlay(&m));
     assert!(ui.usb_overlay(&m));
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
-    assert!(text.contains("Connected to a computer"), "{text}");
+    assert!(text.contains("Connected to a Computer"), "{text}");
     // The wheel does nothing underneath; Back dismisses it; volume still works.
     assert_eq!(
         ui.model_action(&mut m, Action::WheelClockwise(1)),
@@ -1634,7 +1634,7 @@ fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
     m.platform.snapshot.usb = UsbTransfer::Copying;
     ui.observe(&m);
     assert!(ui.usb_overlay(&m));
-    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Copying files"));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Copying Files"));
     assert!(ui.animating(), "the ring sweeps while copying");
     ui.model_action(&mut m, Action::Back);
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
@@ -1705,7 +1705,7 @@ fn bluetooth_pairing_shows_progress_and_a_failure_offers_try_again() {
     ui.observe(&m);
     assert!(matches!(ui.alert, Some(Alert::BluetoothFailed { .. })));
     assert!(ui.bluetooth_busy().is_none());
-    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Couldn't connect"));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Couldn't Connect"));
     // Cancel is the first button; Try again repeats the same operation.
     assert_eq!(ui.alert_focus(), 1);
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
@@ -1767,7 +1767,7 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
     m.library.scanning = true;
     ui.observe(&m);
     assert!(ui.animating());
-    assert!(drawn_text(&ui.draw(&m, &[], false)).contains("Finding your music"));
+    assert!(drawn_text(&ui.draw(&m, &[], false)).contains("Finding Your Music"));
     m.library.scanning = false;
     m.platform.snapshot.update.phase = UpdatePhase::UpToDate;
     ui.observe(&m);
