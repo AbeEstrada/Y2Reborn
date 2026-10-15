@@ -1,5 +1,23 @@
 # Current Reborn state on the Y2
 
+## Since 1.0.0-beta.5.1 (not yet released): pause in place, collected seeking
+
+Owner: "when playing music and pausing and playing again the player will always buffer"; "scrolling right and
+left also gives an error". Player log (Beta 5.1, AirPods): Pause closed the PCM at once ("alsa closed" 3 ms after
+pause); Play reopened the file, sought and reopened `bluealsa:` (open → prepared ≈450 ms), ≈1.3–1.4 s per resume.
+Holding Previous/Next seeks 30 s every 90 ms; each step restarted the pipeline and the next one hit "audio
+reconfiguration is still pending" (ten errors in one second).
+
+- **Pause in place** (files; a station still stops, it is live): `Playback::hold` keeps decoder, file and device
+  open; the audio thread pauses the device (`AudioSink::pause` → `rb_sink_pause`: `snd_pcm_pause` where the
+  device has it, BlueALSA included, else drop and prepare on resume) and writes nothing; the decoder waits on the
+  full queue (its heartbeat continues). Play continues at once. Wired and Bluetooth alike. The hold is given
+  back after 3 minutes (`HOLD_LIMIT`), before sleep, and by any stop or new start; a seek while paused releases
+  it so Play starts at the new place.
+- **Collected seeking:** steps only move the position (the sound holds); playback restarts once, 350 ms
+  (`SEEK_SETTLE`) after the last step and never during a restart in progress, so no error.
+- Test: `a_held_pause_stops_writing_and_resumes_without_reopening`.
+
 ## 1.0.0-beta.5.1 — Y2Linux 1.0 Beta 5.1 (Baseline 56), 2026-10-15 (latest): live search, a faster search index, Radio as its own section
 
 **Radio, reworked** (`views_radio`, owner: "radio should feel like its own premium section", "sort

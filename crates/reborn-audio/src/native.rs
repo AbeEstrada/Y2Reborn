@@ -46,6 +46,7 @@ unsafe extern "C" {
     fn rb_sink_wait(p: *mut c_void, ms: c_int) -> c_int;
     fn rb_sink_recover(p: *mut c_void, e: c_int) -> c_int;
     fn rb_sink_drop(p: *mut c_void) -> c_int;
+    fn rb_sink_pause(p: *mut c_void, on: c_int) -> c_int;
     fn rb_sink_delay(p: *mut c_void) -> c_int;
 }
 fn error(e: c_int) -> String {
@@ -529,6 +530,28 @@ impl AudioSink for AlsaSink {
             Err(error(r))
         } else {
             self.pacing.waiting = false;
+            Ok(())
+        }
+    }
+    fn pause(&mut self, on: bool) -> Result<(), String> {
+        // SAFETY: caller uniquely owns the PCM context.
+        let r = unsafe { rb_sink_pause(self.raw.as_ptr(), c_int::from(on)) };
+        self.log.emit(
+            Level::Info,
+            "alsa",
+            if on { "paused" } else { "resumed" },
+            if on {
+                "PCM paused in place"
+            } else {
+                "PCM resumed"
+            },
+            Some(self.correlation),
+            json!({"native_code":r,"device_pause":r == 1}),
+        );
+        self.pacing.waiting = false;
+        if r < 0 {
+            Err(error(r))
+        } else {
             Ok(())
         }
     }

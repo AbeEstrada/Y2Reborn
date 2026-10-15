@@ -32,6 +32,12 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// A pause held in place gives its sink back after this long (Bluetooth
+/// headphones and the wired codec may then rest).
+const HOLD_LIMIT: Duration = Duration::from_secs(180);
+/// Seek steps closer together than this are one seek.
+const SEEK_SETTLE: Duration = Duration::from_millis(350);
+
 /// Stations kept on top of a country's, a genre's or the popular list.
 const TOP_STATIONS: usize = 10;
 
@@ -146,6 +152,11 @@ struct Runtime {
     action_before: Option<AppModel>,
     action_dirty_before: Option<DirtyState>,
     pending_reconfiguration: Option<PendingReconfiguration>,
+    /// Paused in place since (the open pipeline is held, see `Playback::hold`).
+    held_since: Option<Instant>,
+    /// Seeking with held Previous/Next: playback restarts once at the target
+    /// when no further step came for a moment.
+    seek_until: Option<Instant>,
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
@@ -857,6 +868,8 @@ impl Runtime {
             self.model
                 .checkpoint(&self.root.join("state/session.json"))
                 .map_err(|e| e.to_string())?;
+            self.held_since = None;
+            self.seek_until = None;
             self.playback.stop_and_wait(self.model.generation)?;
             self.effect_inner(Effect::ScreenSleep)?;
             Ok::<(), String>(())
@@ -1237,8 +1250,123 @@ impl Runtime {
             AudioOutput::Bluetooth(address) => self.bt_state.playback_rate(address),
         }
     }
+    /// Move the position by `delta` ms. While playing, the sound holds and
+    /// playback restarts once at the target after the last step
+    /// (`apply_seek`); while paused, the next Play starts there.
+    fn seek_by(&mut self, delta: i64) {
+        let Some(length) = self.model.current().map(|t| t.duration_ms) else {
+            return;
+        };
+        self.model.position_ms = self
+            .model
+            .position_ms
+            .saturating_add_signed(delta)
+            .min(length.saturating_sub(1));
+        if matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            self.playback.hold(true);
+            self.seek_until = Some(Instant::now() + SEEK_SETTLE);
+        } else if self.playback.is_held() {
+            // A held pause would continue from the old place.
+            self.release_hold();
+        }
+        self.dirty.mark_both();
+    }
+    /// The collected seek: restart at the target once the steps stopped and
+    /// no restart is in progress.
+    fn apply_seek(&mut self) {
+        if self
+            .seek_until
+            .is_none_or(|until| Instant::now() < until || self.pending_reconfiguration.is_some())
+        {
+            return;
+        }
+        self.seek_until = None;
+        if !matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            return;
+        }
+        if let Err(error) = self.with_model_action(|runtime| runtime.load()) {
+            self.fail("playback", error);
+        }
+    }
+    /// Give the held pipeline back (after a long pause, before sleep).
+    fn release_hold(&mut self) {
+        self.held_since = None;
+        if !self.playback.is_held() {
+            return;
+        }
+        self.log.emit(
+            Level::Info,
+            "playback",
+            "pause_released",
+            "Paused playback released its sink",
+            None,
+            json!({"position_ms":self.model.position_ms}),
+        );
+        self.model.invalidate();
+        self.playback.stop(self.model.generation);
+        self.active_transport_generation = None;
+    }
+    /// Continue a pause held in place: no decoder, file or device restart.
+    fn resume_in_place(&mut self) -> bool {
+        if self.model.playback != PlaybackState::Paused
+            || !self.playback.is_held()
+            || self.pending_reconfiguration.is_some()
+        {
+            return false;
+        }
+        self.playback_hints
+            .publish(reborn_platform::workload::playback_class(
+                true,
+                self.model.settings.crossfade_ms > 0 || self.model.settings.eq_enabled,
+                false,
+            ));
+        self.playback.hold(false);
+        self.held_since = None;
+        self.model.playback = PlaybackState::Playing;
+        self.log.emit(
+            Level::Info,
+            "playback",
+            "resumed",
+            "Playback resumed in place",
+            None,
+            json!({"position_ms":self.model.position_ms}),
+        );
+        self.dirty.mark_both();
+        self.checkpoint();
+        true
+    }
     fn pause(&mut self) {
         self.playback_hints.clear();
+        // A file paused while it plays holds in place: resume is instant. A
+        // station (live), a start in progress or a pending seek release.
+        if self.model.playback == PlaybackState::Playing
+            && self.pending_reconfiguration.is_none()
+            && self.seek_until.is_none()
+            && self.model.current().is_some_and(|t| !t.is_radio())
+        {
+            self.playback.hold(true);
+            self.held_since = Some(Instant::now());
+            self.model.playback = PlaybackState::Paused;
+            self.log.emit(
+                Level::Info,
+                "playback",
+                "paused",
+                "Playback paused in place",
+                None,
+                json!({"position_ms":self.model.position_ms,"in_place":true}),
+            );
+            self.dirty.mark_both();
+            self.checkpoint();
+            return;
+        }
+        self.seek_until = None;
+        self.held_since = None;
         self.abandon_pending_reconfiguration();
         self.log.emit(
             Level::Info,
@@ -1280,6 +1408,8 @@ impl Runtime {
             PlaybackState::Playing | PlaybackState::Buffering
         ) {
             self.pause();
+            Ok(())
+        } else if self.resume_in_place() {
             Ok(())
         } else {
             self.load()
@@ -1347,6 +1477,14 @@ impl Runtime {
         Ok(())
     }
     fn effect(&mut self, e: Effect) -> Result<(), String> {
+        // Holding Previous/Next seeks every 90 ms: steps are collected and
+        // applied once, so they never meet a restart still in progress.
+        if let Effect::Seek(delta) = e {
+            if !self.model.current().is_some_and(Track::is_radio) {
+                self.seek_by(delta);
+                return Ok(());
+            }
+        }
         if matches!(
             e,
             Effect::None
@@ -1604,17 +1742,7 @@ impl Runtime {
             }
             // A live station has nothing to seek in.
             Effect::Seek(_) if self.model.current().is_some_and(Track::is_radio) => {}
-            Effect::Seek(delta) => {
-                self.model.position_ms = self.model.position_ms.saturating_add_signed(delta).min(
-                    self.model
-                        .current()
-                        .map(|t| t.duration_ms.saturating_sub(1))
-                        .unwrap_or(0),
-                );
-                if self.model.playback == PlaybackState::Playing {
-                    self.load()?
-                }
-            }
+            Effect::Seek(delta) => self.seek_by(delta),
             Effect::AdjustVolume(delta) => {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
@@ -2392,7 +2520,13 @@ impl Runtime {
                 self.pause();
                 Ok(())
             }
-            PlaybackAction::Resume => self.load(),
+            PlaybackAction::Resume => {
+                if self.resume_in_place() {
+                    Ok(())
+                } else {
+                    self.load()
+                }
+            }
             PlaybackAction::Stop => {
                 self.model.invalidate();
                 self.playback.stop(self.model.generation);
@@ -2415,6 +2549,7 @@ impl Runtime {
                 if self.model.playback == PlaybackState::Playing {
                     self.load()
                 } else {
+                    self.release_hold();
                     Ok(())
                 }
             }
@@ -3092,6 +3227,8 @@ fn run() -> Result<(), String> {
         action_before: None,
         action_dirty_before: None,
         pending_reconfiguration: None,
+        held_since: None,
+        seek_until: None,
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
@@ -3463,6 +3600,13 @@ fn run() -> Result<(), String> {
             }
         }
         rt.poll_pending_reconfiguration();
+        rt.apply_seek();
+        if rt
+            .held_since
+            .is_some_and(|since| since.elapsed() >= HOLD_LIMIT)
+        {
+            rt.release_hold();
+        }
         if rt.model.screen_off {
             rt.interaction_hints.clear();
         }

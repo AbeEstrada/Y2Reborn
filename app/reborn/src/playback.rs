@@ -11,7 +11,7 @@ use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -158,6 +158,9 @@ pub struct Playback {
     event_sender: SyncSender<PlaybackEvent>,
     epoch: Arc<AtomicU64>,
     volume: Arc<AtomicU8>,
+    /// Paused in place: the audio thread stops writing and pauses the open
+    /// device; the decoder waits on the full queue. Resume is instant.
+    hold: Arc<AtomicBool>,
     cancel: Option<Cancel>,
     pending_start: Option<PendingStart>,
     sink_released: bool,
@@ -216,6 +219,7 @@ fn send_stream_item(
     log: &Observer,
 ) -> Result<(), String> {
     let mut stalled = false;
+    let mut beat = Instant::now();
     loop {
         if epoch.load(Ordering::Acquire) != generation {
             return Ok(());
@@ -229,6 +233,12 @@ fn send_stream_item(
                 if !stalled {
                     log.add("decoder_stalls", 1.);
                     stalled = true;
+                }
+                // A paused player keeps the queue full for minutes: waiting
+                // for room is the decoder working, not hanging.
+                if beat.elapsed() >= Duration::from_secs(1) {
+                    log.heartbeat("playback", 30);
+                    beat = Instant::now();
                 }
                 thread::sleep(Duration::from_millis(5));
             }
@@ -643,6 +653,8 @@ impl Playback {
         let buffered = Arc::new(AtomicU64::new(0));
         let volume = Arc::new(AtomicU8::new(100));
         let sink_volume = volume.clone();
+        let hold = Arc::new(AtomicBool::new(false));
+        let sink_hold = hold.clone();
         let state = Arc::new(Mutex::new(json!({
             "state":"stopped",
             "canonical_sample_format":"fltp",
@@ -1134,6 +1146,7 @@ impl Playback {
                 let mut eof = false;
                 let mut drain_start = Instant::now();
                 let mut last_progress = Instant::now();
+                let mut held = false;
                 loop {
                     al.heartbeat("audio", 10);
                     // Without a PCM sink there is no audio deadline. Wait on the
@@ -1167,6 +1180,7 @@ impl Playback {
                                 }
                                 sink = None;
                                 pending = None;
+                                held = false;
                                 generation = g;
                                 correlation = id;
                                 rate = spec.rate;
@@ -1212,6 +1226,7 @@ impl Playback {
                                 sink = None;
                                 pending = None;
                                 eof = false;
+                                held = false;
                                 if let Some(reply) = reply {
                                     let _ = reply.try_send(());
                                 }
@@ -1222,6 +1237,31 @@ impl Playback {
                         sink = None;
                         pending = None;
                         eof = false;
+                    }
+                    // Paused in place: keep the device open and paused, write
+                    // nothing, read nothing (the decoder waits on the full
+                    // queue). The stall and drain clocks restart on resume.
+                    let want_hold = sink_hold.load(Ordering::Acquire) && sink.is_some();
+                    if want_hold != held {
+                        if let Some(s) = &mut sink {
+                            if let Err(e) = s.pause(want_hold) {
+                                al.emit(
+                                    Level::Warn,
+                                    "audio",
+                                    "pause_failed",
+                                    &e,
+                                    Some(correlation),
+                                    json!({"pause":want_hold}),
+                                );
+                            }
+                        }
+                        held = want_hold;
+                        last_progress = Instant::now();
+                        drain_start = Instant::now();
+                    }
+                    if held {
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
                     }
                     if pending.is_none() {
                         match pr.recv_timeout(Duration::from_millis(10)) {
@@ -1428,6 +1468,7 @@ impl Playback {
             event_sender,
             epoch,
             volume,
+            hold,
             cancel: None,
             pending_start: None,
             sink_released: true,
@@ -1505,6 +1546,7 @@ impl Playback {
             return Err("audio sink release acknowledgement required before open".into());
         }
         let cancel = Cancel::new()?;
+        self.hold.store(false, Ordering::Release);
         self.set_volume(dsp.volume);
         // Decode once at neutral user gain; ReplayGain/EQ/headroom/limiting
         // stay in FFmpeg. The live sink applies user attenuation after them.
@@ -1549,6 +1591,14 @@ impl Playback {
             deadline,
         });
         Ok(())
+    }
+    /// Pause in place (true) or continue (false) the playback that runs.
+    pub fn hold(&self, on: bool) {
+        self.hold.store(on, Ordering::Release);
+    }
+    /// A pause is held in place; any stop or new start ends it.
+    pub fn is_held(&self) -> bool {
+        self.hold.load(Ordering::Acquire)
     }
     pub(crate) fn set_volume(&self, volume: u8) {
         self.volume.store(volume.min(100), Ordering::Relaxed);
@@ -1600,12 +1650,14 @@ impl Playback {
         }
     }
     fn invalidate_start(&mut self, generation: u64) {
+        self.hold.store(false, Ordering::Release);
         let invalidated = generation.wrapping_add(1);
         self.epoch.store(invalidated, Ordering::Release);
         let _ = self.sink.try_send(SinkCommand::Stop(None));
         let _ = self.decode.try_send(DecodeCommand::Stop);
     }
     pub fn stop(&mut self, generation: u64) {
+        self.hold.store(false, Ordering::Release);
         self.epoch.store(generation, Ordering::Release);
         self.pending_start.take();
         if let Some(c) = self.cancel.take() {
@@ -1623,6 +1675,7 @@ impl Playback {
         timeout: Duration,
     ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
+        self.hold.store(false, Ordering::Release);
         self.epoch.store(generation, Ordering::Release);
         self.pending_start.take();
         if let Some(c) = self.cancel.take() {
@@ -1673,7 +1726,7 @@ mod tests {
     use super::*;
     use reborn_audio::Parameters;
     use reborn_core::{AudioOutput, PcmFormat};
-    use std::sync::atomic::AtomicBool;
+
     struct Sink {
         frames: Arc<AtomicU64>,
         fail: bool,
@@ -2263,6 +2316,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             volume: Arc::new(AtomicU8::new(100)),
+            hold: Arc::new(AtomicBool::new(false)),
             cancel: None,
             pending_start: None,
             sink_released: false,
@@ -2295,6 +2349,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             volume: Arc::new(AtomicU8::new(100)),
+            hold: Arc::new(AtomicBool::new(false)),
             cancel: None,
             pending_start: None,
             sink_released: false,
@@ -2389,6 +2444,115 @@ mod tests {
             .stop_and_wait_with_timeout(3, Duration::from_secs(1))
             .unwrap();
         playback.shutdown(4).unwrap();
+    }
+
+    /// Pause holds the open pipeline: the device is paused, nothing is
+    /// written, and resume continues the same stream without a reopen.
+    #[test]
+    fn a_held_pause_stops_writing_and_resumes_without_reopening() {
+        struct HoldSink {
+            frames: Arc<AtomicU64>,
+            pauses: Arc<Mutex<Vec<bool>>>,
+        }
+        impl AudioSink for HoldSink {
+            fn parameters(&self) -> Parameters {
+                Parameters {
+                    rate: 44100,
+                    period: 512,
+                    buffer: 4096,
+                    format: PcmFormat::S32LE,
+                    channels: 2,
+                    hardware_mixer_gain_db: None,
+                    device: "test".into(),
+                    fallback: false,
+                    fallback_reason: String::new(),
+                }
+            }
+            fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+                // Real time: 128 frames take ~2.9 ms at 44.1 kHz.
+                thread::sleep(Duration::from_millis(3));
+                let n = (s.len() / 8).min(128);
+                self.frames.fetch_add(n as u64, Ordering::Relaxed);
+                Ok(n)
+            }
+            fn discard(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            fn delay(&self) -> u64 {
+                0
+            }
+            fn pause(&mut self, on: bool) -> Result<(), String> {
+                self.pauses.lock().unwrap().push(on);
+                Ok(())
+            }
+        }
+        let frames = Arc::new(AtomicU64::new(0));
+        let pauses = Arc::new(Mutex::new(vec![]));
+        let opened = Arc::new(AtomicU64::new(0));
+        let (f, ps, o) = (frames.clone(), pauses.clone(), opened.clone());
+        let root = std::env::temp_dir().join(format!("reborn-hold-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let mut p = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |_, _, _| {
+                o.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(HoldSink {
+                    frames: f.clone(),
+                    pauses: ps.clone(),
+                }))
+            }),
+        )
+        .unwrap();
+        p.load(
+            track(),
+            vec![],
+            0,
+            spec(AudioOutput::Wired, 44100),
+            1,
+            DspConfig::with_volume(80),
+            1,
+        )
+        .unwrap();
+        let wait_for = |what: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !what() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            what()
+        };
+        assert!(
+            wait_for(&|| frames.load(Ordering::Relaxed) > 2_000),
+            "playback started"
+        );
+        p.hold(true);
+        assert!(p.is_held());
+        assert!(
+            wait_for(&|| pauses.lock().unwrap().as_slice() == [true]),
+            "device paused"
+        );
+        let at_pause = frames.load(Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            frames.load(Ordering::Relaxed),
+            at_pause,
+            "nothing written while held"
+        );
+        p.hold(false);
+        assert!(
+            wait_for(&|| frames.load(Ordering::Relaxed) > at_pause + 2_000),
+            "continues"
+        );
+        assert_eq!(pauses.lock().unwrap().as_slice(), [true, false]);
+        assert_eq!(
+            opened.load(Ordering::Relaxed),
+            1,
+            "the device was never reopened"
+        );
+        // Any stop ends the hold, so a later Play cannot resume a stopped pipeline.
+        p.hold(true);
+        p.stop(2);
+        assert!(!p.is_held());
     }
 
     #[test]

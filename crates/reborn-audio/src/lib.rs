@@ -141,6 +141,12 @@ pub trait AudioSink {
     fn write(&mut self, pcm: &[u8]) -> Result<usize, String>;
     fn discard(&mut self) -> Result<(), String>;
     fn delay(&self) -> u64;
+    /// Pause in place and resume; the stream stays open. A sink without a
+    /// pause of its own simply stops being written to.
+    fn pause(&mut self, on: bool) -> Result<(), String> {
+        let _ = on;
+        Ok(())
+    }
 }
 /// Keep the source rate family when the native sink cannot accept its rate.
 pub fn fallback_rate(rate: u32) -> u32 {

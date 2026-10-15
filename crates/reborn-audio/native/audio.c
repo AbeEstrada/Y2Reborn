@@ -355,6 +355,26 @@ int rb_sink_drop(RbSink *s) {
   int r = snd_pcm_drop(s->pcm);
   return r < 0 ? r : snd_pcm_prepare(s->pcm);
 }
+/* Pause in place (Pause on Reborn keeps the output open): the device's own
+ * pause where it has one (BlueALSA, most codecs); otherwise stop and drop its
+ * few buffered milliseconds now and prepare again on resume. Returns 1 when
+ * the device paused itself, 0 after the fallback, a negative error else. */
+int rb_sink_pause(RbSink *s, int on) {
+  snd_pcm_state_t state = snd_pcm_state(s->pcm);
+  if (on) {
+    if (state == SND_PCM_STATE_RUNNING && snd_pcm_pause(s->pcm, 1) == 0)
+      return 1;
+    if (state == SND_PCM_STATE_PAUSED)
+      return 1;
+    int r = snd_pcm_drop(s->pcm);
+    return r < 0 ? r : 0;
+  }
+  if (state == SND_PCM_STATE_PAUSED)
+    return snd_pcm_pause(s->pcm, 0);
+  if (state == SND_PCM_STATE_SETUP || state == SND_PCM_STATE_XRUN)
+    return snd_pcm_prepare(s->pcm);
+  return 0;
+}
 int rb_sink_delay(RbSink *s) {
   snd_pcm_sframes_t n = 0;
   int r = snd_pcm_delay(s->pcm, &n);
