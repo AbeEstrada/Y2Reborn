@@ -2,10 +2,10 @@
 """Build the shipped example skins in skins/ (one folder per skin; Classic has its own script).
 
 Each skin is written as skin.json, small generated pictures and Latin subsets
-of open-licence fonts (Open Sans / Noto, SIL OFL 1.1). The skins share one set
+of open-licence fonts (Open Sans / Noto / Pixelify Sans, SIL OFL 1.1). The skins share one set
 of layout builders and differ in palette, fonts, pictures and a few screens.
 Deterministic: rerun after editing a style. Needs Pillow and fontTools
-(pyftsubset) and the Noto/Open Sans TTFs of the build host.
+(pyftsubset), the Noto/Open Sans TTFs of the build host and assets/fonts/pixelify.
 """
 
 from __future__ import annotations
@@ -34,10 +34,13 @@ FONTS = {
     "NotoSerif-Regular": "/usr/share/fonts/noto/NotoSerif-Regular.ttf",
     "NotoSerif-Bold": "/usr/share/fonts/noto/NotoSerif-Bold.ttf",
     "NotoSerif-Italic": "/usr/share/fonts/noto/NotoSerif-Italic.ttf",
+    **{f"PixelifySans-{w}": str(ROOT / f"assets/fonts/pixelify/PixelifySans-{w}.ttf")
+       for w in ("Regular", "Medium", "SemiBold", "Bold")},
 }
 LICENCES = {
     "OpenSans": ROOT / "assets/fonts/OpenSans-OFL.txt",
     "Noto": Path("/usr/share/licenses/noto-fonts/LICENSE"),
+    "PixelifySans": ROOT / "assets/fonts/pixelify/PixelifySans-OFL.txt",
 }
 # The characters a skin font carries (reborn-ui skin::atlas::charset).
 UNICODES = "U+0020-007E,U+00A0-017F,U+2009,U+2013,U+2014,U+2018,U+2019,U+201C,U+201D,U+2022,U+2026,U+20AC,U+2122,U+2190,U+2192,U+25B6,U+FFFD"
@@ -407,13 +410,20 @@ class Skin:
                 subprocess.run(["pyftsubset", FONTS[src], f"--unicodes={UNICODES}",
                                 f"--output-file={self.dir / path}", "--layout-features=kern",
                                 "--name-IDs=*", "--name-legacy", "--notdef-outline"], check=True)
-            families.add("OpenSans" if src.startswith("OpenSans") else "Noto")
+            families.add(next(f for f in ("OpenSans", "PixelifySans", "Noto") if src.startswith(f) or f == "Noto"))
             fonts[role] = {"file": path, "size": size} | ({"charset": charset} if charset else {})
         for fam in sorted(families):
             shutil.copy(LICENCES[fam], self.dir / f"fonts/{fam}-OFL.txt")
         doc = {"format": 1, "name": self.name, "author": "Reborn", "version": "1.0",
                "description": self.description, "palette": self.palette, "colors": self.colors,
                "fonts": fonts, "images": images, "parts": self.parts, "screens": self.screens}
+        # Independent copies: the finishing steps change elements in place.
+        doc = json.loads(json.dumps(doc))
+        if self.id in CLOCKS:
+            add_clock(self.id, doc)
+            add_live(self.id, doc)
+            add_keyboard(self.id, doc)
+            add_heart(self.id, doc)
         (self.dir / "skin.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 
 
@@ -448,6 +458,152 @@ def prune(skin: Skin):
     for name in list(skin.parts):
         if name not in used:
             del skin.parts[name]
+
+
+# ------------------------------------------------------------------ finishing steps
+# Screens added after the first skins (clock, radio, keyboard, Favorites),
+# applied to every finished skin in each skin's own style.
+
+def split(elements, match, **changes):
+    """The element `match` finds stays as it is without a clock; with one, changed."""
+    for i, e in enumerate(elements):
+        if match(e):
+            a, b = json.loads(json.dumps(e)), json.loads(json.dumps(e))
+            a["if"] = f"{e['if']} & !has_clock" if "if" in e else "!has_clock"
+            b["if"] = f"{e['if']} & has_clock" if "if" in e else "has_clock"
+            b.update(changes)
+            elements[i:i + 1] = [a, b]
+            return
+    raise SystemExit("split: no element matched")
+
+
+def is_title(e):
+    return "{screen}" in e.get("text", "")
+
+
+def clock(**kw):
+    return {"type": "text", "if": "has_clock", **kw}
+
+
+IPOD = {"x": 32, "y": 0, "w": 60, "h": 30, "text": "{clock}", "font": "bartitle", "color": "bar_text"}
+# The time in each title bar, in the skin's idiom; `title` narrows the title beside it.
+CLOCKS = {
+    **{sid: (IPOD, {"x": 100, "w": 280}) for sid in
+       ("mini-blue", "mini-gold", "mini-green", "mini-pink", "mini-silver", "nano-glass")},
+    "cassette": ({"x": 32, "y": 0, "w": 64, "h": 32, "text": "{clock}", "font": "bartitle",
+                  "color": "bar_text", "tracking": 1}, {"x": 104, "w": 272}),
+    "paper": ({"x": 36, "y": 0, "w": 60, "h": 34, "text": "{clock}", "font": "small", "color": "muted"}, None),
+    "neon": ({"x": 322, "y": 0, "w": 60, "h": 38, "text": "{clock}", "font": "small", "color": "muted",
+              "align": "right"}, {"w": 296}),
+    "walkman": ({"x": 316, "y": 0, "w": 60, "h": 33, "text": "{clock}", "font": "small", "color": "orange",
+                 "align": "right"}, {"w": 286}),
+    "terminal": (None, {"w": 280}),
+    "big-type": (None, {"w": 224}),
+    "zune": ({"x": 190, "y": 0, "w": 100, "h": 26, "text": "{clock}", "font": "small", "color": "muted",
+              "align": "center"}, None),
+    "winamp": (None, None),
+}
+
+
+def add_clock(sid, doc):
+    parts = doc["parts"]
+    bar, title = CLOCKS[sid]
+    if bar:
+        parts["titlebar"].append(clock(**bar))
+    if title:
+        split(parts["title"], is_title, **title)
+    if sid == "terminal":
+        # A prompt-style [09:41] before [72%].
+        split(parts["titlebar"], lambda e: e.get("text") == "[{battery}%]",
+              x=290, w=182, text="[{clock}] [{battery}%]")
+    if sid == "big-type":
+        # Large time before the battery; the bolt moves left of it.
+        split(parts["titlebar"], lambda e: e.get("text") == "{battery}%", x=376, w=90)
+        parts["titlebar"].append(clock(x=268, y=0, w=98, h=42, text="{clock}", font="bartitle",
+                                       color="text", align="right"))
+        split(parts["titlebar"], lambda e: e.get("icon") == "bolt", x=240)
+    if sid == "winamp":
+        # A small LCD box where the left stripes begin.
+        split(parts["titlebar"], lambda e: e.get("type") == "image" and e.get("x") == 8 and e.get("w") == 120,
+              x=62, w=66)
+        parts["titlebar"].append({"type": "rect", "if": "has_clock", "x": 8, "y": 4, "w": 48, "h": 16,
+                                  "color": "#000000"})
+        parts["titlebar"].append({"type": "text", "if": "has_clock", "x": 8, "y": 4, "w": 48, "h": 16,
+                                  "text": "{clock}", "font": "small", "color": "lcd", "align": "center"})
+
+
+# A station has no queue position: the station (title bars) or On Air instead.
+LIVE_TEXT = {
+    "Song {queue_index} of {queue_length}": "On Air",
+    "Side A · {queue_index}/{queue_length}": "{station}",
+    "{queue_index} of {queue_length}": "{station}",
+    "Track {queue_index} of {queue_length}": "On Air",
+    "QUEUE  : {queue_index}/{queue_length}": "STATION: {station}",
+    "{queue_index} / {queue_length}": "On Air",
+    "{queue_index}. {artist} - {title}": "{artist} - {title}",
+    "-{duration}": "LIVE",
+}
+ON_AIR_BODY = ("paper", "walkman", "zune", "big-type")
+
+
+def add_live(sid, doc):
+    def walk(elements):
+        i = 0
+        while i < len(elements):
+            e = elements[i]
+            text = e.get("text")
+            if text in LIVE_TEXT:
+                a, b = json.loads(json.dumps(e)), json.loads(json.dumps(e))
+                a["if"] = f"{e['if']} & !live" if "if" in e else "!live"
+                b["if"] = f"{e['if']} & live" if "if" in e else "live"
+                live = LIVE_TEXT[text]
+                # Zune's "1 of 6" shares its text with the title-bar skins.
+                b["text"] = "On Air" if live == "{station}" and sid in ON_AIR_BODY else live
+                elements[i:i + 1] = [a, b]
+                i += 2
+                continue
+            if "elements" in e:
+                walk(e["elements"])
+            i += 1
+    walk(doc["screens"]["now_playing"])
+
+
+def add_keyboard(sid, doc):
+    """The skin's title bar and the keyboard's purpose over Reborn's keys."""
+    native = {"type": "native", "part": "screen", "recolor": False}
+    if sid == "big-type":
+        native["y"] = 4  # under the 44-pixel bar
+    layout = [native, {"type": "part", "name": "titlebar"}]
+    if sid == "zune":
+        layout.append({"type": "text", "x": 10, "y": 0, "w": 170, "h": 26, "text": "{sheet_title}",
+                       "font": "small", "color": "text", "case": "lower"})
+    else:
+        for e in doc["parts"]["title"]:
+            e = json.loads(json.dumps(e))
+            if "text" in e:
+                e["text"] = e["text"].replace("{screen}", "{sheet_title}")
+            layout.append(e)
+    doc["screens"]["keyboard"] = layout
+
+
+HEART = "#FF5A7A"
+# Where each skin marks a Favorites song: the end of its quality line.
+HEARTS = {
+    **{sid: {"x": 442, "y": 153, "size": 16, "color": HEART} for sid in
+       ("mini-blue", "mini-gold", "mini-green", "mini-pink", "mini-silver", "nano-glass")},
+    "cassette": {"x": 428, "y": 144, "size": 16, "color": HEART},
+    "neon": {"x": 448, "y": 175, "size": 16, "color": HEART},
+    "paper": {"x": 446, "y": 170, "size": 16, "color": "text"},
+    "walkman": {"x": 450, "y": 163, "size": 16, "color": "orange"},
+    "winamp": {"x": 442, "y": 68, "size": 16, "color": "lcd"},
+    "terminal": {"x": 298, "y": 119, "size": 16, "color": "text"},
+    "big-type": {"x": 438, "y": 302, "size": 24, "color": "yellow"},
+    "zune": {"x": 448, "y": 188, "size": 16, "color": "magenta"},
+}
+
+
+def add_heart(sid, doc):
+    doc["screens"]["now_playing"].append({"type": "icon", "if": "favorite", "icon": "heart", **HEARTS[sid]})
 
 
 # ------------------------------------------------------------------ the skins
@@ -929,9 +1085,244 @@ def zune():
     return s
 
 
+# ------------------------------------------------------------------ Bunny Bow
+# Pixel art on a half-size grid, doubled without smoothing so every art pixel
+# is 2 × 2 on the screen. Inspired by the cute pixel themes of Rockbox; all of
+# it is drawn here.
+
+INK = "#6B2450"
+BUNNY_COLOURS = {
+    "k": INK, "w": "#FFFFFF", "p": "#FFB3CC", "c": "#FF8DB5", "r": "#E8364F", "R": "#B0243F",
+    "d": "#FF8FB8", "D": "#E8689A", "y": "#FFD85C", "s": "#F6B9D0", "l": "#FFE0EC",
+}
+
+
+def sprite(rows, colours=BUNNY_COLOURS):
+    """A picture from rows of letters ('.' is clear)."""
+    im = Image.new("RGBA", (len(rows[0]), len(rows)), (0, 0, 0, 0))
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch != ".":
+                im.putpixel((x, y), rgba(colours[ch]))
+    return im
+
+
+def doubled(im, k=2):
+    return im.resize((im.width * k, im.height * k), Image.Resampling.NEAREST)
+
+
+def blob(d, box, fill, ink=INK):
+    """A pixel oval with a one-pixel outline."""
+    x0, y0, x1, y1 = box
+    d.ellipse(box, fill=rgba(ink))
+    d.ellipse((x0 + 1, y0 + 1, x1 - 1, y1 - 1), fill=rgba(fill))
+
+
+SPARKLE_PX = ["..k..", "..k..", "kk.kk", "..k..", "..k.."]
+HEART_PX = [".kk.kk.", "kccwcck", "kccccck", ".kccck.", "..kck..", "...k..."]
+FLOWER_PX = [".k.k.", "kpkpk", ".kyk.", "kpkpk", ".k.k."]
+
+
+def stamp(im, rows, x, y):
+    im.alpha_composite(sprite(rows), (x, y))
+
+
+def bunny():
+    """A round bunny with a red bow, a pink dress and a little music player."""
+    im = Image.new("RGBA", (72, 84), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    # Dithered shadow under the feet.
+    for y in range(76, 83):
+        for x in range(14, 58):
+            if ((x - 36) / 22) ** 2 + ((y - 79.5) / 3.6) ** 2 <= 1 and (x + y) % 2 == 0:
+                im.putpixel((x, y), rgba("#F2A7C4"))
+    # Ears, the right one a little lower, pink inside.
+    blob(d, (21, 1, 32, 34), "#FFFFFF")
+    blob(d, (37, 4, 48, 37), "#FFFFFF")
+    d.ellipse((24, 7, 29, 29), fill=rgba("#FFB3CC"))
+    d.ellipse((40, 10, 45, 32), fill=rgba("#FFB3CC"))
+    # Body in a pink dress, arms, feet.
+    blob(d, (23, 55, 49, 79), "#FF8FB8")
+    blob(d, (17, 58, 26, 67), "#FFFFFF")
+    blob(d, (24, 74, 34, 82), "#FFFFFF")
+    blob(d, (38, 74, 48, 82), "#FFFFFF")
+    # Head.
+    blob(d, (10, 22, 61, 60), "#FFFFFF")
+    # Eyes with a shine, nose, mouth, cheeks.
+    for ex in (25, 44):
+        d.rectangle((ex, 38, ex + 2, 42), fill=rgba(INK))
+        im.putpixel((ex + 1, 39), rgba("#FFFFFF"))
+    d.rectangle((35, 45, 36, 45), fill=rgba("#FF8DB5"))
+    for x, y in ((33, 47), (34, 48), (35, 48), (36, 48), (37, 48), (38, 47)):
+        im.putpixel((x, y), rgba(INK))
+    d.ellipse((16, 45, 21, 48), fill=rgba("#FF8DB5"))
+    d.ellipse((50, 45, 55, 48), fill=rgba("#FF8DB5"))
+    # The bow on the left ear: two loops, wide at their ends, and a knot.
+    for side in (-1, 1):
+        def at(points, side=side):
+            return [(25 + side * dx, y) for dx, y in points]
+        d.polygon(at([(1, 17), (11, 12), (14, 14), (14, 26), (11, 28), (1, 24)]), fill=rgba(INK))
+        d.polygon(at([(2, 18), (11, 14), (12, 15), (12, 25), (11, 26), (2, 23)]), fill=rgba("#E8364F"))
+        d.line(at([(4, 20), (10, 17)]), fill=rgba("#B0243F"))
+        d.line(at([(4, 22), (10, 24)]), fill=rgba("#B0243F"))
+        im.putpixel((25 + side * 11, 15), rgba("#FFFFFF"))
+    d.rounded_rectangle((22, 16, 28, 25), 2, fill=rgba(INK))
+    d.rectangle((23, 17, 27, 24), fill=rgba("#B0243F"))
+    im.putpixel((24, 18), rgba("#E8364F"))
+    # A heart on the dress.
+    stamp(im, [".w.w.", "wwwww", ".www.", "..w.."], 33, 63)
+    # The music player in the right hand: screen and click wheel.
+    d.rectangle((48, 55, 59, 71), fill=rgba(INK))
+    d.rectangle((49, 56, 58, 70), fill=rgba("#FFFFFF"))
+    d.rectangle((50, 57, 57, 61), fill=rgba("#FFB3CC"))
+    blob(d, (50, 63, 57, 70), "#FFFFFF")
+    im.putpixel((53, 66), rgba(INK))
+    im.putpixel((54, 66), rgba(INK))
+    blob(d, (46, 60, 52, 67), "#FFFFFF")  # the hand over the player
+    # Sparkles, hearts and flowers around.
+    stamp(im, SPARKLE_PX, 2, 30)
+    stamp(im, HEART_PX, 60, 20)
+    stamp(im, FLOWER_PX, 4, 64)
+    stamp(im, SPARKLE_PX, 63, 56)
+    return doubled(im)
+
+
+def cloud(width=78):
+    """A puffy cloud with a dithered underside and sparkles."""
+    h = 34
+    im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    puffs = [(4, 14, 26, 32), (14, 5, 40, 32), (32, 1, 58, 32), (48, 7, 72, 32), (60, 14, width - 2, 32)]
+    for box in puffs:
+        d.ellipse(box, fill=rgba(INK))
+    d.rectangle((8, 22, width - 6, 32), fill=rgba(INK))
+    for x0, y0, x1, y1 in puffs:
+        d.ellipse((x0 + 1, y0 + 1, x1 - 1, y1 - 1), fill=rgba("#FFFFFF"))
+    d.rectangle((9, 23, width - 7, 31), fill=rgba("#FFFFFF"))
+    for y in range(26, 32):
+        for x in range(9, width - 6):
+            if (x + y) % 2 == 0 and im.getpixel((x, y))[:3] == (255, 255, 255):
+                im.putpixel((x, y), rgba("#F6B9D0"))
+    return doubled(im)
+
+
+def pixel_round(w, h, r, fill, ink=INK, shine=None):
+    """A rounded box with a one-pixel outline, for nine-slicing."""
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, w - 1, h - 1), r, fill=rgba(ink))
+    d.rounded_rectangle((1, 1, w - 2, h - 2), max(0, r - 1), fill=rgba(fill))
+    if shine:
+        d.line((r, 2, w - 1 - r, 2), fill=rgba(shine))
+    return doubled(im)
+
+
+def decor(rows_at, size):
+    """Small stamps (sparkles, hearts, flowers) on a clear picture."""
+    im = Image.new("RGBA", size, (0, 0, 0, 0))
+    for rows, x, y in rows_at:
+        stamp(im, rows, x, y)
+    return doubled(im)
+
+
+def bunny_bow():
+    s = Skin("bunny-bow", "Bunny Bow",
+             "Pastel pink pixel art: a bunny with a bow, clouds, sparkles and hearts.")
+    s.palette = {"bg": "#FFE4EF", "text": INK, "muted": "#8E3D6B", "dim": "#A2557F", "accent": "#FF5C9A",
+                 "glass": INK, "scrim": "#FFE4EF", "sheet": "#FFF7FA", "track": "#FFFFFF",
+                 "danger": "#C81E45", "success": "#1E7F4C", "warning": "#9A5A00"}
+    s.colors = {"bar_text": INK, "panel": "#FFF7FA", "accent_text": INK, "white": "#FFFFFF",
+                "cream": "#FFF7FA", "bow": "#E8364F", "pinkfill": "#FFB8D2"}
+    s.fonts = {"menu": ("PixelifySans-Medium", 20, None), "title2": ("PixelifySans-SemiBold", 17, None),
+               "bartitle": ("PixelifySans-SemiBold", 18, None), "big": ("PixelifySans-Bold", 22, None),
+               "detail": ("PixelifySans-Regular", 16, None), "body": ("PixelifySans-Regular", 16, None),
+               "small": ("PixelifySans-Medium", 14, None), "clock": ("PixelifySans-Bold", 30, None)}
+    s.images = {
+        "bunny": bunny(),
+        "cloud": cloud(),
+        "frame": pixel_round(12, 12, 4, "#FFF7FA"),
+        "highlight": pixel_round(12, 17, 6, "#FFB8D2", shine="#FFFFFF"),
+        "track": pixel_round(10, 7, 3, "#FFFFFF"),
+        "fill": pixel_round(10, 7, 3, "#FF8FB8", shine="#FFD3E2"),
+        "battery": doubled(sprite([
+            "kkkkkkkkkkkk..", "k..........k..", "k..........kk.", "k..........kk.",
+            "k..........kk.", "k..........k..", "kkkkkkkkkkkk.."])),
+        "battery_fill": vgrad(4, 10, [(0, "#FFA3C4"), (1, "#FF6FA0")]),
+        "battery_low": vgrad(4, 10, [(0, "#FF8A8A"), (1, "#D7264B")]),
+        "sparkles": decor([(SPARKLE_PX, 0, 6), (HEART_PX, 9, 0), (SPARKLE_PX, 20, 9), (FLOWER_PX, 30, 2)], (36, 16)),
+        "hearts": decor([(HEART_PX, 0, 0), (SPARKLE_PX, 10, 1), (HEART_PX, 18, 0)], (25, 7)),
+    }
+    st = Style(row_h=34, top=40, pad=30, ffg="text", fmuted="muted", icon_ffg="text", icon_fg="dim",
+               highlight=lambda w, h: [I(4, 1, w - 8, h - 2, "highlight", slice=[10, 10, 10, 10]),
+                                       {"type": "icon", "if": "!row_art", "x": 11, "y": (h - 12) // 2,
+                                        "size": 12, "icon": "heart", "color": "bow"}],
+               scroll={"x": -8, "w": 4, "track": "#F6C6D8", "thumb": "accent"},
+               bar_track_image="track", bar_fill_image="fill", bar_slice=[6, 6, 6, 6],
+               sheet_bg="cream", sheet_frame=INK, sheet_radius=12, scrim="#FFE4EFB0",
+               toast_bg=INK + "F0", toast_fg="#FFF7FA", toast_error="#C81E45F0")
+    s.parts["titlebar"] = [
+        {"type": "icon", "if": "playing", "x": 12, "y": 10, "size": 16, "icon": "play", "color": "text"},
+        {"type": "icon", "if": "paused", "x": 12, "y": 10, "size": 16, "icon": "pause", "color": "text"},
+        T(34, 0, 64, 36, "{clock}", "bartitle", "text", **{"if": "has_clock"}),
+        {"type": "icon", "if": "charging", "x": 412, "y": 10, "size": 16, "icon": "bolt", "color": "bow"},
+        T(352, 0, 82, 36, "{battery}%", "small", "muted", "right", **{"if": "!charging"}),
+        *battery_part(440, 11),
+        R(8, 36, 464, 2, "text"),
+        I(212, 30, 50, 14, "hearts"),
+    ]
+    s.parts["title"] = [T(100, 0, 280, 32, "{screen}", "bartitle", "text", "center")]
+    np = [P("titlebar"), T(100, 0, 280, 32, "Now Playing", "bartitle", "text", "center"),
+          I(2, 40, 156, 68, "cloud"),
+          I(84, 198, 72, 32, "sparkles"),
+          I(4, 192, 144, 168, "bunny"),
+          I(150, 46, 322, 266, "frame", slice=[8, 8, 8, 8]),
+          {"type": "art", "x": 162, "y": 60, "size": 118, "radius": 6},
+          R(161, 59, 120, 120, INK, radius=6, stroke=2),
+          T(292, 58, 168, 52, "{title}", "big", lines=2, line_height=26),
+          T(292, 112, 168, 22, "{artist}", "detail", "muted"),
+          T(292, 134, 168, 22, "{album}", "detail", "dim"),
+          T(292, 158, 140, 18, "{quality}", "small", "dim"),
+          {"type": "icon", "if": "favorite", "x": 440, "y": 159, "size": 16, "icon": "heart", "color": "bow"},
+          {"type": "icon", "if": "shuffle", "x": 162, "y": 190, "size": 18, "icon": "shuffle", "color": "text"},
+          {"type": "icon", "if": "repeat", "x": 188, "y": 190, "size": 18, "icon": "repeat_mode", "color": "text"},
+          T(292, 186, 168, 24, "{queue_index} of {queue_length}", "small", "muted", "right", **{"if": "!live"}),
+          T(292, 186, 168, 24, "On Air", "small", "bow", "right", **{"if": "live"}),
+          bar(st, 162, 228, 298, 14, "progress"),
+          T(162, 250, 120, 22, "{elapsed}", "small"),
+          T(340, 250, 120, 22, "{remaining}", "small", "text", "right"),
+          T(162, 278, 298, 26, "{output}", "small", "muted", "center"),
+          {"type": "icon", "if": "playing", "x": 302, "y": 318, "size": 20, "icon": "play", "color": "text"},
+          {"type": "icon", "if": "paused", "x": 302, "y": 318, "size": 20, "icon": "pause", "color": "text"}]
+    rows = (360 - st.top - 44) // st.row_h
+    home = [I(318, 44, 156, 68, "cloud"),
+            T(318, 66, 156, 40, "{clock}", "clock", "text", "center", **{"if": "has_clock"}),
+            I(330, 118, 72, 32, "sparkles"),
+            I(330, 192, 144, 168, "bunny"),
+            rows_list(st, st.top + 2, rows, w=310),
+            R(8, 318, 310, 2, "text"),
+            {"type": "art", "if": "has_track", "x": 12, "y": 325, "size": 28, "radius": 4},
+            T(48, 322, 270, 18, "{title}", "small", "text", **{"if": "has_track"}),
+            T(48, 339, 270, 18, "{artist}", "small", "muted", **{"if": "has_track"}),
+            T(16, 322, 300, 34, "Nothing playing yet", "small", "muted", **{"if": "!has_track"}),
+            P("titlebar"), T(100, 0, 280, 32, "Bunny Bow", "bartitle", "text", "center")]
+    s.parts["row310"] = row_elements(st, 310, False)
+    s.parts["row310_focused"] = row_elements(st, 310, True)
+    standard(s, st, np, home)
+    s.screens["volume"] = [I(40, 290, 400, 52, "frame", slice=[8, 8, 8, 8]),
+                           {"type": "icon", "x": 56, "y": 305, "size": 22, "icon": "speaker", "color": "text"},
+                           bar(st, 90, 309, 296, 14, "volume"),
+                           T(390, 290, 40, 52, "{volume}", "small", "muted", "right")]
+    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False},
+                             P("titlebar"), T(100, 0, 280, 32, "{sheet_title}", "bartitle", "text", "center")]
+    prune(s)
+    return s
+
+
+
 def main():
     OUT.mkdir(exist_ok=True)
-    skins = [nano_glass(), walkman(), terminal(), winamp(), paper(), big_type(), cassette(), neon(), zune()]
+    skins = [nano_glass(), walkman(), terminal(), winamp(), paper(), big_type(), cassette(), neon(), zune(),
+             bunny_bow()]
     for colour_id, name, bt, bb, ht, hb, acc in [
         ("silver", "Silver", "#D5D9DF", "#9AA0A8", "#B9C0C9", "#7D858F", "#5E6670"),
         ("pink", "Pink", "#F7C6D9", "#D9799E", "#F29BBE", "#D9558A", "#C2386F"),
