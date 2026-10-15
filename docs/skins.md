@@ -172,6 +172,7 @@ Write `{name}` inside `text`:
 | `playback` | `Playing`, `Paused`, `Stopped` |
 | `screen` | the screen's title (empty on Home) |
 | `battery` `volume` | numbers 0–100 |
+| `clock` | the time in the chosen time zone (`21:41`, or `9:41` where a 12-hour clock is usual); empty until the player's time is set |
 | `status` | a page's status line (Wi-Fi, Bluetooth, pickers) |
 | `page_title` `page_body` | a page's heading and explanation |
 | `empty_title` `empty_body` `empty_action` | what an empty list says |
@@ -189,6 +190,7 @@ Anywhere: `playing`, `paused`, `has_track`, `has_art`, `shuffle`, `repeat`,
 `repeat_one`, `charging`, `battery_low`, `bluetooth`, `bluetooth_connected`,
 `wifi`, `wifi_connected`, `back` (not Home), `empty`, `error` (toast),
 `danger` (dialog), `eq`, `gapless`, `crossfade`, `normalise`, `has_status`,
+`has_clock` (the time is known; give the title less room),
 `has_body`, `has_title`, `has_action`, `has_facts`, `interactive`.
 
 Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,

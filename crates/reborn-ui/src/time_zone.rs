@@ -1,4 +1,4 @@
-//! Settings > Display > Time zone: UTC first, then every tz database zone
+//! Settings > Display > Time Zone: UTC first, then every tz database zone
 //! west to east by its offset now, and the clock it gives the status bar.
 use crate::{Item, RowKind, Ui};
 use reborn_core::{
@@ -23,17 +23,21 @@ fn rule(m: &AppModel) -> Rule {
     clock::zone(&m.settings.time_zone).unwrap_or(Rule::UTC)
 }
 
-/// The status-bar clock, e.g. "9:41" or "21:41".
+/// The status-bar clock, e.g. "9:41" or "21:41". Made once a minute: every
+/// other call (each main-loop pass, each skin element) reuses it.
 pub(crate) fn text(ui: &Ui, m: &AppModel) -> Option<String> {
     let now = now(ui);
-    if now < CLOCK_SET_AFTER {
-        return None;
+    let zone = &m.settings.time_zone;
+    let minute = now.div_euclid(60);
+    if let Some((z, at, text)) = &*ui.clock_cache.borrow() {
+        if z == zone && *at == minute {
+            return text.clone();
+        }
     }
-    let local = rule(m).local(now);
-    Some(clock::clock_text(
-        &local,
-        clock::twelve_hour(&m.settings.time_zone),
-    ))
+    let text = (now >= CLOCK_SET_AFTER)
+        .then(|| clock::clock_text(&rule(m).local(now), clock::twelve_hour(zone)));
+    *ui.clock_cache.borrow_mut() = Some((zone.clone(), minute, text.clone()));
+    text
 }
 
 /// The zones in picker order: by offset now, then by city.
@@ -56,6 +60,18 @@ pub(crate) fn summary(m: &AppModel) -> String {
 
 pub(crate) fn rows(ui: &Ui, m: &AppModel) -> Vec<Item> {
     let chosen = m.settings.time_zone.as_str();
+    let minute = now(ui).div_euclid(60);
+    if let Some((z, at, rows)) = &*ui.zone_rows.borrow() {
+        if z == chosen && *at == minute {
+            return rows.clone();
+        }
+    }
+    let rows = build_rows(ui, chosen);
+    *ui.zone_rows.borrow_mut() = Some((chosen.to_owned(), minute, rows.clone()));
+    rows
+}
+
+fn build_rows(ui: &Ui, chosen: &str) -> Vec<Item> {
     let mut rows = vec![Item::new("UTC", "tz_set:UTC").with_kind(RowKind::Check(chosen == "UTC"))];
     rows.extend(ordered(now(ui)).into_iter().map(|(name, offset)| {
         let (city, region) = zone_label(name);

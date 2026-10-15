@@ -144,6 +144,17 @@
     "size": 16,
     "icon": "bluetooth",
     "color": "dim"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 32,
+    "y": 0,
+    "w": 60,
+    "h": 30,
+    "text": "{clock}",
+    "font": "title",
+    "color": "text"
    }
   ],
   "title": [
@@ -155,7 +166,19 @@
     "h": 30,
     "text": "{screen}",
     "font": "title",
-    "align": "center"
+    "align": "center",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 100,
+    "y": 0,
+    "w": 280,
+    "h": 30,
+    "text": "{screen}",
+    "font": "title",
+    "align": "center",
+    "if": "has_clock"
    }
   ],
   "row": [

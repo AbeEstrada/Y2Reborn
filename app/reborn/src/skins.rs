@@ -173,6 +173,29 @@ mod tests {
     }
 
     #[test]
+    fn every_shipped_skin_loads_cleanly_and_shows_the_clock() {
+        // Pictures by their PNG header size; the layouts are what is checked.
+        let png = |path: &Path, _: u32, _: u32| -> Result<(u32, u32, Vec<u8>), String> {
+            let b = fs::read(path).map_err(|e| e.to_string())?;
+            let dim = |at: usize| u32::from_be_bytes(b[at..at + 4].try_into().unwrap());
+            let (w, h) = (dim(16), dim(20));
+            Ok((w, h, [0, 0, 0, 255].repeat((w * h) as usize)))
+        };
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skins");
+        let found = scan(&[root]);
+        assert_eq!(found.len(), 15);
+        for info in found {
+            let skin = load(&info.dir, &info.id, &png).unwrap();
+            assert!(skin.warnings.is_empty(), "{}: {:?}", info.id, skin.warnings);
+            assert!(
+                manifest(&info.dir).unwrap().contains("{clock}"),
+                "{} has no clock",
+                info.id
+            );
+        }
+    }
+
+    #[test]
     fn files_stay_inside_the_skin_folder() {
         let t = temp("paths");
         let dir = t.0.join("s");

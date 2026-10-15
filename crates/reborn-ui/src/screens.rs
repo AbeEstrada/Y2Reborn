@@ -647,7 +647,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
         Screen::Theme => "Theme".into(),
-        Screen::TimeZone => "Time zone".into(),
+        Screen::TimeZone => "Time Zone".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::SettingsSystem => "Service".into(),

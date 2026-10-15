@@ -94,6 +94,17 @@
     "size": 12,
     "icon": "pause",
     "color": "muted"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 36,
+    "y": 0,
+    "w": 60,
+    "h": 34,
+    "text": "{clock}",
+    "font": "small",
+    "color": "muted"
    }
   ],
   "title": [

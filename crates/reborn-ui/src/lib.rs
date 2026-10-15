@@ -374,6 +374,12 @@ pub struct Ui {
     pub clock_fixed: Option<i64>,
     /// The status-bar clock as last drawn; a new minute redraws.
     clock_shown: Option<String>,
+    /// The clock text for (zone, minute): the zone's rule is looked up and
+    /// the text made once a minute, not on every pass of the main loop.
+    clock_cache: RefCell<Option<(String, i64, Option<String>)>>,
+    /// The time zone picker's rows for (zone, minute): several hundred
+    /// zones parsed and sorted once, not on every frame.
+    zone_rows: RefCell<Option<(String, i64, Vec<Item>)>>,
     /// Cover Flow's scroll position and the cover's flight to the album page.
     flow: RefCell<flow::Flow>,
     transition: std::cell::Cell<Option<flow::Transition>>,

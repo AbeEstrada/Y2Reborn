@@ -128,6 +128,17 @@
     "w": 28,
     "h": 14,
     "image": "battery"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 32,
+    "y": 0,
+    "w": 60,
+    "h": 30,
+    "text": "{clock}",
+    "font": "bartitle",
+    "color": "bar_text"
    }
   ],
   "title": [
@@ -140,7 +151,20 @@
     "text": "{screen}",
     "font": "bartitle",
     "color": "bar_text",
-    "align": "center"
+    "align": "center",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 100,
+    "y": 0,
+    "w": 280,
+    "h": 30,
+    "text": "{screen}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "if": "has_clock"
    }
   ],
   "row": [

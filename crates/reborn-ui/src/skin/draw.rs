@@ -105,6 +105,7 @@ impl Scene<'_> {
             Flag::Crossfade => s.crossfade_ms > 0,
             Flag::Normalise => s.replay_gain != reborn_core::ReplayGainMode::Off,
             Flag::HasStatus => self.page.and_then(|p| p.status.as_ref()).is_some(),
+            Flag::HasClock => self.ui.clock(m).is_some(),
             Flag::HasBody => !self.text(Var::PageBody, None).is_empty(),
             Flag::HasTitle => !screen_title(m).is_empty(),
             Flag::HasAction => self.empty_copy().2.is_some(),
@@ -186,6 +187,7 @@ impl Scene<'_> {
                 .filter(|p| *p <= 100)
                 .map(|p| p.to_string())
                 .unwrap_or_default(),
+            Var::Clock => self.ui.clock(m).unwrap_or_default(),
             Var::Volume => m.settings.volume.min(100).to_string(),
             Var::Status => self.page.and_then(|p| p.status.clone()).unwrap_or_default(),
             Var::PageTitle => self

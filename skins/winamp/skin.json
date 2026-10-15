@@ -85,7 +85,17 @@
     "y": 0,
     "w": 120,
     "h": 24,
-    "image": "stripes"
+    "image": "stripes",
+    "if": "!has_clock"
+   },
+   {
+    "type": "image",
+    "x": 62,
+    "y": 0,
+    "w": 66,
+    "h": 24,
+    "image": "stripes",
+    "if": "has_clock"
    },
    {
     "type": "image",
@@ -133,6 +143,27 @@
     "w": 28,
     "h": 14,
     "image": "battery"
+   },
+   {
+    "type": "rect",
+    "if": "has_clock",
+    "x": 8,
+    "y": 4,
+    "w": 48,
+    "h": 16,
+    "color": "#000000"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 8,
+    "y": 4,
+    "w": 48,
+    "h": 16,
+    "text": "{clock}",
+    "font": "small",
+    "color": "lcd",
+    "align": "center"
    }
   ],
   "title": [

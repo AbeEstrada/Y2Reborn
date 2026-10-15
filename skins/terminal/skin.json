@@ -76,7 +76,20 @@
     "text": "[{battery}%]",
     "font": "small",
     "color": "text",
-    "align": "right"
+    "align": "right",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 290,
+    "y": 0,
+    "w": 182,
+    "h": 29,
+    "text": "[{clock}] [{battery}%]",
+    "font": "small",
+    "color": "text",
+    "align": "right",
+    "if": "has_clock"
    }
   ],
   "title": [
@@ -88,7 +101,19 @@
     "h": 29,
     "text": "reborn:~/{screen} $",
     "font": "bartitle",
-    "color": "bar_text"
+    "color": "bar_text",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 10,
+    "y": 0,
+    "w": 280,
+    "h": 29,
+    "text": "reborn:~/{screen} $",
+    "font": "bartitle",
+    "color": "bar_text",
+    "if": "has_clock"
    }
   ],
   "row": [

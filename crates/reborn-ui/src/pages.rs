@@ -146,7 +146,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 .with_kind(RowKind::Chevron),
             );
             rows.push(
-                row("Time zone", "time_zone", crate::time_zone::summary(m))
+                row("Time Zone", "time_zone", crate::time_zone::summary(m))
                     .with_kind(RowKind::Chevron),
             );
             Page::rows(rows)

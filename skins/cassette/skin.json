@@ -118,6 +118,18 @@
     "size": 14,
     "icon": "pause",
     "color": "cream"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 32,
+    "y": 0,
+    "w": 64,
+    "h": 32,
+    "text": "{clock}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "tracking": 1
    }
   ],
   "title": [
@@ -132,7 +144,22 @@
     "color": "bar_text",
     "align": "center",
     "case": "upper",
-    "tracking": 2
+    "tracking": 2,
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 104,
+    "y": 0,
+    "w": 272,
+    "h": 32,
+    "text": "{screen}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "align": "center",
+    "case": "upper",
+    "tracking": 2,
+    "if": "has_clock"
    }
   ],
   "row": [

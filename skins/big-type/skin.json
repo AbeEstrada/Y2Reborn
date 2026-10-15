@@ -71,16 +71,50 @@
     "text": "{battery}%",
     "font": "bartitle",
     "color": "text",
-    "align": "right"
+    "align": "right",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 376,
+    "y": 0,
+    "w": 90,
+    "h": 42,
+    "text": "{battery}%",
+    "font": "bartitle",
+    "color": "text",
+    "align": "right",
+    "if": "has_clock"
    },
    {
     "type": "icon",
-    "if": "charging",
+    "if": "charging & !has_clock",
     "x": 330,
     "y": 10,
     "size": 22,
     "icon": "bolt",
     "color": "yellow"
+   },
+   {
+    "type": "icon",
+    "if": "charging & has_clock",
+    "x": 240,
+    "y": 10,
+    "size": 22,
+    "icon": "bolt",
+    "color": "yellow"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 268,
+    "y": 0,
+    "w": 98,
+    "h": 42,
+    "text": "{clock}",
+    "font": "bartitle",
+    "color": "text",
+    "align": "right"
    }
   ],
   "title": [
@@ -92,7 +126,19 @@
     "h": 42,
     "text": "{screen}",
     "font": "bartitle",
-    "color": "bar_text"
+    "color": "bar_text",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 14,
+    "y": 0,
+    "w": 224,
+    "h": 42,
+    "text": "{screen}",
+    "font": "bartitle",
+    "color": "bar_text",
+    "if": "has_clock"
    }
   ],
   "row": [

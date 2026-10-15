@@ -78,6 +78,18 @@
     "size": 12,
     "icon": "play",
     "color": "magenta"
+   },
+   {
+    "type": "text",
+    "if": "has_clock",
+    "x": 190,
+    "y": 0,
+    "w": 100,
+    "h": 26,
+    "text": "{clock}",
+    "font": "small",
+    "color": "muted",
+    "align": "center"
    }
   ],
   "title": [
