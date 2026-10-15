@@ -294,6 +294,7 @@ fn root_is_a_small_music_player_menu() {
             "Genres",
             "Songs",
             "Folders",
+            "Playlists",
             "Search",
             "Radio",
             "Settings"
@@ -2441,4 +2442,353 @@ fn now_playing_radio_offers_favorite_and_stop_only() {
         ui.model_action(&mut m, Action::Select),
         Effect::Radio(RadioRequest::ToggleFavoriteCurrent)
     );
+}
+
+fn playlist(path: &str, locations: &[&str]) -> reborn_core::playlist::Playlist {
+    reborn_core::playlist::Playlist {
+        path: path.into(),
+        name: std::path::Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        entries: locations
+            .iter()
+            .map(|l| reborn_core::playlist::PlaylistEntry {
+                location: (*l).into(),
+                ..Default::default()
+            })
+            .collect(),
+        stamp: (1, 1),
+        ..Default::default()
+    }
+}
+
+fn playlists_app() -> (Ui, AppModel) {
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Playlists);
+    m.settings.music_directory = "/data/music".into();
+    ui.playlists.set_lists(vec![
+        playlist(
+            "/data/music/Playlists/Road Trip.m3u8",
+            &[
+                "../album0/song1.flac",
+                r"C:\PC\Music\album1\song4.flac",
+                "../gone/Lost Song.mp3",
+                "../album0/song2.flac",
+            ],
+        ),
+        playlist(
+            "/data/music/Playlists/Favorites.m3u8",
+            &["../album2/song7.flac"],
+        ),
+        playlist("/data/music/Mixes/another.m3u", &[]),
+    ]);
+    (ui, m)
+}
+
+#[test]
+fn playlists_section_lists_favorites_first_then_a_to_z_and_opens_a_playlist() {
+    let (mut ui, mut m) = playlists_app();
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks.clone())
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        labels,
+        ["New Playlist", "Favorites", "another", "Road Trip"]
+    );
+    select_key(&mut ui, &mut m, "playlist:2");
+    assert_eq!(m.screen, Screen::Playlist);
+    let rows = ui.rows(&m, &m.library.tracks.clone());
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "pl_play",
+            "pl_shuffle",
+            "pl_entry:0",
+            "pl_entry:1",
+            "pl_entry:2",
+            "pl_entry:3"
+        ]
+    );
+    assert_eq!(rows[2].art, Some(1), "relative path");
+    assert_eq!(rows[3].art, Some(4), "a Windows path from a computer");
+    assert_eq!(rows[4].label, "Lost Song");
+    assert_eq!(rows[4].secondary, "Not on the player");
+    // Play: the songs it has, in order; the missing one is skipped.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "pl_play"),
+        Effect::PlayCollection {
+            selected: 1,
+            members: vec![1, 4, 2],
+            shuffle: false
+        }
+    );
+    m.screen = Screen::Playlist;
+    m.navigation.filter = "/data/music/Playlists/Road Trip.m3u8".into();
+    assert_eq!(
+        select_key(&mut ui, &mut m, "pl_entry:2"),
+        Effect::None,
+        "missing: a notice"
+    );
+}
+
+#[test]
+fn songs_are_removed_and_moved_in_their_playlist_by_place() {
+    use reborn_core::{playlist::PlaylistEdit, PlaylistRequest};
+    let (mut ui, mut m) = playlists_app();
+    m.screen = Screen::Playlist;
+    m.navigation.filter = "/data/music/Playlists/Road Trip.m3u8".into();
+    let path = std::path::PathBuf::from(&m.navigation.filter);
+    // Hold Select on the third song: Remove from Playlist removes that entry.
+    m.navigation.focus = 4;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert!(options.contains(&"ple_move".to_owned()) && options.contains(&"ple_remove".to_owned()));
+    m.navigation.modal_focus = options.iter().position(|k| k == "ple_remove").unwrap();
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Playlist(Box::new(PlaylistRequest::Edit {
+            path: path.clone(),
+            edit: PlaylistEdit::Remove {
+                index: 2,
+                location: "../gone/Lost Song.mp3".into()
+            },
+            create: false,
+        }))
+    );
+    // Move the first song two places down with the wheel; Select drops it.
+    m.navigation.focus = 2;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = options.iter().position(|k| k == "ple_move").unwrap();
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.playlists.moving, Some((0, 0)));
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    let keys: Vec<_> = ui
+        .rows(&m, &m.library.tracks.clone())
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert_eq!(
+        &keys[2..],
+        ["pl_entry:1", "pl_entry:2", "pl_entry:0", "pl_entry:3"]
+    );
+    assert_eq!(m.navigation.focus, 4, "the moving song keeps the focus");
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Playlist(Box::new(PlaylistRequest::Edit {
+            path,
+            edit: PlaylistEdit::Move {
+                from: 0,
+                to: 2,
+                location: "../album0/song1.flac".into()
+            },
+            create: false,
+        }))
+    );
+    assert_eq!(ui.playlists.moving, None);
+    // Back while moving puts it back without a change.
+    ui.playlists.moving = Some((1, 3));
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!((ui.playlists.moving, m.screen), (None, Screen::Playlist));
+}
+
+#[test]
+fn add_to_playlist_from_a_song_new_playlist_and_the_favorites_heart() {
+    use reborn_core::{playlist::PlaylistEdit, PlaylistRequest};
+    let (mut ui, mut m) = playlists_app();
+    m.screen = Screen::Tracks;
+    m.navigation.filter.clear();
+    let tracks = m.library.tracks.clone();
+    let row = ui
+        .rows(&m, &tracks)
+        .iter()
+        .position(|r| r.key == "track:5")
+        .unwrap();
+    m.navigation.focus = row;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert!(options.contains(&"fav_toggle".to_owned()));
+    m.navigation.modal_focus = options.iter().position(|k| k == "add_playlist").unwrap();
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.navigation.modal, Some(reborn_core::Modal::PlaylistPicker));
+    let picks: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        picks,
+        ["New Playlist…", "Favorites", "another", "Road Trip"]
+    );
+    m.navigation.modal_focus = 3;
+    let effect = ui.model_action(&mut m, Action::Select);
+    assert_eq!(
+        effect,
+        Effect::Playlist(Box::new(PlaylistRequest::Edit {
+            path: "/data/music/Playlists/Road Trip.m3u8".into(),
+            edit: PlaylistEdit::Append(vec![reborn_core::playlist::PlaylistEntry {
+                location: "../album1/song5.flac".into(),
+                info: Some(format!(
+                    "#EXTINF:200,{} - Song 5",
+                    m.library.tracks[5].artist
+                )),
+                extra: vec![],
+            }]),
+            create: true,
+        }))
+    );
+    // The picker now offers Road Trip first (used last).
+    ui.open_picker(&mut m, vec![5]);
+    let picks: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(picks[1], "Road Trip");
+    // New Playlist…: name it on the keyboard; the song goes in.
+    m.navigation.modal_focus = 0;
+    ui.model_action(&mut m, Action::Select);
+    assert!(ui.keyboard.is_some());
+    ui.keyboard.as_mut().unwrap().text = "Late Night".into();
+    assert_eq!(
+        ui.model_action(&mut m, Action::ContextMenu),
+        Effect::Playlist(Box::new(PlaylistRequest::Create {
+            name: "Late Night".into(),
+            tracks: vec![5]
+        }))
+    );
+    // The heart: song 7 is a favorite (removed), song 5 is not (added).
+    assert!(ui.is_favorite_track(&m, &tracks, 7));
+    assert_eq!(
+        ui.toggle_favorite_track(&m, &tracks, 7),
+        Effect::Playlist(Box::new(PlaylistRequest::Edit {
+            path: "/data/music/Playlists/Favorites.m3u8".into(),
+            edit: PlaylistEdit::RemoveLocations(vec!["../album2/song7.flac".into()]),
+            create: true,
+        }))
+    );
+    assert!(matches!(
+        ui.toggle_favorite_track(&m, &tracks, 5),
+        Effect::Playlist(request) if matches!(*request, PlaylistRequest::Edit { edit: PlaylistEdit::Append(_), .. })
+    ));
+}
+
+#[test]
+fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
+    use reborn_core::PlaylistRequest;
+    let (mut ui, mut m) = playlists_app();
+    // Favorites (row 1): no Rename, no Delete.
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(options, ["Play Next", "Add to Queue", "Duplicate"]);
+    ui.model_action(&mut m, Action::Back);
+    m.navigation.focus = 3;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = options.iter().position(|k| k == "pl_delete").unwrap();
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(
+        m.navigation.modal,
+        Some(reborn_core::Modal::Confirm(
+            reborn_core::ConfirmAction::DeletePlaylist
+        ))
+    );
+    let confirm: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = confirm.iter().position(|k| k != "cancel").unwrap();
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Playlist(Box::new(PlaylistRequest::Delete(
+            "/data/music/Playlists/Road Trip.m3u8".into()
+        )))
+    );
+}
+
+/// Timings for a 20 000-entry playlist on a 20 000-song library
+/// (`cargo test -p reborn-ui --release -- --ignored --nocapture playlist_speed`).
+#[test]
+#[ignore]
+fn playlist_speed_on_a_large_playlist() {
+    use std::time::Instant;
+    let tracks: Vec<Track> = (0..20_000)
+        .map(|i| Track {
+            id: i,
+            title: format!("Song {i}"),
+            artist: format!("Artist {}", i % 400),
+            album: format!("Album {}", i / 10),
+            path: format!(
+                "/data/music/Artist {}/Album {}/{i:05} Song.flac",
+                i % 400,
+                i / 10
+            )
+            .into(),
+            duration_ms: 200_000,
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    let locations: Vec<String> = (0..20_000)
+        .map(|i| match i % 3 {
+            0 => format!("../Artist {}/Album {}/{i:05} Song.flac", i % 400, i / 10),
+            1 => format!(
+                r"C:\Users\me\Music\Artist {}\Album {}\{i:05} Song.flac",
+                i % 400,
+                i / 10
+            ),
+            _ => format!("../Gone/{i} Missing.mp3"),
+        })
+        .collect();
+    let refs: Vec<&str> = locations.iter().map(String::as_str).collect();
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Playlist);
+    m.library.tracks = tracks;
+    m.settings.music_directory = "/data/music".into();
+    m.navigation.filter = "/data/music/Playlists/Big.m3u8".into();
+    ui.playlists
+        .set_lists(vec![playlist("/data/music/Playlists/Big.m3u8", &refs)]);
+    let tracks = m.library.tracks.clone();
+    let started = Instant::now();
+    let count = ui.row_count(&m, &tracks);
+    eprintln!(
+        "first open (match + rows): {:?} for {count} rows",
+        started.elapsed()
+    );
+    let started = Instant::now();
+    for _ in 0..10 {
+        let _ = ui.row_count(&m, &tracks);
+        let _ = ui.visible_rows(&m, &tracks, 5_000, 6);
+    }
+    eprintln!("a frame's lookups after that: {:?}", started.elapsed() / 10);
+    let resolved = ui.resolved(&tracks, &ui.playlists.lists[0].clone());
+    assert_eq!(resolved.iter().filter(|r| r.is_some()).count(), 13_334);
 }

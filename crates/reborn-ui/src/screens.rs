@@ -74,6 +74,9 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
+        Screen::Playlists | Screen::Playlist => {
+            crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
+        }
         Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
             crate::views_radio::screen(&mut c, ui, m, tracks, interactive)
         }
@@ -117,6 +120,9 @@ fn native_screen(
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
+        Screen::Playlists | Screen::Playlist => {
+            crate::views_playlists::screen(c, ui, m, tracks, has_art, interactive)
+        }
         Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
             crate::views_radio::screen(c, ui, m, tracks, interactive)
         }
@@ -163,6 +169,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::RadioStations => keys!("radio_stations"),
         Screen::RadioCategories => keys!("radio_categories"),
         Screen::RadioInfo => keys!("radio_info"),
+        Screen::Playlists => &["playlists", "list"],
+        Screen::Playlist => &["playlist", "list"],
         Screen::Bluetooth => keys!("bluetooth"),
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
@@ -194,6 +202,8 @@ fn skin_page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Option<Page> {
         | Screen::Genres
         | Screen::Tracks
         | Screen::Search
+        | Screen::Playlists
+        | Screen::Playlist
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
@@ -621,6 +631,11 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::RadioStations => "Stations".into(),
         Screen::RadioCategories => "Radio".into(),
         Screen::RadioInfo => "Station Info".into(),
+        Screen::Playlists => "Playlists".into(),
+        Screen::Playlist => std::path::Path::new(&m.navigation.filter)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Playlist".into()),
         Screen::Bluetooth => "Bluetooth".into(),
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),

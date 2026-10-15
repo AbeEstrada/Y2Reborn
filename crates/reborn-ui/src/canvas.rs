@@ -60,6 +60,9 @@ pub enum Icon {
     Globe,
     Trend,
     Broadcast,
+    Heart,
+    HeartOn,
+    Plus,
 }
 
 impl Icon {
@@ -114,6 +117,9 @@ impl Icon {
             Self::Globe => mask::GLOBE,
             Self::Trend => mask::TREND,
             Self::Broadcast => mask::BROADCAST,
+            Self::Heart => mask::HEART,
+            Self::HeartOn => mask::HEART_ON,
+            Self::Plus => mask::PLUS,
         }
     }
 }

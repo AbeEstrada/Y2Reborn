@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod platform;
+pub mod playlist;
 pub mod sort;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -413,6 +414,33 @@ pub fn capitalise(text: &str) -> String {
         .join(" ")
 }
 
+/// What the Playlist screens ask the player for; files are read and written
+/// off the UI thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaylistRequest {
+    /// Find and read every playlist file again.
+    Refresh,
+    /// A new playlist in the Playlists folder on Internal Storage, holding
+    /// these library songs (indices into the library).
+    Create {
+        name: String,
+        tracks: Vec<usize>,
+    },
+    /// Change a playlist; `create` makes the file first if it is missing
+    /// (Favorites).
+    Edit {
+        path: std::path::PathBuf,
+        edit: playlist::PlaylistEdit,
+        create: bool,
+    },
+    Rename {
+        path: std::path::PathBuf,
+        name: String,
+    },
+    Duplicate(std::path::PathBuf),
+    Delete(std::path::PathBuf),
+}
+
 /// What the Radio screens ask the player for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioRequest {
@@ -560,6 +588,10 @@ pub enum Screen {
     Search,
     /// One station's details (logo, country, language, genres, format).
     RadioInfo,
+    /// Every playlist file, Favorites first.
+    Playlists,
+    /// One playlist; the navigation filter holds its file's path.
+    Playlist,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -591,6 +623,8 @@ pub enum Modal {
     CodecPicker,
     EqBand(usize),
     Confirm(ConfirmAction),
+    /// "Add to Playlist": the playlists, the last used first, and New.
+    PlaylistPicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,6 +639,7 @@ pub enum ConfirmAction {
     ForgetAllWifi,
     ForgetAllBluetooth,
     ClearCache,
+    DeletePlaylist,
     Platform(PlatformTask),
 }
 
@@ -795,6 +830,7 @@ pub enum Effect {
     WifiDisconnect,
     StopPlayback,
     Radio(RadioRequest),
+    Playlist(Box<PlaylistRequest>),
     SetCodecPreference(CodecPreference),
     Play(usize),
     PlayShuffled(usize),

@@ -374,7 +374,14 @@ pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String 
 
 // ------------------------------------------------------------ album / artist
 
-fn pill_row(c: &mut Canvas, ui: &Ui, x: f32, y: f32, labels: &[(&str, bool)], interactive: bool) {
+pub(crate) fn pill_row(
+    c: &mut Canvas,
+    ui: &Ui,
+    x: f32,
+    y: f32,
+    labels: &[(&str, bool)],
+    interactive: bool,
+) {
     let accent = ui.accent();
     let mut x = x;
     for (label, focused) in labels {

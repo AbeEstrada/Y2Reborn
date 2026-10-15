@@ -12,6 +12,9 @@ mod fontdata;
 pub mod keyboard;
 mod maskdata;
 pub mod pages;
+pub mod playlist_index;
+mod playlists_ui;
+pub use playlists_ui::{is_favorites as playlists_is_favorites, PlaylistsView};
 mod screens;
 mod search;
 pub mod skin;
@@ -20,6 +23,7 @@ pub mod theme;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
+mod views_playlists;
 mod views_radio;
 mod views_settings;
 mod views_system;
@@ -321,6 +325,11 @@ pub struct Ui {
     pub pairing_focus: usize,
     /// The full-screen keyboard, while it is open.
     pub keyboard: Option<keyboard::Keyboard>,
+    /// Playlist files as read, and what the Playlist screens are doing.
+    pub playlists: playlists_ui::PlaylistsView,
+    /// Which library song each playlist entry names.
+    playlist_index: RefCell<playlist_index::Index>,
+    playlist_rows_cache: RefCell<Option<(playlists_ui::RowsKey, Vec<Item>)>>,
     /// The last station and library searches, offered again when reopened.
     radio_query: String,
     library_query: String,
@@ -917,6 +926,7 @@ impl Ui {
             | Screen::Tracks
             | Screen::Search => self.catalog_rows(m, tracks),
             Screen::Queue => self.queue_rows(m),
+            Screen::Playlists | Screen::Playlist => self.playlist_rows(m, tracks),
             Screen::Diagnostics => diagnostics::root(m),
             Screen::DiagnosticSection => diagnostics::section_rows(m, &m.navigation.filter),
             Screen::ValueDetail => vec![Item::new("Back", "back")],
@@ -964,6 +974,8 @@ impl Ui {
             c.rows.len()
         } else if m.screen == Screen::Queue {
             m.queue.len()
+        } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            self.with_playlist_rows(m, tracks, <[Item]>::len)
         } else {
             self.rows(m, tracks).len()
         }
@@ -998,6 +1010,8 @@ impl Ui {
                 )
                 .with_secondary(display_or_unknown(&t.artist))
             })
+        } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            self.with_playlist_rows(m, tracks, |rows| rows.get(index).cloned())
         } else {
             self.rows(m, tracks).get(index).cloned()
         }
@@ -1013,6 +1027,10 @@ impl Ui {
             (offset..offset + count)
                 .filter_map(|i| self.row_at(m, tracks, i))
                 .collect()
+        } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            self.with_playlist_rows(m, tracks, |rows| {
+                rows.iter().skip(offset).take(count).cloned().collect()
+            })
         } else {
             self.rows(m, tracks)
                 .into_iter()
@@ -1094,6 +1112,9 @@ impl Ui {
                     "Off"
                 }),
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
+                self.favorite_row(m, tracks, self.current_index(m, tracks)),
+                Item::new("Add to Playlist…", "add_playlist"),
+                Item::new("Save Queue as Playlist", "save_queue"),
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
             ];
@@ -1104,10 +1125,18 @@ impl Ui {
                 .and_then(|target| self.row_at(m, tracks, target).map(|item| item.key))
         });
         let key = selected_key.as_deref();
-        if key.is_some_and(|key| key.starts_with("track:")) {
+        if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            return self.playlist_context_rows(m, key.unwrap_or(""));
+        }
+        if let Some(index) = key
+            .and_then(|key| key.strip_prefix("track:"))
+            .and_then(|i| i.parse::<usize>().ok())
+        {
             return vec![
                 Item::new("Play Next", "play_next"),
                 Item::new("Add to Queue", "add_queue"),
+                Item::new("Add to Playlist…", "add_playlist"),
+                self.favorite_row(m, tracks, Some(index)),
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
             ];
@@ -1118,6 +1147,7 @@ impl Ui {
                 Item::new("Shuffle", "collection_shuffle"),
                 Item::new("Play Next", "collection_next"),
                 Item::new("Add to Queue", "collection_queue"),
+                Item::new("Add to Playlist…", "collection_playlist"),
             ];
         }
         match m.screen {
@@ -1229,6 +1259,7 @@ impl Ui {
     fn modal_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         match m.navigation.modal {
             Some(Modal::ContextMenu) => self.context_rows(m, tracks),
+            Some(Modal::PlaylistPicker) => self.picker_rows(m),
             Some(Modal::OutputPicker) => {
                 let mut rows = vec![Item::new("Headphone Jack", "output:wired").with_secondary(
                     if m.output == AudioOutput::Wired {
@@ -1317,6 +1348,7 @@ impl Ui {
                 );
             }
             Some(Modal::Confirm(action)) => confirm_copy(action),
+            Some(Modal::PlaylistPicker) => ("Add to Playlist", "Songs are added at the end."),
             Some(Modal::ContextMenu) => {
                 let key = m.navigation.context_key.as_deref();
                 let named = match m.screen {
@@ -1330,6 +1362,11 @@ impl Ui {
                             .map(|n| n.ssid.clone())
                     }),
                     Screen::Queue => Some("Queue".to_owned()),
+                    Screen::Playlists => key
+                        .and_then(|k| k.strip_prefix("playlist:"))
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .and_then(|i| self.playlists.lists.get(i))
+                        .map(|p| p.name.clone()),
                     Screen::RadioStations => key
                         .and_then(|k| k.strip_prefix("station:"))
                         .and_then(|i| i.parse::<usize>().ok())
@@ -1450,6 +1487,11 @@ impl Ui {
         }
         if self.keyboard.is_some() {
             return self.entry(m, tracks, action);
+        }
+        if m.screen == Screen::Playlist && m.navigation.modal.is_none() {
+            if let Some(effect) = self.moving_action(m, tracks, action) {
+                return effect;
+            }
         }
         match action {
             Action::Home => {
@@ -1663,6 +1705,14 @@ impl Ui {
         }
         if key == "shuffle:collection" {
             return self.play_filtered(m, tracks, true);
+        }
+        if key == "playlists" {
+            Self::go(m, Screen::Playlists, "");
+            self.playlists.loading = !self.playlists.loaded;
+            return Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Refresh));
+        }
+        if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            return self.playlist_select(m, tracks, key);
         }
         if key == "search" || key == "search_edit" {
             self.open_library_search(m, tracks);
@@ -2106,12 +2156,19 @@ impl Ui {
                     ConfirmAction::ForgetAllWifi => Effect::ForgetAllWifi,
                     ConfirmAction::ForgetAllBluetooth => Effect::ForgetAllBluetooth,
                     ConfirmAction::ClearCache => Effect::ClearCache,
+                    ConfirmAction::DeletePlaylist => match self.playlists.target.take() {
+                        Some(path) => {
+                            Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Delete(path)))
+                        }
+                        None => Effect::None,
+                    },
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
                     ConfirmAction::Platform(task) => Effect::Platform(task),
                 }
             }
             Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),
+            Some(Modal::PlaylistPicker) => self.picker_action(m, tracks, &key),
             None => Effect::None,
         }
     }
@@ -2136,6 +2193,53 @@ impl Ui {
         let station = source_key
             .strip_prefix("station:")
             .and_then(|value| value.parse::<usize>().ok());
+        if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+            if let Some(effect) = self.playlist_context_action(m, tracks, &source_key, menu_key) {
+                return effect;
+            }
+        }
+        match menu_key {
+            "add_playlist" => {
+                Self::close_modal(m);
+                if let Some(t) = track_index {
+                    self.open_picker(m, vec![t]);
+                }
+                return Effect::None;
+            }
+            "collection_playlist" => {
+                Self::close_modal(m);
+                let members = self.filtered_indices(m, tracks);
+                self.open_picker(m, members);
+                return Effect::None;
+            }
+            "fav_toggle" => {
+                Self::close_modal(m);
+                return match track_index {
+                    Some(t) => self.toggle_favorite_track(m, tracks, t),
+                    None => Effect::None,
+                };
+            }
+            "save_queue" => {
+                Self::close_modal(m);
+                self.playlists.pending = m
+                    .queue
+                    .iter()
+                    .filter_map(|q| {
+                        tracks
+                            .iter()
+                            .position(|t| t.id == q.id && t.source_id == q.source_id)
+                    })
+                    .collect();
+                if self.playlists.pending.is_empty() {
+                    self.flash("The queue has no songs to save");
+                } else {
+                    self.keyboard =
+                        Some(keyboard::Keyboard::new(keyboard::Purpose::PlaylistNew, ""));
+                }
+                return Effect::None;
+            }
+            _ => {}
+        }
         match menu_key {
             "radio_play" if station.is_some() => {
                 Self::close_modal(m);
@@ -2313,6 +2417,14 @@ impl Ui {
             Outcome::Done => {
                 let text = k.text.trim().to_owned();
                 match k.purpose.clone() {
+                    purpose @ (Purpose::PlaylistNew | Purpose::PlaylistRename) => {
+                        if text.is_empty() {
+                            self.flash("Type a name for the playlist");
+                            return Effect::None;
+                        }
+                        self.keyboard = None;
+                        self.playlist_named(&purpose, text)
+                    }
                     Purpose::WifiPassword { ssid } => {
                         // WPA passphrases keep their spaces.
                         if k.text.len() < 8 {
@@ -2359,6 +2471,27 @@ impl Ui {
                 }
             }
         }
+    }
+
+    /// The library index of the song playing.
+    fn current_index(&self, m: &AppModel, tracks: &[Track]) -> Option<usize> {
+        let current = m.current()?;
+        tracks
+            .iter()
+            .position(|t| t.id == current.id && t.source_id == current.source_id)
+    }
+
+    /// The heart in a song's menu.
+    fn favorite_row(&self, m: &AppModel, tracks: &[Track], index: Option<usize>) -> Item {
+        let favorite = index.is_some_and(|i| self.is_favorite_track(m, tracks, i));
+        Item::new(
+            if favorite {
+                "Remove from Favorites"
+            } else {
+                "Add to Favorites"
+            },
+            "fav_toggle",
+        )
     }
 
     /// Open the library search's keyboard with the last search. The search
@@ -2517,6 +2650,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::ForgetAllBluetooth => "Remove All",
         ConfirmAction::ResetSettings => "Reset",
         ConfirmAction::ClearCache => "Clear",
+        ConfirmAction::DeletePlaylist => "Delete",
         ConfirmAction::PowerOff => "Power Off",
         ConfirmAction::Reboot => "Restart",
         ConfirmAction::Platform(PlatformTask::UpdateApply) => "Restart and Install",
@@ -2528,6 +2662,10 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
 
 fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
     match action {
+        ConfirmAction::DeletePlaylist => (
+            "Delete This Playlist?",
+            "The playlist file is deleted from the player. Your songs stay.",
+        ),
         ConfirmAction::ClearQueue => (
             "Clear Upcoming Songs?",
             "The current song keeps playing. Songs after it are removed from the queue.",

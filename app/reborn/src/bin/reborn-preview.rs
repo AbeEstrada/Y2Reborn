@@ -869,6 +869,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.playback = reborn_core::PlaybackState::Playing;
         }
     );
+    // Playlists (Beta 6)
+    let lists = || {
+        let entry = |l: &str| reborn_core::playlist::PlaylistEntry {
+            location: l.into(),
+            ..Default::default()
+        };
+        let list = |path: &str, entries: Vec<reborn_core::playlist::PlaylistEntry>| {
+            reborn_core::playlist::Playlist {
+                path: path.into(),
+                name: std::path::Path::new(path)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                entries,
+                stamp: (1, 1),
+                ..Default::default()
+            }
+        };
+        vec![
+            list(
+                "/media/internal/music/Playlists/Favorites.m3u8",
+                vec![
+                    entry("../Quiet Harbour/Low Tide/01.flac"),
+                    entry("../Marlowe/Slow Light/00.flac"),
+                ],
+            ),
+            list(
+                "/media/internal/music/Playlists/Road Trip.m3u8",
+                vec![
+                    entry("../Northark/Night Drive/00.flac"),
+                    entry(r"C:\Users\me\Music\Verdant\Halcyon Days\01.flac"),
+                    entry("../Lost/Album/Missing Song.mp3"),
+                    entry("../Quiet Harbour/Low Tide/02.flac"),
+                    entry("../Marlowe/Slow Light/02.flac"),
+                    entry("../Northark/Echoes of a Higher Place/00.flac"),
+                ],
+            ),
+            list(
+                "/media/internal/music/Playlists/Focus.m3u8",
+                vec![
+                    entry("../Quiet Harbour/Low Tide/00.flac"),
+                    entry("../Verdant/Halcyon Days/02.flac"),
+                ],
+            ),
+            list("/media/sd/Mixes/Party.m3u", vec![entry("../Music/x.mp3")]),
+        ]
+    };
+    let playlists_setup = move |ui: &mut Ui, m: &mut AppModel| {
+        m.settings.music_directory = "/media/internal/music".into();
+        ui.playlists.set_lists(lists());
+    };
+    case!("80-playlists", at(Screen::Playlists, ""), move |ui, m| {
+        playlists_setup(ui, m);
+        m.navigation.focus = 2;
+    });
+    case!(
+        "81-playlist",
+        at(
+            Screen::Playlist,
+            "/media/internal/music/Playlists/Road Trip.m3u8"
+        ),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            m.navigation.focus = 2;
+        }
+    );
+    case!(
+        "82-playlist-moving",
+        at(
+            Screen::Playlist,
+            "/media/internal/music/Playlists/Road Trip.m3u8"
+        ),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            ui.playlists.moving = Some((0, 2));
+            m.navigation.focus = 4;
+        }
+    );
+    case!(
+        "83-add-to-playlist",
+        at(Screen::Tracks, ""),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            ui.open_picker(m, vec![3]);
+            m.navigation.modal_focus = 2;
+        }
+    );
+    case!(
+        "84-new-playlist",
+        at(Screen::Playlists, ""),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            m.navigation.focus = 0;
+            ui.model_action(m, Action::Select);
+            if let Some(k) = ui.keyboard.as_mut() {
+                k.text = "Late Night".into();
+            }
+        }
+    );
+    case!("85-home-playlists", at(Screen::Home, ""), move |ui, m| {
+        playlists_setup(ui, m);
+        m.navigation.focus = 6;
+    });
+    case!(
+        "87-now-playing-favorite",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            let mut lists = lists();
+            lists[0].entries.push(reborn_core::playlist::PlaylistEntry {
+                location: "../Northark/Night Drive/00.flac".into(),
+                ..Default::default()
+            });
+            ui.playlists.set_lists(lists);
+        }
+    );
+    case!(
+        "86-now-playing-menu-playlists",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            ui.model_action(m, Action::ContextMenu);
+            m.navigation.modal_focus = 3;
+        }
+    );
     case!("46-service-menu", at(Screen::SettingsSystem, ""));
     case!("47-diagnostics", at(Screen::Diagnostics, ""));
     case!(

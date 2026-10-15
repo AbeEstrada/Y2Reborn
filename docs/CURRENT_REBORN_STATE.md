@@ -1,6 +1,36 @@
 # Current Reborn state on the Y2
 
-## Since 1.0.0-beta.5.1 (not yet released): pause in place, collected seeking
+## Since 1.0.0-beta.5.1 (not yet released): Playlists, pause in place, collected seeking
+
+**Playlists** (owner: a playlist feature like Y2Player's, its own section, add/remove on the device, "highly
+optimized … fix issues Y2Player had"; decisions: playlists anywhere in the music, edits go into the file itself,
+a Favorites playlist with a heart, moving with the wheel).
+- The .m3u/.m3u8 file *is* the playlist: no database copy (Y2Player kept card files and device playlists in two
+  worlds that never met, and exported "Name (2).m3u8" copies). `reborn_platform::playlists` finds them on
+  Internal Storage and the SD card (not the Radio folder, hidden or system folders; at most 1 000), reads UTF-8,
+  UTF-8/16 with a byte order mark and Windows-1252, and writes them back in their own encoding (switching to UTF-8
+  with a BOM only when a new title needs it), keeping comments, other tools' tags and entries the player cannot
+  find (Y2Player dropped those for good). Writes go to a hidden temporary file, are flushed and renamed over the
+  playlist. Over 8 MB or with lines over 4 096 characters a playlist is view-only, never rewritten.
+- Entries are positions, not song ids: the same song may appear twice and Remove takes out that one entry
+  (Y2Player removed every copy). Each edit reads the file fresh and checks the entry is still where it was, so a
+  change made on a computer meanwhile is never overwritten blindly (`reborn_core::playlist`).
+- Matching (`reborn_ui::playlist_index`): relative paths (what Reborn writes, portable to a computer), paths on
+  the player, Windows/macOS/Linux paths and file:// links from computers by their ending (most trailing folders in
+  common; a bare ambiguous name matches nothing), case-insensitive — all in memory, no file system call per entry
+  (Y2Player made several). 20 000 entries on a 20 000-song library: first open 19 ms on the host, a frame 0.3 µs
+  (rows cached per change, lent out without copying).
+- Section: Home → Playlists (New Playlist, Favorites with its heart, every playlist with a 2×2 mosaic, song count,
+  length, SD Card / View only); a playlist's page (mosaic, Play, Shuffle, songs; missing ones dimmed "Not on the
+  player"). Hold Select: on a playlist Play Next, Add to Queue, Rename, Duplicate, Delete (confirmed; Favorites
+  can be neither renamed nor deleted); on a song Play Next, Add to Queue, Move (the wheel carries it, Select drops,
+  Back cancels), Remove from Playlist, Add to Playlist…, Go to Album/Artist. Add to Playlist… on any song, an
+  album's or artist's Play row and Now Playing (picker: New, the playlists used last first); Add/Remove from
+  Favorites on songs and Now Playing (a heart there when it is one); Save Queue as Playlist. New playlists are
+  named on the keyboard and saved in `Playlists/` on Internal Storage.
+- File work runs on a `playlists` thread (`app/reborn/src/playlists.rs`); playlists are read again with each
+  library publish (files copied over USB, the heart works from the start).
+
 
 Owner: "when playing music and pausing and playing again the player will always buffer"; "scrolling right and
 left also gives an error". Player log (Beta 5.1, AirPods): Pause closed the PCM at once ("alsa closed" 3 ms after

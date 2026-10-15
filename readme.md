@@ -34,6 +34,11 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   stays built without networking: `curl` receives the stream and hands Reborn plain audio.
 - Search (Home → Search) across artists, albums and songs, with results shown live while typing:
   every typed word must begin a word of the name (case, accents and a leading "The" ignored).
+- Playlists (Home → Playlists): .m3u/.m3u8 files from Internal Storage and the SD card, made and
+  changed on the player (add from any song, album or Now Playing; remove; move with the wheel;
+  rename, duplicate, delete), a Favorites playlist with a heart, and playlists exported by a
+  computer (Windows, macOS or Linux paths) matched to your library. The file stays the playlist:
+  edits are written back into it, songs the player cannot find are kept.
 - A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
   Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
   when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.

@@ -538,6 +538,31 @@ def ic_broadcast(p):
         p.arc(16, 16, r, 138, 222, 2.4)
 
 
+# Playlists: Favorites' heart (outline, filled) and New Playlist's plus.
+def heart_points(n=48):
+    pts = []
+    for k in range(n):
+        t = 2 * math.pi * k / n
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
+        pts.append((16 + x * 0.72, 15.5 - y * 0.72))
+    return pts
+
+
+def ic_heart(p):
+    pts = heart_points()
+    p.line(pts + [pts[0]], 2.2)
+
+
+def ic_heart_on(p):
+    p.poly(heart_points())
+
+
+def ic_plus(p):
+    p.line([(16, 6), (16, 26)], 2.8)
+    p.line([(6, 16), (26, 16)], 2.8)
+
+
 ICONS = [
     ('back', 32, ic_back), ('chevron', 32, ic_chevron), ('check', 32, ic_check), ('close', 32, ic_close),
     ('play', 32, lambda p: ic_play(p, 32)), ('pause', 32, lambda p: ic_pause(p, 32)),
@@ -556,6 +581,7 @@ ICONS = [
     ('eye', 32, ic_eye), ('eye_off', 32, ic_eye_off),
     ('star', 32, ic_star), ('star_on', 32, ic_star_on), ('globe', 32, ic_globe),
     ('trend', 32, ic_trend), ('broadcast', 32, ic_broadcast),
+    ('heart', 32, ic_heart), ('heart_on', 32, ic_heart_on), ('plus', 32, ic_plus),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

@@ -17,9 +17,14 @@ use reborn_core::Action;
 /// What the typed text is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    WifiPassword { ssid: String },
+    WifiPassword {
+        ssid: String,
+    },
     RadioSearch,
     LibrarySearch,
+    /// A new playlist's name, or a playlist's new name.
+    PlaylistNew,
+    PlaylistRename,
 }
 
 impl Purpose {
@@ -28,6 +33,7 @@ impl Purpose {
             // WPA passphrases: 8 to 63 printable ASCII characters.
             Self::WifiPassword { .. } => 63,
             Self::RadioSearch | Self::LibrarySearch => 40,
+            Self::PlaylistNew | Self::PlaylistRename => 60,
         }
     }
     fn secret(&self) -> bool {
@@ -37,6 +43,8 @@ impl Purpose {
         match self {
             Self::WifiPassword { .. } => "Join",
             Self::RadioSearch | Self::LibrarySearch => "Search",
+            Self::PlaylistNew => "Create",
+            Self::PlaylistRename => "Rename",
         }
     }
     fn title(&self) -> String {
@@ -45,6 +53,8 @@ impl Purpose {
             Self::WifiPassword { .. } => "WI-FI PASSWORD".into(),
             Self::RadioSearch => "RADIO SEARCH".into(),
             Self::LibrarySearch => "SEARCH".into(),
+            Self::PlaylistNew => "NEW PLAYLIST".into(),
+            Self::PlaylistRename => "RENAME PLAYLIST".into(),
         }
     }
     fn prompt(&self) -> String {
@@ -52,6 +62,7 @@ impl Purpose {
             Self::WifiPassword { ssid } => format!("Password for “{ssid}”"),
             Self::RadioSearch => "Station name".into(),
             Self::LibrarySearch => "Artist, album or song".into(),
+            Self::PlaylistNew | Self::PlaylistRename => "Playlist name".into(),
         }
     }
 }

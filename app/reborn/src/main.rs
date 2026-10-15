@@ -5,6 +5,7 @@ mod diagnostics;
 mod graphics_recovery;
 mod performance;
 mod playback;
+mod playlists;
 mod skins;
 mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
@@ -145,6 +146,8 @@ struct Runtime {
     /// (kept after a failed decode, so a broken logo is not retried).
     radio_art: Option<u64>,
     radio_art_pending: Option<u64>,
+    /// Playlist files are read and written on their own thread.
+    playlist_worker: Option<playlists::Worker>,
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
@@ -757,6 +760,81 @@ impl Runtime {
             self.radio_live = Some(line);
             self.dirty.mark_render();
         }
+    }
+    /// Playlist requests from the Playlist screens and song menus.
+    fn playlist(&mut self, request: reborn_core::PlaylistRequest) -> Result<(), String> {
+        use reborn_core::PlaylistRequest as R;
+        let worker = self
+            .playlist_worker
+            .as_ref()
+            .ok_or("playlists unavailable")?;
+        let job = match request {
+            R::Refresh => {
+                self.ui.playlists.loading = true;
+                playlists::Job::Refresh(self.storage_roots())
+            }
+            R::Create { name, tracks } => {
+                let dir = self
+                    .model
+                    .settings
+                    .music_directory
+                    .join(reborn_platform::playlists::FOLDER);
+                let file = reborn_platform::playlists::file_name_for(&name)
+                    .ok_or("Type a name for the playlist")?;
+                let path = dir.join(format!("{file}.m3u8"));
+                let roots = self.storage_roots();
+                let entries = tracks
+                    .iter()
+                    .filter_map(|&i| self.model.library.tracks.get(i))
+                    .filter(|t| !t.is_radio())
+                    .map(|t| reborn_core::playlist::PlaylistEntry {
+                        location: reborn_ui::playlist_index::location_for(&t.path, &path, &roots),
+                        info: Some(reborn_ui::playlist_index::info_for(t)),
+                        extra: vec![],
+                    })
+                    .collect();
+                playlists::Job::Create { dir, name, entries }
+            }
+            R::Edit { path, edit, create } => playlists::Job::Edit { path, edit, create },
+            R::Rename { path, name } => playlists::Job::Rename { path, name },
+            R::Duplicate(path) => playlists::Job::Duplicate(path),
+            R::Delete(path) => playlists::Job::Delete(path),
+        };
+        worker.send(job);
+        self.dirty.mark_render();
+        Ok(())
+    }
+    fn playlist_reply(&mut self, reply: playlists::Reply) {
+        match reply {
+            playlists::Reply::Listed(lists) => self.ui.playlists.set_lists(lists),
+            playlists::Reply::Saved { playlist, created } => {
+                let path = playlist.path.clone();
+                let name = playlist.name.clone();
+                self.ui.playlists.replace(playlist);
+                if created && !reborn_ui::playlists_is_favorites(&path) {
+                    self.ui.flash(format!("Created “{name}”"));
+                    if self.model.screen == Screen::Playlists {
+                        self.ui.show_playlist(&mut self.model, &path);
+                    }
+                }
+            }
+            playlists::Reply::Renamed { old, playlist } => {
+                let new = playlist.path.clone();
+                self.ui.playlists.remove(&old);
+                self.ui.playlists.replace(playlist);
+                self.ui.playlist_moved(&mut self.model, &old, Some(&new));
+            }
+            playlists::Reply::Deleted(path) => {
+                self.ui.playlists.remove(&path);
+                self.ui.playlist_moved(&mut self.model, &path, None);
+                self.ui.flash("Playlist deleted");
+            }
+            playlists::Reply::Failed(error) => {
+                self.ui.playlists.loading = false;
+                self.ui.flash(error);
+            }
+        }
+        self.dirty.mark_render();
     }
     /// Internal Storage and online SD cards, where Themes and Radio live.
     fn storage_roots(&self) -> Vec<PathBuf> {
@@ -1554,6 +1632,7 @@ impl Runtime {
                 self.model.playback = PlaybackState::Stopped;
             }
             Effect::Radio(request) => self.radio(request)?,
+            Effect::Playlist(request) => self.playlist(*request)?,
             Effect::SetCodecPreference(preference) => {
                 if !codec_change_allowed(
                     self.model.playback,
@@ -3220,6 +3299,7 @@ fn run() -> Result<(), String> {
         },
         radio_art: None,
         radio_art_pending: None,
+        playlist_worker: playlists::Worker::spawn(),
         headless,
         last_activity: Instant::now(),
         query: Some(initial_catalog),
@@ -3839,6 +3919,11 @@ fn run() -> Result<(), String> {
                             }
                         }
                         rt.model.library.tracks = t;
+                        // Playlists are read again with the library (files
+                        // copied over USB, the heart's Favorites).
+                        if let Err(e) = rt.playlist(reborn_core::PlaylistRequest::Refresh) {
+                            rt.fail("playlists", e);
+                        }
                         if !initial_library_ready {
                             initial_library_ready = true;
                             log.emit(Level::Info, "startup", "library_ready", "Initial library published", None, json!({"elapsed_ms":process_started.elapsed().as_millis(),"tracks":rt.model.library.tracks.len()}));
@@ -3870,6 +3955,14 @@ fn run() -> Result<(), String> {
             rt.ui.wifi.status,
             WifiStatus::Connected(_) | WifiStatus::NoInternet(_)
         );
+        let playlist_replies: Vec<playlists::Reply> = rt
+            .playlist_worker
+            .as_ref()
+            .map(|w| w.replies.try_iter().collect())
+            .unwrap_or_default();
+        for reply in playlist_replies {
+            rt.playlist_reply(reply);
+        }
         let radio_replies: Vec<RadioReply> = rt.radio_replies.1.try_iter().collect();
         for reply in radio_replies {
             rt.radio_reply(reply);

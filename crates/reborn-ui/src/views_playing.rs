@@ -18,7 +18,6 @@ pub fn now_playing(
     has_art: bool,
     interactive: bool,
 ) {
-    let _ = tracks;
     let Some(t) = m.current() else {
         return;
     };
@@ -161,8 +160,18 @@ pub fn now_playing(
         if !s.countrycode.is_empty() && x < 400. {
             components::tag(c, x, info_cy, &s.countrycode.to_uppercase(), color::MUTED);
         }
-    } else if let Some(label) = quality_label(t) {
-        components::tag(c, 222., info_cy, &label, accent);
+    } else {
+        let mut x = 222.;
+        if let Some(label) = quality_label(t) {
+            x += components::tag(c, x, info_cy, &label, accent) + 8.;
+        }
+        // Favorites' heart for the song playing.
+        let index = tracks
+            .iter()
+            .position(|x| x.id == t.id && x.source_id == t.source_id);
+        if index.is_some_and(|i| ui.is_favorite_track(m, tracks, i)) {
+            c.icon(Icon::HeartOn, x + 9., info_cy, 17., 0xFF5A7AFF);
+        }
     }
     status_icons(c, m, 222., info_cy + 33., accent);
 
