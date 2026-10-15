@@ -106,6 +106,11 @@ pub struct Keyboard {
     pub col: usize,
     /// A short line under the text (the library search's live count).
     pub note: String,
+    /// Library search: the results so far, shown above the keys as you type.
+    pub results: Vec<crate::Item>,
+    /// A result has the focus instead of a key (Back on the top row).
+    pub result_focus: Option<usize>,
+    pub result_scroll: usize,
     /// Where up/down aim, kept over several rows so Down then Up returns to
     /// the same key across the half-key offsets.
     aim: Option<f32>,
@@ -120,9 +125,60 @@ pub enum Outcome {
     Edited,
     Done,
     Cancel,
+    /// Select on the result at this position.
+    Open(usize),
 }
 
+/// Results visible at once above the live keyboard.
+pub const LIVE_ROWS: usize = 3;
+
 impl Keyboard {
+    /// The library search shows its results while typing.
+    pub fn live(&self) -> bool {
+        self.purpose == Purpose::LibrarySearch
+    }
+
+    /// New results after the text changed; the focus stays on the keys.
+    pub fn set_results(&mut self, results: Vec<crate::Item>) {
+        self.results = results;
+        self.result_focus = None;
+        self.result_scroll = 0;
+    }
+
+    fn focus_result(&mut self, index: usize) {
+        self.result_focus = Some(index);
+        self.result_scroll = self
+            .result_scroll
+            .min(index)
+            .max((index + 1).saturating_sub(LIVE_ROWS));
+    }
+
+    /// Buttons while a result has the focus: up and down walk the list, Down
+    /// past its end returns to the keys, Select opens the result.
+    fn result_action(&mut self, focus: usize, action: Action) -> Outcome {
+        match action {
+            Action::NavigateUp | Action::Back => {
+                if focus > 0 {
+                    self.focus_result(focus - 1);
+                }
+                Outcome::Stay
+            }
+            Action::NavigateDown if focus + 1 < self.results.len() => {
+                self.focus_result(focus + 1);
+                Outcome::Stay
+            }
+            Action::NavigateDown => {
+                self.result_focus = None;
+                self.row = 0;
+                Outcome::Stay
+            }
+            Action::Select => Outcome::Open(focus),
+            Action::ContextMenu => Outcome::Done,
+            Action::Home => Outcome::Cancel,
+            _ => Outcome::Stay,
+        }
+    }
+
     pub fn new(purpose: Purpose, text: impl Into<String>) -> Self {
         Self {
             purpose,
@@ -133,6 +189,9 @@ impl Keyboard {
             row: 0,
             col: 0,
             note: String::new(),
+            results: vec![],
+            result_focus: None,
+            result_scroll: 0,
             aim: None,
         }
     }
@@ -232,6 +291,19 @@ impl Keyboard {
 
     /// One button press. Wheel turns never reach here (`ActionRouter`).
     pub fn action(&mut self, action: Action) -> Outcome {
+        if let Some(focus) = self.result_focus {
+            return self.result_action(focus, action);
+        }
+        // Up from the top row goes to the results just above the keys.
+        if self.live()
+            && self.row == 0
+            && !self.results.is_empty()
+            && matches!(action, Action::NavigateUp | Action::Back)
+        {
+            let last = (self.result_scroll + LIVE_ROWS).min(self.results.len()) - 1;
+            self.focus_result(last);
+            return Outcome::Stay;
+        }
         if !matches!(
             action,
             Action::NavigateUp | Action::NavigateDown | Action::Back
@@ -325,25 +397,58 @@ fn upper_case(c: char) -> char {
 
 // ---------------------------------------------------------------- drawing
 
-const KEY_TOP: f32 = 124.;
-const KEY_H: f32 = 44.;
-const ROW_STEP: f32 = 50.;
+/// Where the field and the keys go: roomy for a password or a station,
+/// compact under the live results for the library search.
+struct Layout {
+    field_y: f32,
+    field_h: f32,
+    key_top: f32,
+    key_h: f32,
+    row_step: f32,
+}
+const ROOMY: Layout = Layout {
+    field_y: 70.,
+    field_h: 42.,
+    key_top: 124.,
+    key_h: 44.,
+    row_step: 50.,
+};
+const COMPACT: Layout = Layout {
+    field_y: 42.,
+    field_h: 36.,
+    key_top: 200.,
+    key_h: 34.,
+    row_step: 39.,
+};
+const RESULTS_TOP: f32 = 82.;
+const RESULT_H: f32 = 37.;
 const UNIT: f32 = 46.;
 const LEFT: f32 = (WIDTH - 10. * UNIT) / 2.;
 
-pub fn draw(c: &mut Canvas, ui: &crate::Ui, m: &reborn_core::AppModel, k: &Keyboard) {
+pub fn draw(
+    c: &mut Canvas,
+    ui: &crate::Ui,
+    m: &reborn_core::AppModel,
+    tracks: &[reborn_core::Track],
+    k: &Keyboard,
+) {
     let accent = ui.accent();
+    let live = k.live();
+    let at = if live { &COMPACT } else { &ROOMY };
     c.rect(0., 0., WIDTH, crate::theme::HEIGHT, color::BG);
     components::status_bar(c, ui, m, &k.purpose.title(), false);
-    c.text(
-        LEFT + 4.,
-        58. + Face::R13.mid_offset(),
-        &text::fit(Face::R13, &k.purpose.prompt(), 10. * UNIT - 8.),
-        Face::R13,
-        color::MUTED,
-    );
+    if !live {
+        c.text(
+            LEFT + 4.,
+            58. + Face::R13.mid_offset(),
+            &text::fit(Face::R13, &k.purpose.prompt(), 10. * UNIT - 8.),
+            Face::R13,
+            color::MUTED,
+        );
+    }
     // The text field: the end of the text stays in view.
-    c.rrect(LEFT, 70., 10. * UNIT, 42., 12., color::GLASS);
+    let mid = at.field_y + at.field_h / 2.;
+    c.rrect(LEFT, at.field_y, 10. * UNIT, at.field_h, 12., color::GLASS);
     let shown = if k.purpose.secret() && !k.reveal {
         "•".repeat(k.text.chars().count())
     } else {
@@ -357,39 +462,157 @@ pub fn draw(c: &mut Canvas, ui: &crate::Ui, m: &reborn_core::AppModel, k: &Keybo
     let room = 10. * UNIT - 34. - note_w;
     let shown = tail(Face::S20, &shown, room);
     let w = text::width(Face::S20, &shown);
+    if shown.is_empty() && live {
+        // The live search names what it finds where the text will go.
+        c.text(
+            LEFT + 22.,
+            mid + Face::R15.mid_offset(),
+            &k.purpose.prompt(),
+            Face::R15,
+            color::DIM,
+        );
+    }
     c.text(
         LEFT + 14.,
-        91. + Face::S20.mid_offset(),
+        mid + Face::S20.mid_offset(),
         &shown,
         Face::S20,
         color::TEXT,
     );
-    c.rect((LEFT + 14. + w + 2.).round(), 80., 2., 22., accent);
+    let caret = (at.field_h - 20.).max(16.);
+    c.rect(
+        (LEFT + 14. + w + 2.).round(),
+        (mid - caret / 2.).round(),
+        2.,
+        caret,
+        if k.result_focus.is_some() {
+            color::DIM
+        } else {
+            accent
+        },
+    );
     if !k.note.is_empty() {
         c.text_mid_right(
             LEFT + 10. * UNIT - 12.,
-            91.,
+            mid,
             &k.note,
             Face::R11,
             color::MUTED,
         );
     }
+    if live {
+        draw_results(c, ui, tracks, k, accent);
+    }
     let rows = k.rows();
     for (r, row) in rows.iter().enumerate() {
-        let y = KEY_TOP + r as f32 * ROW_STEP;
+        let y = at.key_top + r as f32 * at.row_step;
         for (i, ((key, _), (x, w))) in row.iter().zip(Keyboard::spans(row)).enumerate() {
-            let focused = r == k.row && i == k.col.min(row.len() - 1);
+            let focused = k.result_focus.is_none() && r == k.row && i == k.col.min(row.len() - 1);
             let (x, w) = (LEFT + x * UNIT + 2., w * UNIT - 4.);
-            draw_key(c, k, *key, x, y, w, focused, accent);
+            draw_key(c, k, *key, x, y, w, at.key_h, focused, accent);
         }
     }
-    c.text_center(
-        240.,
-        HINT_Y + Face::R11.mid_offset(),
-        "Buttons move  ·  Select types  ·  Hold Select: done  ·  Hold Back: cancel",
-        Face::R11,
-        color::DIM,
-    );
+    if !live {
+        c.text_center(
+            240.,
+            HINT_Y + Face::R11.mid_offset(),
+            "Buttons move  ·  Select types  ·  Hold Select: done  ·  Hold Back: cancel",
+            Face::R11,
+            color::DIM,
+        );
+    }
+}
+
+/// The live results: three rows above the keys, or a hint while empty.
+fn draw_results(
+    c: &mut Canvas,
+    ui: &crate::Ui,
+    tracks: &[reborn_core::Track],
+    k: &Keyboard,
+    accent: u32,
+) {
+    let area = LIVE_ROWS as f32 * RESULT_H;
+    if k.results.is_empty() {
+        let (first, second) = if k.text.trim().is_empty() {
+            (
+                "Results appear as you type",
+                "Back on the top row picks one  ·  Hold Select: all  ·  Hold Back: cancel",
+            )
+        } else {
+            ("No matches", "Hold Back to cancel")
+        };
+        let mid = RESULTS_TOP + area / 2.;
+        c.text_center(
+            240.,
+            mid - 9. + Face::S15.mid_offset(),
+            first,
+            Face::S15,
+            color::MUTED,
+        );
+        c.text_center(
+            240.,
+            mid + 12. + Face::R11.mid_offset(),
+            second,
+            Face::R11,
+            color::DIM,
+        );
+        return;
+    }
+    let bg_selected = crate::theme::mix(color::BG, accent, 0.18);
+    for (i, item) in k
+        .results
+        .iter()
+        .enumerate()
+        .skip(k.result_scroll)
+        .take(LIVE_ROWS)
+    {
+        let y = RESULTS_TOP + (i - k.result_scroll) as f32 * RESULT_H;
+        let selected = k.result_focus == Some(i);
+        if selected {
+            components::accent_row(c, LEFT, y + 1., 10. * UNIT, RESULT_H - 2., accent);
+        }
+        let art = item.art.and_then(|a| tracks.get(a).map(|t| (a, t)));
+        let size = RESULT_H - 9.;
+        components::cover(c, ui, art, LEFT + 6., y + 4.5, size);
+        if item.key.starts_with("artist:") {
+            c.round_off(
+                LEFT + 6.,
+                y + 4.5,
+                size,
+                size / 2.,
+                if selected { bg_selected } else { color::BG },
+            );
+        }
+        let x = LEFT + 16. + size;
+        let room = 10. * UNIT - (x - LEFT) - 12.;
+        let sub_w = text::width(Face::R11, &item.secondary).min(room * 0.45);
+        c.text_mid(
+            x,
+            y + RESULT_H / 2.,
+            room - sub_w - 12.,
+            &item.label,
+            if selected { Face::S15 } else { Face::R15 },
+            color::TEXT,
+        );
+        c.text_mid_right(
+            LEFT + 10. * UNIT - 12.,
+            y + RESULT_H / 2.,
+            &text::fit(Face::R11, &item.secondary, sub_w + 1.),
+            Face::R11,
+            if selected { accent } else { color::MUTED },
+        );
+    }
+    if k.results.len() > LIVE_ROWS {
+        components::scroll_rail(
+            c,
+            RESULTS_TOP + 2.,
+            area - 4.,
+            k.result_scroll,
+            k.results.len(),
+            LIVE_ROWS,
+            accent,
+        );
+    }
 }
 
 const HINT_Y: f32 = 340.;
@@ -402,6 +625,7 @@ fn draw_key(
     x: f32,
     y: f32,
     w: f32,
+    key_h: f32,
     focused: bool,
     accent: u32,
 ) {
@@ -427,13 +651,13 @@ fn draw_key(
     let at = c.draw.len();
     if focused {
         // The focused key is lifted a little, as in the rest of Reborn.
-        c.rrect(x - 3., y - 4., w + 6., KEY_H + 6., 11., fill);
+        c.rrect(x - 3., y - 4., w + 6., key_h + 6., 11., fill);
         c.mark_focus(at);
-        c.rrect_outline(x - 3., y - 4., w + 6., KEY_H + 6., 11., 2., accent);
+        c.rrect_outline(x - 3., y - 4., w + 6., key_h + 6., 11., 2., accent);
     } else {
-        c.rrect(x, y, w, KEY_H, 9., fill);
+        c.rrect(x, y, w, key_h, 9., fill);
     }
-    let (cx, cy) = (x + w / 2., y + KEY_H / 2. - if focused { 1. } else { 0. });
+    let (cx, cy) = (x + w / 2., y + key_h / 2. - if focused { 1. } else { 0. });
     let word = |c: &mut Canvas, s: &str| c.text_mid_center(cx, cy, s, Face::S13, ink);
     match key {
         Key::Char(ch) => {
@@ -467,7 +691,7 @@ fn draw_key(
         Key::Done => word(c, k.purpose.done_label()),
     }
     if key == Key::Shift && k.shift == Shift::Locked {
-        c.rect(cx - 7., y + KEY_H - 8., 14., 2., ink);
+        c.rect(cx - 7., y + key_h - 8., 14., 2., ink);
     }
 }
 
@@ -635,6 +859,48 @@ mod tests {
         let before = (k.row, k.col, k.text.clone());
         k.action(Action::WheelClockwise(3));
         assert_eq!(before, (k.row, k.col, k.text.clone()));
+    }
+
+    #[test]
+    fn live_results_are_reached_from_the_top_row_and_left_downwards() {
+        let mut k = kb(Purpose::LibrarySearch);
+        assert!(k.live());
+        // No results: Up from the top row wraps to the bottom keys as before.
+        k.action(Action::NavigateUp);
+        assert_eq!((k.row, k.result_focus), (3, None));
+        k.row = 0;
+        k.set_results(
+            (0..5)
+                .map(|i| crate::Item::new(format!("r{i}"), format!("track:{i}")))
+                .collect(),
+        );
+        // Up: the result just above the keys (the third visible one).
+        k.action(Action::NavigateUp);
+        assert_eq!(k.result_focus, Some(2));
+        k.action(Action::Back);
+        k.action(Action::Back);
+        k.action(Action::Back);
+        assert_eq!(k.result_focus, Some(0), "stops at the first result");
+        for _ in 0..4 {
+            k.action(Action::NavigateDown);
+        }
+        assert_eq!(
+            (k.result_focus, k.result_scroll),
+            (Some(4), 2),
+            "scrolls with the focus"
+        );
+        assert_eq!(k.action(Action::Select), Outcome::Open(4));
+        k.action(Action::NavigateDown);
+        assert_eq!(
+            (k.result_focus, k.row),
+            (None, 0),
+            "past the end: back to the keys"
+        );
+        // Typing replaces the results and keeps the focus on the keys.
+        k.set_results(vec![]);
+        assert_eq!(k.result_focus, None);
+        // Passwords and station search never show results.
+        assert!(!kb(Purpose::RadioSearch).live());
     }
 
     #[test]

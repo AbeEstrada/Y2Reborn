@@ -2222,6 +2222,72 @@ fn radio_countries_and_genres_open_their_station_lists() {
 }
 
 #[test]
+fn live_search_shows_results_while_typing_and_opens_them_with_back_to_the_results() {
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Home);
+    m.library.tracks[4].title = "Beat It".into();
+    m.library.tracks[4].artist = "Michael Jackson".into();
+    select_key(&mut ui, &mut m, "search");
+    assert!(ui.keyboard.as_ref().unwrap().results.is_empty());
+    // b, e: the song shows up while typing, before Done.
+    for a in [
+        Action::NavigateDown,
+        Action::NavigateDown,
+        Action::NavigateRight,
+        Action::NavigateRight,
+        Action::NavigateRight,
+        Action::NavigateRight,
+        Action::NavigateRight,
+        Action::Select,
+    ] {
+        ui.model_action(&mut m, a);
+    }
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "b");
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.row = 0;
+        k.col = 2;
+    }
+    ui.model_action(&mut m, Action::Select);
+    let k = ui.keyboard.as_ref().unwrap();
+    assert_eq!(k.text, "be");
+    assert_eq!(k.results[0].key, "track:4");
+    assert_eq!(k.results[0].secondary, "Song · Michael Jackson");
+    // Up from the top row reaches it; Select plays it from the results page.
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(ui.keyboard.as_ref().unwrap().result_focus, Some(0));
+    assert!(matches!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::PlayCollection { selected: 4, .. } | Effect::Play(4)
+    ));
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.navigation.stack.last(), Some(&Screen::Search));
+    // An artist opens its page; Back returns to the full results.
+    let mut m = app(Screen::Home);
+    select_key(&mut ui, &mut m, "search");
+    ui.keyboard.as_mut().unwrap().text = "Élo".into();
+    ui.keyboard.as_mut().unwrap().row = 2;
+    ui.keyboard.as_mut().unwrap().col = 8; // Delete, then type "o" again
+    ui.model_action(&mut m, Action::Select);
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.row = 0;
+        k.col = 8;
+    }
+    ui.model_action(&mut m, Action::Select);
+    let k = ui.keyboard.as_ref().unwrap();
+    assert!(k.results[0].key.starts_with("artist:"), "{:?}", k.results);
+    ui.model_action(&mut m, Action::NavigateUp);
+    ui.model_action(&mut m, Action::NavigateUp);
+    ui.model_action(&mut m, Action::NavigateUp);
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Artist);
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Search);
+    assert_eq!(m.navigation.filter, "Élo");
+}
+
+#[test]
 fn station_search_uses_the_keyboard_and_remembers_the_last_search() {
     use reborn_core::RadioRequest;
     let mut ui = radios();

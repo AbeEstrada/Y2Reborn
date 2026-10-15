@@ -333,7 +333,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
         ));
     } else if let Some(k) = &ui.keyboard {
         let at = c.draw.len();
-        crate::keyboard::draw(c, ui, m, k);
+        crate::keyboard::draw(c, ui, m, tracks, k);
         skin::remap(c, at, &skin.palette, ui.accent());
     } else if m.navigation.modal.is_some() {
         let (title, body) = ui.modal_copy(m);
@@ -488,7 +488,7 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
             false,
         );
     } else if let Some(k) = &ui.keyboard {
-        crate::keyboard::draw(c, ui, m, k);
+        crate::keyboard::draw(c, ui, m, tracks, k);
     } else if m.navigation.modal.is_some() {
         modal(c, ui, m, tracks);
     }

@@ -2169,20 +2169,35 @@ impl Ui {
             Outcome::Edited => {
                 if k.purpose == Purpose::LibrarySearch {
                     let text = k.text.clone();
-                    let note = if text.trim().is_empty() {
-                        String::new()
-                    } else {
-                        self.catalog
-                            .borrow_mut()
-                            .index
-                            .search(tracks, &text)
-                            .summary()
-                    };
-                    if let Some(k) = self.keyboard.as_mut() {
-                        k.note = note;
-                    }
+                    self.show_live_results(tracks, &text);
                 }
                 Effect::None
+            }
+            Outcome::Open(index) => {
+                let Some(key) = k.results.get(index).map(|item| item.key.clone()) else {
+                    return Effect::None;
+                };
+                let text = k.text.trim().to_owned();
+                self.keyboard = None;
+                self.library_query = text.clone();
+                // The full results come first, so Back from what opens returns
+                // to them (with Edit Search on top).
+                if m.screen == Screen::Search {
+                    m.navigation.filter = text;
+                } else {
+                    Self::go(m, Screen::Search, text);
+                }
+                m.navigation.focus = 0;
+                m.navigation.scroll = 0;
+                if key.starts_with("artist:") {
+                    Self::go(m, Screen::Artist, key);
+                    Effect::None
+                } else if key.starts_with("album:") {
+                    Self::go(m, Screen::Album, key);
+                    Effect::None
+                } else {
+                    self.play_track(m, tracks, &key)
+                }
             }
             Outcome::Cancel => {
                 self.keyboard = None;
@@ -2239,23 +2254,66 @@ impl Ui {
         }
     }
 
-    /// Open the library search's keyboard with the last search.
+    /// Open the library search's keyboard with the last search. The search
+    /// index is built here (once per library), not on the first letter.
     fn open_library_search(&mut self, m: &AppModel, tracks: &[Track]) {
         let text = if m.screen == Screen::Search {
             m.navigation.filter.clone()
         } else {
             self.library_query.clone()
         };
-        let mut k = keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, text.clone());
-        if !text.trim().is_empty() {
-            k.note = self
-                .catalog
-                .borrow_mut()
-                .index
-                .search(tracks, &text)
-                .summary();
+        self.keyboard = Some(keyboard::Keyboard::new(
+            keyboard::Purpose::LibrarySearch,
+            text.clone(),
+        ));
+        self.show_live_results(tracks, &text);
+    }
+
+    /// Search as the text is typed and show the results above the keys:
+    /// artists, then albums, then songs (at most `LIVE_RESULTS`).
+    fn show_live_results(&mut self, tracks: &[Track], text: &str) {
+        const LIVE_RESULTS: usize = 60;
+        let results = self.catalog.borrow_mut().index.search(tracks, text);
+        let (note, items) = if text.trim().is_empty() {
+            (String::new(), vec![])
+        } else {
+            let mut items = Vec::with_capacity(LIVE_RESULTS);
+            for (artist, i, albums) in results.artists.iter().take(LIVE_RESULTS) {
+                let mut item = Item::new(display_or_unknown(artist), format!("artist:{artist}"))
+                    .with_secondary(match albums {
+                        1 => "Artist · 1 album".to_owned(),
+                        n => format!("Artist · {n} albums"),
+                    });
+                item.art = Some(*i);
+                items.push(item);
+            }
+            for &i in results.albums.iter().take(LIVE_RESULTS - items.len()) {
+                let t = &tracks[i];
+                let mut item = Item::new(display_or_unknown(&t.album), album_filter(t))
+                    .with_secondary(format!(
+                        "Album · {}",
+                        display_or_unknown(if t.album_artist.is_empty() {
+                            &t.artist
+                        } else {
+                            &t.album_artist
+                        })
+                    ));
+                item.art = Some(i);
+                items.push(item);
+            }
+            for &i in results.songs.iter().take(LIVE_RESULTS - items.len()) {
+                let t = &tracks[i];
+                let mut item = Item::new(track_title(t), format!("track:{i}"))
+                    .with_secondary(format!("Song · {}", display_or_unknown(&t.artist)));
+                item.art = Some(i);
+                items.push(item);
+            }
+            (results.summary(), items)
+        };
+        if let Some(k) = self.keyboard.as_mut() {
+            k.note = note;
+            k.set_results(items);
         }
-        self.keyboard = Some(k);
     }
 
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {

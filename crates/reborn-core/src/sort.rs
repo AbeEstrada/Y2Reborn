@@ -87,7 +87,11 @@ pub enum SortAs {
 /// accents and punctuation ignored, `fold`) without its leading article
 /// (`SortAs`). Digits come before letters; other scripts after them.
 pub fn sort_key(name: &str, kind: SortAs) -> String {
-    let mut folded = fold(name);
+    sort_key_folded(fold(name), kind)
+}
+
+/// `sort_key` of a name already folded (`fold`), without folding it again.
+pub fn sort_key_folded(mut folded: String, kind: SortAs) -> String {
     let articles: &[&str] = match kind {
         SortAs::Artist => &["the "],
         SortAs::Title => &["the ", "a ", "an "],

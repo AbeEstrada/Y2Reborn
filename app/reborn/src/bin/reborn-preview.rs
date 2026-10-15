@@ -453,6 +453,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         ui.model_action(m, Action::Select);
     });
+    case!(
+        "70b-search-live-result-focus",
+        at(Screen::Home, ""),
+        |ui, m| {
+            m.navigation.focus = 6;
+            ui.model_action(m, Action::Select);
+            if let Some(k) = ui.keyboard.as_mut() {
+                k.text = "nort".into();
+            }
+            ui.model_action(m, Action::NavigateDown);
+            for _ in 0..5 {
+                ui.model_action(m, Action::NavigateRight);
+            }
+            ui.model_action(m, Action::Select);
+            // Back on the top row: the results above the keys.
+            ui.model_action(m, Action::NavigateUp);
+            ui.model_action(m, Action::NavigateUp);
+            ui.model_action(m, Action::NavigateUp);
+        }
+    );
+    case!("70c-search-live-no-match", at(Screen::Home, ""), |ui, m| {
+        m.navigation.focus = 6;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "zz".into();
+        }
+        ui.model_action(m, Action::Select);
+    });
     case!("71-search-results", at(Screen::Search, "north"), |_, m| m
         .navigation
         .focus =

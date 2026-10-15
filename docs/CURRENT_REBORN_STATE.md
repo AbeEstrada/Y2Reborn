@@ -1,5 +1,21 @@
 # Current Reborn state on the Y2
 
+## Since 1.0.0-beta.5 (not yet released): live search and a faster search index
+
+**Live search.** The library search shows its results above a compact keyboard while you type: three rows
+(artists, then albums, then songs, up to 60), the count in the field, a hint while empty. Back on the top key
+row moves into the results, Down past the last one returns to the keys, Select opens an artist or album or
+plays a song (the full results page comes first, so Back returns to it); hold Select still opens all results.
+Password and station search keep the roomy keyboard.
+
+**Search index** (`reborn_ui::search::Index`): artists, albums and songs are folded and sorted once per
+library (album counts precomputed); a keystroke searches only what the shorter text found, Delete reuses the
+earlier search (48 kept), matching allocates nothing per name. Synthetic 20 000-song library on the host
+(release build): per keystroke mean 6.2 ms → 0.05 ms, worst 7.5 ms → 0.42 ms; the index build (≈20 ms on the
+host, a few hundred ms on the player for 20 000 songs) happens when the keyboard opens. The results page no
+longer scans the library once per artist. Benchmark: `cargo test -p reborn-ui --release -- --ignored
+--nocapture speed`.
+
 ## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5 (Baseline 55), 2026-10-15 (latest): keyboard and search
 
 **Full-screen keyboard** (`reborn_ui::keyboard`) for the Wi-Fi password, radio station search and the

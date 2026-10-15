@@ -77,13 +77,7 @@ impl Catalog {
                         results.summary()
                     )),
                 );
-                for (artist, i) in results.artists {
-                    let albums = tracks
-                        .iter()
-                        .filter(|t| t.online && t.artist == artist)
-                        .map(|t| t.album.as_str())
-                        .collect::<BTreeSet<_>>()
-                        .len();
+                for (artist, i, albums) in results.artists {
                     let mut item =
                         Item::new(display_or_unknown(&artist), format!("artist:{artist}"))
                             .with_secondary(match albums {
