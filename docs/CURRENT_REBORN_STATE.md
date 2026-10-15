@@ -1,6 +1,6 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5, 2026-10-15 (latest): keyboard and search
+## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5 (Baseline 55), 2026-10-15 (latest): keyboard and search
 
 **Full-screen keyboard** (`reborn_ui::keyboard`) for the Wi-Fi password, radio station search and the
 new library search, replacing the one-row letter wheel. QWERTY in four rows (owner's choice), pages
