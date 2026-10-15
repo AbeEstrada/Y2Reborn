@@ -70,18 +70,27 @@ impl Index {
             ..Default::default()
         };
         self.lower = vec![String::new(); tracks.len()];
-        for (i, t) in tracks.iter().enumerate() {
-            if t.is_radio() {
-                continue;
-            }
-            let path = t.path.to_string_lossy().to_lowercase();
-            self.by_path.insert(path.clone(), i as u32);
-            self.lower[i] = path;
-            if let Some(name) = t.path.file_name() {
-                self.by_name
-                    .entry(name.to_string_lossy().to_lowercase())
-                    .or_default()
-                    .push(i as u32);
+        // Songs on the player first: when the library holds a path twice
+        // (a card recorded under an earlier source id as well), the copy that
+        // can play is the one an entry finds, and the stale copy is no second
+        // candidate for a name.
+        for online in [true, false] {
+            for (i, t) in tracks.iter().enumerate() {
+                if t.is_radio() || t.online != online {
+                    continue;
+                }
+                let path = t.path.to_string_lossy().to_lowercase();
+                if self.by_path.contains_key(&path) {
+                    continue;
+                }
+                self.by_path.insert(path.clone(), i as u32);
+                self.lower[i] = path;
+                if let Some(name) = t.path.file_name() {
+                    self.by_name
+                        .entry(name.to_string_lossy().to_lowercase())
+                        .or_default()
+                        .push(i as u32);
+                }
             }
         }
     }
@@ -285,6 +294,43 @@ mod tests {
         // Not in the library, and web addresses.
         assert_eq!(r(&mut index, r"C:\Music\Missing\Song.mp3"), None);
         assert_eq!(r(&mut index, "http://radio.example/stream"), None);
+    }
+
+    #[test]
+    fn a_path_in_the_library_twice_finds_the_copy_on_the_player() {
+        // The same card under an earlier source id (offline) and its current
+        // one: every path twice, the stale copy first.
+        let mut tracks = Vec::new();
+        for online in [false, true] {
+            for mut t in library() {
+                t.online = online;
+                tracks.push(t);
+            }
+        }
+        let mut index = Index::default();
+        let dir = Path::new("/media/internal/music/Playlists");
+        let mut r = |loc: &str| index.resolve(&tracks, dir, loc);
+        assert_eq!(r("../Hozier/Hozier/Take Me to Church.mp3"), Some(5));
+        assert_eq!(
+            r(r"C:\Users\PC-R\Music\Hozier\Wasteland\Like Real People Do.mp3"),
+            Some(6)
+        );
+        assert_eq!(r("The Passion of Lovers.flac"), Some(7));
+        assert_eq!(r(r"D:\Music\Else\Intro.mp3"), Some(9));
+        // Only the stale copy: still found, so the page can say it is not available.
+        let stale = vec![Track {
+            online: false,
+            ..track("/media/sd/Music/Bauhaus/Mask/The Passion of Lovers.flac")
+        }];
+        let mut index = Index::default();
+        assert_eq!(
+            index.resolve(
+                &stale,
+                dir,
+                "/media/sd/Music/Bauhaus/Mask/The Passion of Lovers.flac"
+            ),
+            Some(0)
+        );
     }
 
     #[test]
