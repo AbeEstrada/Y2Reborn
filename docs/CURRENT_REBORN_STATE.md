@@ -1,6 +1,6 @@
 # Current Reborn state on the Y2
 
-## Unreleased — internet radio (for Y2Linux 1.0 Beta 4)
+## 1.0.0-beta.4 — Y2Linux 1.0 Beta 4 (Baseline 53), 2026-10-15 (latest): internet radio
 
 **Internet radio.** Home → Radio: Favorites (saved in `/data/reborn/state/radio.json`), Popular,
 Countries, Genres and Search (wheel keyboard) from radio-browser.info (mirrors found through DNS as the
