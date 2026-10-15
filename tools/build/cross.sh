@@ -4,7 +4,9 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 build=${Y2_BUILDROOT_OUTPUT:?Set Y2_BUILDROOT_OUTPUT to the production Buildroot output}
 build=$(CDPATH= cd -- "$build" && pwd)
-sdk=$build/host
+# With per-package directories each package has its own host view; the
+# global host/ is assembled only at the end of the build.
+sdk=${Y2_BUILDROOT_HOST:-$build/host}
 sysroot=$($sdk/bin/arm-linux-gcc -print-sysroot)
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=$sdk/bin/arm-linux-gcc
 export CC_armv7_unknown_linux_gnueabihf=$sdk/bin/arm-linux-gcc
