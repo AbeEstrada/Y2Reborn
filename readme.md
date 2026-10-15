@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.2, part of Y2Linux 1.0 Beta 2 (Baseline 51, 2026-10-15), public beta.**
-> Git tag `baseline-51` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.3, part of Y2Linux 1.0 Beta 3 (Baseline 52, 2026-10-15), public beta.**
+> Git tag `baseline-52` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -22,7 +22,9 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   aptX/aptX HD only in owner-private builds). The output follows the headphones: Bluetooth
   headphones take over from the jack as soon as they connect (playback continues there), the
   jack takes over again when they disconnect (playback pauses). Choosing the jack by hand sticks
-  until the headphones reconnect.
+  until the headphones reconnect. AAC headphones get the encoder's high-quality mode at the highest
+  rate they accept (AirPods: 256 kbit/s), and the rate steps down by itself on a weak link
+  (service menu: AAC Quality, AAC Auto Rate; SBC XQ for SBC-only headphones).
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
   connection and copying, Bluetooth pairing, low battery, and Software Update (check, download

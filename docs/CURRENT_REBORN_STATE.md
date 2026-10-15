@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.2 — Y2Linux 1.0 Beta 2 (Baseline 51), 2026-10-15 (latest)
+## 1.0.0-beta.3 — Y2Linux 1.0 Beta 3 (Baseline 52), 2026-10-15 (latest)
+
+**Bluetooth quality and stability.** The platform now runs AAC with the FDK afterburner at the
+highest rate the headphones accept where a frame still fits one packet (AirPods Pro advertise
+256 kbit/s VBR-capable; Beta 2 sent BlueALSA's default 220 kbit/s) and steps the rate down
+(256 → 192 → 160 → 128 kbit/s) while the link backs up, back up after ~10 s of an empty queue —
+the AAC counterpart of LDAC's adaptive rate. The service menu (System) shows **AAC Quality**
+(High / Standard) and **AAC Auto Rate** (On / Off) next to the LDAC rows; **SBC Quality** (XQ, XQ+)
+no longer needs the experimental switch. Defaults need no action from the owner.
+
+## 1.0.0-beta.2 — Y2Linux 1.0 Beta 2 (Baseline 51), 2026-10-15
 
 **Automatic audio output.** Bluetooth headphones win over the headphone jack: the first time a
 connected peer's BlueALSA playback PCM is ready, the output moves to it and playing music continues
