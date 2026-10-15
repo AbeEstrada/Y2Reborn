@@ -2315,6 +2315,50 @@ impl CodecReconnect {
     }
 }
 
+/// Bluetooth headphones win over the headphone jack. The first time a
+/// connected peer's playback PCM is ready, audio moves to it (playback
+/// continues there). Once per connection: choosing the jack afterwards sticks
+/// until the peer reconnects, and a codec change that recreates the PCM is not
+/// a new connection. A working Bluetooth output is never displaced. Losing the
+/// peer returns to the jack and pauses (`Event::BluetoothDisconnected`).
+#[derive(Default)]
+struct AutoOutput {
+    routed: HashSet<String>,
+}
+impl AutoOutput {
+    fn next(&mut self, status: &bluetooth::Status, output: &AudioOutput) -> Option<String> {
+        if !status.available {
+            return None; // A failed observation is not a disconnection.
+        }
+        self.routed.retain(|address| {
+            status.powered
+                && status
+                    .devices
+                    .iter()
+                    .any(|d| d.connected && d.address.eq_ignore_ascii_case(address))
+        });
+        if !status.powered {
+            return None;
+        }
+        let ready = |address: &str| status.playback_pcm(address).is_ok();
+        let peer = status.devices.iter().find(|d| {
+            d.connected && d.audio && !self.routed.contains(&d.address) && ready(&d.address)
+        })?;
+        match output {
+            AudioOutput::Bluetooth(current) if current.eq_ignore_ascii_case(&peer.address) => {
+                // Already there (restored or chosen by hand): this connection is done.
+                self.routed.insert(peer.address.clone());
+                None
+            }
+            AudioOutput::Bluetooth(current) if ready(current) => None,
+            _ => Some(peer.address.clone()),
+        }
+    }
+    fn routed(&mut self, address: String) {
+        self.routed.insert(address);
+    }
+}
+
 /// Observation cadence while such a screen is visible. A cable plug should
 /// appear promptly on PC Transfer; other pages change rarely.
 fn platform_refresh_interval(screen: Screen) -> Duration {
@@ -2765,6 +2809,7 @@ fn run() -> Result<(), String> {
     let mut download_poll = Instant::now();
     let mut last_platform_screen = rt.model.screen;
     let mut codec_reconnect = CodecReconnect::default();
+    let mut auto_output = AutoOutput::default();
     while !reborn_platform::stop_requested() {
         // Drain before inspecting any producer queue: a later event keeps the
         // descriptor readable until the next loop and cannot be lost in wait.
@@ -3266,6 +3311,46 @@ fn run() -> Result<(), String> {
                 None,
                 json!({"recovery":"paused"}),
             );
+        }
+        if rt.pending_reconfiguration.is_none() {
+            if let Some(address) = auto_output.next(&rt.bt_state, &rt.model.output) {
+                let name = rt
+                    .bt_state
+                    .devices
+                    .iter()
+                    .find(|d| d.address == address)
+                    .map(|d| d.name.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "Bluetooth headphones".into());
+                // One attempt per connection, also when it fails: no retry loop.
+                auto_output.routed(address.clone());
+                match rt
+                    .with_model_action(|runtime| runtime.switch(AudioOutput::Bluetooth(address)))
+                {
+                    Ok(()) => {
+                        rt.ui.flash(format!("Audio switched to {name}"));
+                        log.emit(
+                            Level::Info,
+                            "audio",
+                            "output_automatic",
+                            "Bluetooth audio peer ready; output follows it",
+                            None,
+                            json!({"reason":"bluetooth_connected"}),
+                        );
+                    }
+                    Err(error) => {
+                        log.emit(
+                            Level::Warn,
+                            "audio",
+                            "output_automatic_failed",
+                            "Automatic switch to Bluetooth failed",
+                            None,
+                            json!({"error":error}),
+                        );
+                    }
+                }
+                rt.dirty.mark_render();
+            }
         }
         match transport_epoch_state(
             &rt.model.output,
@@ -4494,6 +4579,100 @@ mod feature_product_tests {
         ] {
             assert!(!codec_change_allowed(state, false));
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_output_tests {
+    use super::*;
+    fn status(address: &str, path: &str) -> bluetooth::Status {
+        let mut status = bluetooth::Status::default();
+        status.available = true;
+        status.powered = true;
+        status.bluealsa = true;
+        add(&mut status, address, path);
+        status
+    }
+    fn add(status: &mut bluetooth::Status, address: &str, path: &str) {
+        status.devices.push(bluetooth::Device {
+            address: address.into(),
+            path: path.into(),
+            name: "AirPods Pro".into(),
+            connected: true,
+            audio: true,
+            paired: true,
+            bonded: true,
+            ..Default::default()
+        });
+        status.pcms.push(reborn_core::BluetoothPcm {
+            device: path.into(),
+            transport: "A2DP-source".into(),
+            mode: "sink".into(),
+            running: Some(false),
+            transport_generation: 1,
+            ..Default::default()
+        });
+    }
+    #[test]
+    fn bluetooth_headphones_win_over_the_jack_once_per_connection() {
+        let mut auto = AutoOutput::default();
+        let mut s = status("AA", "/a");
+        let pcm = s.pcms.clone();
+        // Connected but BlueALSA has no playback PCM yet: wait.
+        s.pcms.clear();
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        s.pcms = pcm.clone();
+        assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+        auto.routed("AA".into());
+        // The owner then picks the jack by hand: that choice sticks.
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        // A codec change recreates the PCM; still the same connection.
+        s.pcms.clear();
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        s.pcms = pcm.clone();
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        // A failed observation proves nothing.
+        s.available = false;
+        s.devices[0].connected = false;
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        s.available = true;
+        s.devices[0].connected = true;
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        // A real reconnect routes again.
+        s.devices[0].connected = false;
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        s.devices[0].connected = true;
+        assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+        // Radio off and on again is a new connection too.
+        auto.routed("AA".into());
+        s.powered = false;
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        s.powered = true;
+        assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+    }
+    #[test]
+    fn already_on_bluetooth_is_never_displaced() {
+        let mut auto = AutoOutput::default();
+        let mut s = status("AA", "/a");
+        // Restored or chosen by hand: nothing to do, and none later.
+        assert!(auto
+            .next(&s, &AudioOutput::Bluetooth("aa".into()))
+            .is_none());
+        assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+        // A second peer does not take over a working first one...
+        add(&mut s, "BB", "/b");
+        assert!(auto
+            .next(&s, &AudioOutput::Bluetooth("AA".into()))
+            .is_none());
+        // ...but takes over once the first is gone and the jack is back.
+        s.devices[0].connected = false;
+        assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("BB"));
+        // A peer without the audio sink profile is never an output.
+        let mut keyboard = status("CC", "/c");
+        keyboard.devices[0].audio = false;
+        assert!(AutoOutput::default()
+            .next(&keyboard, &AudioOutput::Wired)
+            .is_none());
     }
 }
 

@@ -203,14 +203,19 @@ impl Drop for Control {
         let _ = fs::remove_file(&self.path);
     }
 }
+/// wpa_supplicant reads a `"..."` value literally up to its LAST quote and
+/// knows no escapes, so a password is sent as it is. Escaping it stored `\`
+/// and `"` doubled and such a password could never connect.
 fn quote(s: &str) -> Result<String, String> {
     if s.len() > 128 || s.chars().any(|c| c.is_control()) {
         return Err("invalid text length or control character".into());
     }
-    Ok(format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\").replace('"', "\\\"")
-    ))
+    Ok(format!("\"{s}\""))
+}
+/// A network name goes as hex: every byte, quotes included, survives
+/// SET_NETWORK and SAVE_CONFIG unchanged.
+fn hex_ssid(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
 }
 pub fn enabled() -> bool {
     Paths::default().power().unwrap_or(false)
@@ -266,7 +271,7 @@ fn connect(c: &Control, ssid: &str, password: &str) -> Result<(), String> {
     {
         return Err("WPA2 requires SSID 1..32 bytes and password 8..63 bytes".into());
     }
-    let ssid = quote(ssid)?;
+    let ssid = hex_ssid(ssid);
     let psk = quote(password)?;
     let id = c
         .request("ADD_NETWORK")?
@@ -1203,7 +1208,27 @@ mod tests {
     #[test]
     fn password_encoding_cannot_inject_commands() {
         assert!(quote("x\nREMOVE_NETWORK all").is_err());
-        assert_eq!(quote("a\"b\\c").unwrap(), "\"a\\\"b\\\\c\"");
+        assert!(quote("tab\there").is_err());
+    }
+    #[test]
+    fn passwords_and_names_reach_the_supplicant_unchanged() {
+        // wpa_config_parse_string: after the first quote, everything up to the
+        // last quote, no escapes.
+        fn supplicant_reads(value: &str) -> &str {
+            let inner = value.strip_prefix('"').unwrap();
+            &inner[..inner.rfind('"').unwrap()]
+        }
+        for password in [
+            "plain-password",
+            "a\"b\\c",
+            "ends with quote\"",
+            "\"\"\"\"\"\"\"\"",
+            "back\\slash",
+        ] {
+            assert_eq!(supplicant_reads(&quote(password).unwrap()), password);
+        }
+        assert_eq!(hex_ssid("Café \"5G\""), "436166c3a92022354722");
+        assert_eq!(hex_ssid("Zyxel_7941"), "5a7978656c5f37393431");
     }
 }
 

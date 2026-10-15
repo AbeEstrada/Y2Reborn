@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.1, part of Y2Linux 1.0 Beta 1 (Baseline 50, 2026-10-16), public beta.**
-> Git tag `baseline-50` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.2, part of Y2Linux 1.0 Beta 2 (Baseline 51, 2026-10-15), public beta.**
+> Git tag `baseline-51` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -19,7 +19,10 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   cached in `/data/reborn/cache`); Albums as Cover Flow or a grid, and Genres.
 - Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
   Bluetooth playback; the codec is chosen automatically (SBC, AAC and LDAC in the public images;
-  aptX/aptX HD only in owner-private builds).
+  aptX/aptX HD only in owner-private builds). The output follows the headphones: Bluetooth
+  headphones take over from the jack as soon as they connect (playback continues there), the
+  jack takes over again when they disconnect (playback pauses). Choosing the jack by hand sticks
+  until the headphones reconnect.
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
   connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
@@ -33,8 +36,9 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   `rebornctl` and a control socket at `/run/reborn/control.sock`.
 
 Known limits (details in [current state](docs/CURRENT_REBORN_STATE.md)): native
-high-rate output is gated; AAC with real headphones is not confirmed yet; saved Bluetooth
-headphones are not connected on play. Crossfade and EQ have not been checked on hardware.
+high-rate output is gated; AAC is negotiated with AirPods Pro but not yet listened to; saved
+Bluetooth headphones are not connected on play; the player cannot tell whether wired headphones are
+plugged in (no jack detection yet), so "jack" means "not Bluetooth". Crossfade and EQ have not been checked on hardware.
 
 ## Development
 

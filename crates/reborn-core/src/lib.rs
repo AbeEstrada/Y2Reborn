@@ -949,6 +949,10 @@ impl AppModel {
         };
         m.screen_off = false;
         m.screen = Screen::Home;
+        // Start on the jack; Bluetooth headphones take over again as soon as
+        // their audio is ready (Reborn's automatic output). A saved Bluetooth
+        // output whose peer is absent left playback with nowhere to go.
+        m.output = AudioOutput::Wired;
         m.generation = 0;
         m.navigation = NavigationState::default();
         m.settings.volume = m.settings.volume.min(100);

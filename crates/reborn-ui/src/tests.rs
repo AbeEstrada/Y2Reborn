@@ -925,6 +925,7 @@ fn full_system_update_wording_and_versions() {
         "1.0.0 (35)"
     );
     assert_eq!(pages::short_version("1.0.0-beta.1"), "1.0.0 Beta 1");
+    assert_eq!(pages::short_version("1.0.0-beta.2"), "1.0.0 Beta 2");
     assert_eq!(pages::short_version("1.2"), "1.2");
 }
 

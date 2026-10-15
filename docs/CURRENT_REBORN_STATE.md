@@ -1,6 +1,20 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.1 — Y2Linux 1.0 Beta 1 (Baseline 50), 2026-10-16 (latest)
+## 1.0.0-beta.2 — Y2Linux 1.0 Beta 2 (Baseline 51), 2026-10-15 (latest)
+
+**Automatic audio output.** Bluetooth headphones win over the headphone jack: the first time a
+connected peer's BlueALSA playback PCM is ready, the output moves to it and playing music continues
+there (notice *Audio switched to …*). Once per connection, so choosing the jack by hand sticks until
+the headphones reconnect; a codec change that recreates the PCM is not a new connection; a working
+Bluetooth output is never displaced by a second peer. Losing the peer returns to the jack and pauses,
+as before. Reborn starts on the jack and lets reconnecting headphones take over (a saved Bluetooth
+output whose peer was absent used to leave playback with nowhere to go). There is no jack detection
+on this board yet, so the jack is simply the output whenever no Bluetooth headphones are connected.
+**Wi-Fi passwords** containing `\` or `"` are sent as typed (they were stored escaped and could never
+connect); network names go to wpa_supplicant as hex. Live on Beta 1 (2026-10-15): AirPods Pro
+negotiate AAC 44.1 kHz.
+
+## 1.0.0-beta.1 — Y2Linux 1.0 Beta 1 (Baseline 50), 2026-10-16
 
 Reborn's first public beta, built into the Y2Linux 1.0 Beta 1 images. Since Baseline 48: Wi-Fi and Bluetooth pages
 explain the one-time radio firmware copy (*Firmware* drive) and say when it is ready; a cancelled or older failed update
