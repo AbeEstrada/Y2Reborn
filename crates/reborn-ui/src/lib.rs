@@ -20,6 +20,7 @@ mod search;
 pub mod skin;
 mod text;
 pub mod theme;
+mod time_zone;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
@@ -369,6 +370,10 @@ pub struct Ui {
     pub spin_fixed: Option<f32>,
     /// The update download bar as drawn: fill, step (check), last frame.
     download_bar: std::cell::Cell<(f32, bool, Option<Instant>)>,
+    /// Freeze the clock at this instant, unix seconds (previews and tests).
+    pub clock_fixed: Option<i64>,
+    /// The status-bar clock as last drawn; a new minute redraws.
+    clock_shown: Option<String>,
     /// Cover Flow's scroll position and the cover's flight to the album page.
     flow: RefCell<flow::Flow>,
     transition: std::cell::Cell<Option<flow::Transition>>,
@@ -579,8 +584,9 @@ impl Ui {
     }
 
     /// Watch platform state the UI reacts to by itself: a computer connecting,
-    /// a Bluetooth request finishing or failing, the battery running low and
-    /// work that shows a spinner. Returns whether the screen needs redrawing.
+    /// a Bluetooth request finishing or failing, the battery running low,
+    /// work that shows a spinner and the clock's minute turning over.
+    /// Returns whether the screen needs redrawing.
     pub fn observe(&mut self, m: &AppModel) -> bool {
         let before = (
             self.usb_overlay(m),
@@ -641,6 +647,9 @@ impl Ui {
             || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
             || self.usb_overlay(m) && usb == UsbTransfer::Copying
             || self.bt_busy.is_some();
+        let clock = self.clock(m);
+        let ticked = clock != self.clock_shown && !m.screen_off;
+        self.clock_shown = clock;
         before
             != (
                 self.usb_overlay(m),
@@ -649,6 +658,12 @@ impl Ui {
                 self.spinning,
             )
             || self.spinning
+            || ticked
+    }
+
+    /// The status-bar clock in the chosen zone, once the system time is set.
+    pub fn clock(&self, m: &AppModel) -> Option<String> {
+        time_zone::text(self, m)
     }
 
     /// Whether the computer-connection screen covers the UI.
@@ -1696,6 +1711,13 @@ impl Ui {
             Self::go(m, Screen::Equalizer, "custom");
             return Effect::None;
         }
+        if key == "time_zone" {
+            // Several hundred zones: open at the one in use.
+            let focus = time_zone::focus(self, m);
+            Self::go(m, Screen::TimeZone, "");
+            m.navigation.focus = focus;
+            return Effect::None;
+        }
         if key == "version" {
             self.version_taps = self.version_taps.saturating_add(1);
             if self.version_taps >= VERSION_TAPS {
@@ -1943,6 +1965,7 @@ impl Ui {
             k if k.starts_with("timeout_set:") => {
                 Effect::SetScreenTimeout(k["timeout_set:".len()..].parse().ok()?)
             }
+            k if k.starts_with("tz_set:") => Effect::SetTimeZone(k["tz_set:".len()..].into()),
             k if k.starts_with("eq_preset:") => {
                 let name = &k["eq_preset:".len()..];
                 let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;

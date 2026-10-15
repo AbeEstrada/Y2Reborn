@@ -71,6 +71,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Crossfade
         | Screen::ScreenTimeout
         | Screen::Theme
+        | Screen::TimeZone
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
@@ -117,6 +118,7 @@ fn native_screen(
         | Screen::Crossfade
         | Screen::ScreenTimeout
         | Screen::Theme
+        | Screen::TimeZone
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
@@ -178,6 +180,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Crossfade => keys!("crossfade"),
         Screen::ScreenTimeout => keys!("screen_off"),
         Screen::Theme => keys!("theme"),
+        Screen::TimeZone => keys!("time_zone"),
         Screen::SettingsLibrary => keys!("library"),
         Screen::SettingsDisplay => keys!("display"),
         Screen::SettingsSystem => keys!("service"),
@@ -644,6 +647,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
         Screen::Theme => "Theme".into(),
+        Screen::TimeZone => "Time zone".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::SettingsSystem => "Service".into(),

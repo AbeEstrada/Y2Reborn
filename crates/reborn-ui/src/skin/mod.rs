@@ -529,6 +529,7 @@ pub const LAYOUTS: &[&str] = &[
     "crossfade",
     "screen_off",
     "theme",
+    "time_zone",
     "library",
     "display",
     "service",

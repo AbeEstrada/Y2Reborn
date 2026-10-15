@@ -528,6 +528,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.navigation.focus = 2;
     });
     case!("30-display", at(Screen::SettingsDisplay, ""));
+    case!("30b-time-zone", at(Screen::TimeZone, ""), |ui, m| {
+        m.settings.time_zone = "Europe/Berlin".into();
+        m.navigation.focus = ui
+            .rows(m, &[])
+            .iter()
+            .position(|r| r.key == "tz_set:Europe/Berlin")
+            .unwrap_or(0);
+    });
     case!("31-screen-off", at(Screen::ScreenTimeout, ""), |_, m| {
         m.navigation.focus = 1;
         m.settings.screen_timeout_seconds = 30;
@@ -1043,6 +1051,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.skin = skin.clone();
         ui.spin_fixed = Some(0.45);
         ui.motion_fixed = true;
+        // 09:41 UTC.
+        ui.clock_fixed = Some(1_791_798_060);
         setup(&mut ui, &mut m);
         ui.set_resident_thumbs(keys.clone());
         let tracks = std::mem::take(&mut m.library.tracks);

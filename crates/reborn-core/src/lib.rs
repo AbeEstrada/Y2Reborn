@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
+pub mod clock;
 pub mod platform;
 pub mod playlist;
 pub mod sort;
+mod zones;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -562,6 +564,8 @@ pub enum Screen {
     ScreenTimeout,
     /// Skin picker: the built-in look and the installed skins.
     Theme,
+    /// Time zone picker (Settings > Display).
+    TimeZone,
     SettingsLibrary,
     SettingsDisplay,
     SettingsSystem,
@@ -738,6 +742,9 @@ pub struct Settings {
     /// The chosen skin's id; empty is Reborn's own look.
     #[serde(default)]
     pub theme: String,
+    /// The clock's tz database zone, e.g. "Europe/Berlin".
+    #[serde(default = "default_time_zone")]
+    pub time_zone: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -759,6 +766,9 @@ fn default_true() -> bool {
 }
 fn default_brightness() -> u8 {
     80
+}
+fn default_time_zone() -> String {
+    "UTC".into()
 }
 pub const BRIGHTNESS_LEVELS: [u8; 5] = [20, 40, 60, 80, 100];
 
@@ -788,6 +798,7 @@ impl Default for Settings {
             album_view: AlbumView::CoverFlow,
             codec_revision: CODEC_REVISION,
             theme: String::new(),
+            time_zone: default_time_zone(),
         }
     }
 }
@@ -888,6 +899,8 @@ pub enum Effect {
     SetTheme(String),
     /// Look for installed skins again (the picker opened).
     ScanThemes,
+    /// Choose the clock's zone (tz database name).
+    SetTimeZone(String),
     QueueRemove(usize),
     QueueMove {
         index: usize,

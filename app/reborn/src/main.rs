@@ -2250,6 +2250,10 @@ impl Runtime {
                 self.model.settings.screen_timeout_seconds = seconds;
                 self.checkpoint();
             }
+            Effect::SetTimeZone(zone) => {
+                self.model.settings.time_zone = zone;
+                self.checkpoint();
+            }
             Effect::QueueRemove(index) => {
                 if index == self.model.queue_position {
                     self.ui.flash("The current track stays in the queue");

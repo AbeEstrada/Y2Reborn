@@ -105,7 +105,14 @@ fn group(
                 components::toggle(c, WIDTH - 24., cy, on);
             }
             RowKind::Check(on) => {
-                c.text_mid(28., cy, 340., &row.label, face, tint);
+                // A short value (a zone's region and offset) left of the check.
+                let value = text::fit(Face::R11, &row.secondary, 150.);
+                let mut room = 340.;
+                if !value.is_empty() {
+                    room -= text::width(Face::R11, &value) + 16.;
+                    c.text_mid_right(WIDTH - 52., cy, &value, Face::R11, color::MUTED);
+                }
+                c.text_mid(28., cy, room, &row.label, face, tint);
                 if on {
                     components::check(c, WIDTH - 32., cy, accent);
                 }
