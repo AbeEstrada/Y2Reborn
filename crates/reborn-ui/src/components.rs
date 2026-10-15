@@ -513,3 +513,99 @@ pub fn scroll_rail(
     c.rrect(WIDTH - 14., top, 2., height, 1., color::TRACK);
     c.rrect(WIDTH - 14., y.round(), 2., thumb.round(), 1., accent);
 }
+
+/// The red of a live broadcast (LIVE and ON AIR badges).
+pub const LIVE_RED: u32 = 0xFF4B5CFF;
+
+/// A station's logo, or a tile with its initials until (or unless) a logo
+/// arrives. Logos are asked for here; the player fetches and decodes them.
+pub fn station_logo(
+    c: &mut Canvas,
+    ui: &Ui,
+    station: &reborn_core::RadioStation,
+    x: f32,
+    y: f32,
+    size: f32,
+) {
+    if let Some(key) = station.logo_key() {
+        if ui.thumb_resident(key) {
+            c.draw.push(reborn_graphics::Quad {
+                tex: reborn_graphics::Tex::Thumb(key),
+                ..reborn_graphics::Quad::rect(x, y, size, size, color::TEXT)
+            });
+            return;
+        }
+        ui.want_logo(key, &station.favicon);
+    }
+    initials_tile(c, &station.name, x, y, size);
+}
+
+/// A station without a logo: its initials on a tile tinted from its name.
+pub fn initials_tile(c: &mut Canvas, name: &str, x: f32, y: f32, size: f32) {
+    let radius = (size * 0.11).max(4.);
+    let key = reborn_core::logo_key(name);
+    let tints = [
+        0x3B5BDBu32,
+        0xC2255C,
+        0x0B7285,
+        0x5F3DC4,
+        0xE8590C,
+        0x2B8A3E,
+        0x1864AB,
+        0xA61E4D,
+    ];
+    let tint = tints[(key >> 5) as usize % tints.len()] << 8 | 0xFF;
+    c.rrect(x, y, size, size, radius, mix(tint, color::BG, 0.45));
+    // A soft light from the top left gives the tile some depth.
+    c.glow(
+        x + size * 0.3,
+        y + size * 0.25,
+        size * 0.7,
+        size * 0.6,
+        alpha(tint, 0x60),
+    );
+    let initials: String = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty() && !["the", "radio"].contains(&w.to_lowercase().as_str()))
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+    let initials = if initials.is_empty() {
+        name.chars().take(1).flat_map(char::to_uppercase).collect()
+    } else {
+        initials
+    };
+    let face = if size >= 120. && initials.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Face::S36
+    } else if size >= 60. {
+        Face::S25
+    } else if size >= 36. {
+        Face::S15
+    } else {
+        Face::S13
+    };
+    c.text_mid_center(
+        x + size / 2.,
+        y + size / 2.,
+        &initials,
+        face,
+        fade(color::TEXT, 0.92),
+    );
+}
+
+/// A red LIVE badge with its dot; returns its width.
+pub fn live_pill(c: &mut Canvas, x: f32, cy: f32, label: &str) -> f32 {
+    let w = text::width_tracked(Face::S10, label, 1.2) + 26.;
+    c.rrect(x, cy - 9., w, 18., 9., LIVE_RED);
+    c.disc(x + 9.5, cy, 3., color::TEXT);
+    c.text_tracked(
+        x + 17.,
+        cy + Face::S10.mid_offset(),
+        label,
+        Face::S10,
+        color::TEXT,
+        1.2,
+    );
+    w
+}

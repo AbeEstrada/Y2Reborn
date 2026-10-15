@@ -55,6 +55,11 @@ pub enum Icon {
     Backspace,
     Eye,
     EyeOff,
+    Star,
+    StarOn,
+    Globe,
+    Trend,
+    Broadcast,
 }
 
 impl Icon {
@@ -104,6 +109,11 @@ impl Icon {
             Self::Backspace => mask::BACKSPACE,
             Self::Eye => mask::EYE,
             Self::EyeOff => mask::EYE_OFF,
+            Self::Star => mask::STAR,
+            Self::StarOn => mask::STAR_ON,
+            Self::Globe => mask::GLOBE,
+            Self::Trend => mask::TREND,
+            Self::Broadcast => mask::BROADCAST,
         }
     }
 }

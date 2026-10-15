@@ -300,8 +300,67 @@ pub struct RadioStation {
     pub bitrate: u32,
     #[serde(default)]
     pub tags: String,
+    /// The station's logo (an http(s) picture address from the directory).
+    #[serde(default)]
+    pub favicon: String,
+    #[serde(default)]
+    pub homepage: String,
+    /// Languages as the directory names them ("german,english").
+    #[serde(default)]
+    pub language: String,
+    #[serde(default)]
+    pub countrycode: String,
+    /// Directory votes and plays (its popularity).
+    #[serde(default)]
+    pub votes: u32,
+    #[serde(default)]
+    pub clicks: u32,
 }
 impl RadioStation {
+    /// The station's genres from its tags, capitalised, at most `n`.
+    pub fn genres(&self, n: usize) -> Vec<String> {
+        let mut out: Vec<String> = vec![];
+        for tag in self
+            .tags
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        {
+            let name = capitalise(tag);
+            if !out.iter().any(|o| o.eq_ignore_ascii_case(&name)) {
+                out.push(name);
+            }
+            if out.len() == n {
+                break;
+            }
+        }
+        out
+    }
+    /// "AAC · 128 kbps", "MP3", or empty.
+    pub fn format(&self) -> String {
+        match (self.codec.is_empty(), self.bitrate) {
+            (false, b) if b > 0 => format!("{} · {b} kbps", self.codec),
+            (false, _) => self.codec.clone(),
+            (true, b) if b > 0 => format!("{b} kbps"),
+            _ => String::new(),
+        }
+    }
+    /// Languages, capitalised ("German, English").
+    pub fn languages(&self) -> String {
+        self.language
+            .split(',')
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .take(3)
+            .map(capitalise)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+    /// The logo's thumbnail identity (never equal to a cover's: top bit set),
+    /// or `None` without a logo address.
+    pub fn logo_key(&self) -> Option<u64> {
+        (!self.favicon.is_empty()).then(|| logo_key(&self.favicon))
+    }
     /// One line under the station name: "Germany · MP3 128 kbps · jazz".
     pub fn summary(&self) -> String {
         let mut parts = vec![];
@@ -329,6 +388,31 @@ impl RadioStation {
     }
 }
 
+/// A logo's identity: FNV-1a of its address with the top bit set, so it never
+/// meets a cover's thumbnail key. The player names its cache file by it.
+pub fn logo_key(url: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in url.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash | 1 << 63
+}
+
+/// "hip hop" → "Hip Hop"; words already in capitals stay ("BBC", "80s").
+pub fn capitalise(text: &str) -> String {
+    text.split(' ')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// What the Radio screens ask the player for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioRequest {
@@ -348,6 +432,9 @@ pub enum RadioRequest {
     ToggleFavorite(usize),
     /// Add or remove the station playing now.
     ToggleFavoriteCurrent,
+    /// Play, or add or remove, the station Station Info shows.
+    PlayStation(Box<RadioStation>),
+    ToggleFavoriteStation(Box<RadioStation>),
 }
 
 /* A queue occurrence is a playback identity, not a library identity. Two
@@ -471,6 +558,8 @@ pub enum Screen {
     RadioCategories,
     /// Library search results; the navigation filter holds the search text.
     Search,
+    /// One station's details (logo, country, language, genres, format).
+    RadioInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1095,6 +1184,31 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(temp, path)?;
     fs::File::open(parent)?.sync_all()
 }
+#[cfg(test)]
+mod radio_station_tests {
+    use super::*;
+    #[test]
+    fn station_details_read_well() {
+        let s = RadioStation {
+            name: "FIP".into(),
+            codec: "AAC".into(),
+            bitrate: 192,
+            tags: "eclectic,jazz,Jazz,world music".into(),
+            language: "french,english".into(),
+            favicon: "https://fip/logo.png".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.genres(5), ["Eclectic", "Jazz", "World Music"]);
+        assert_eq!(s.format(), "AAC · 192 kbps");
+        assert_eq!(s.languages(), "French, English");
+        let key = s.logo_key().unwrap();
+        assert_eq!(key, logo_key("https://fip/logo.png"));
+        assert!(key >> 63 == 1, "never a cover's key");
+        assert_eq!(RadioStation::default().logo_key(), None);
+        assert_eq!(capitalise("80s hip hop BBC"), "80s Hip Hop BBC");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

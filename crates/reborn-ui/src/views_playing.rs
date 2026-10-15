@@ -29,26 +29,85 @@ pub fn now_playing(
     c.fade_from_bottom(0., 120., WIDTH, HEIGHT - 120., 0x06070ADC);
     components::status_bar(c, ui, m, "", true);
 
+    let radio = t.is_radio();
+    let station = ui.radio.now.as_ref().filter(|_| radio);
     cover_shadow(c, 26., 46., 176.);
     if has_art {
         c.draw.push(Quad {
             tex: Tex::Art,
             ..Quad::rect(26., 46., 176., 176., color::TEXT)
         });
+    } else if radio {
+        // A station without a logo (yet): its initials, as in the lists.
+        components::initials_tile(c, crate::track_title(t), 26., 46., 176.);
     } else {
         components::placeholder(c, 26., 46., 176., 15., 0);
     }
 
-    let radio = t.is_radio();
-    c.text_tracked(
-        222.,
-        61. + Face::S10.mid_offset(),
-        if radio { "LIVE RADIO" } else { "NOW PLAYING" },
-        Face::S10,
-        accent,
-        1.8,
-    );
-    let lines = text::wrap(Face::S25, crate::track_title(t), 236., 2);
+    if radio {
+        let w = components::live_pill(c, 222., 61., "LIVE");
+        c.text_tracked(
+            222. + w + 8.,
+            61. + Face::S10.mid_offset(),
+            &text::fit(Face::S10, &crate::track_title(t).to_uppercase(), 228. - w),
+            Face::S10,
+            accent,
+            1.4,
+        );
+    } else {
+        c.text_tracked(
+            222.,
+            61. + Face::S10.mid_offset(),
+            "NOW PLAYING",
+            Face::S10,
+            accent,
+            1.8,
+        );
+    }
+    // A station: the song it announces as the title, its artist below and the
+    // station under that; before a song is known, the station and its genres.
+    let song = ui.radio.song.as_ref().filter(|_| radio);
+    let (title, second, third) = match (station, song) {
+        (Some(s), Some((title, artist))) => (
+            title.clone(),
+            if artist.is_empty() {
+                s.name.clone()
+            } else {
+                artist.clone()
+            },
+            if artist.is_empty() {
+                s.country.clone()
+            } else {
+                [s.name.clone(), s.country.clone()]
+                    .into_iter()
+                    .filter(|p| !p.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            },
+        ),
+        (Some(s), None) => (
+            s.name.clone(),
+            {
+                let genres = s.genres(3).join(", ");
+                if genres.is_empty() {
+                    "Live".to_owned()
+                } else {
+                    genres
+                }
+            },
+            [s.country.clone(), s.languages()]
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · "),
+        ),
+        _ => (
+            crate::track_title(t).to_owned(),
+            crate::display_or_unknown(&t.artist).to_owned(),
+            crate::display_or_unknown(&t.album).to_owned(),
+        ),
+    };
+    let lines = text::wrap(Face::S25, &title, 236., 2);
     let mut baseline = 107.;
     for line in &lines {
         c.text(222., baseline, line, Face::S25, color::TEXT);
@@ -59,14 +118,14 @@ pub fn now_playing(
     c.text(
         222.,
         artist_baseline,
-        &text::fit(Face::R15, crate::display_or_unknown(&t.artist), 236.),
+        &text::fit(Face::R15, &second, 236.),
         Face::R15,
         0xDEE1E8FF,
     );
     c.text(
         222.,
         artist_baseline + 20.,
-        &text::fit(Face::R11, crate::display_or_unknown(&t.album), 236.),
+        &text::fit(Face::R11, &third, 236.),
         Face::R11,
         color::MUTED,
     );
@@ -90,6 +149,18 @@ pub fn now_playing(
             "Starting…"
         };
         c.text_mid(222., info_cy, 236., note, Face::S13, color::WARNING);
+    } else if radio && song.is_none() && !t.artist.is_empty() && t.artist != "Live" {
+        // Connecting… / Reconnecting… (try n): how the connection is doing.
+        c.text_mid(222., info_cy, 236., &t.artist, Face::S13, color::WARNING);
+    } else if let Some(s) = station {
+        let mut x = 222.;
+        let format = s.format().to_uppercase();
+        if !format.is_empty() {
+            x += components::tag(c, x, info_cy, &format, accent) + 6.;
+        }
+        if !s.countrycode.is_empty() && x < 400. {
+            components::tag(c, x, info_cy, &s.countrycode.to_uppercase(), color::MUTED);
+        }
     } else if let Some(label) = quality_label(t) {
         components::tag(c, 222., info_cy, &label, accent);
     }
@@ -124,7 +195,7 @@ pub fn now_playing(
         color::MUTED,
     );
     let remaining = if radio {
-        "LIVE".to_owned()
+        "ON AIR".to_owned()
     } else {
         format!(
             "-{}",

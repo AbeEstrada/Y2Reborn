@@ -680,7 +680,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 country: "Switzerland".into(),
                 codec: "MP3".into(),
                 bitrate: 128,
-                tags: "jazz".into(),
+                tags: "jazz,smooth jazz,swiss".into(),
+                favicon: "http://a/logo.png".into(),
+                homepage: "https://www.radioswissjazz.ch".into(),
+                language: "german,english".into(),
+                countrycode: "CH".into(),
+                votes: 4210,
+                clicks: 2380,
             },
             reborn_core::RadioStation {
                 uuid: "b".into(),
@@ -689,7 +695,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 country: "France".into(),
                 codec: "AAC".into(),
                 bitrate: 192,
-                tags: "eclectic".into(),
+                tags: "eclectic,jazz,world music".into(),
+                favicon: "http://b/logo.png".into(),
+                homepage: "https://www.radiofrance.fr/fip".into(),
+                language: "french".into(),
+                countrycode: "FR".into(),
+                votes: 9120,
+                clicks: 5021,
             },
             reborn_core::RadioStation {
                 uuid: "c".into(),
@@ -699,6 +711,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 codec: "MP3".into(),
                 bitrate: 128,
                 tags: "ambient,chillout".into(),
+                favicon: String::new(),
+                homepage: "https://somafm.com".into(),
+                language: "english".into(),
+                countrycode: "US".into(),
+                votes: 15400,
+                clicks: 3900,
             },
             reborn_core::RadioStation {
                 uuid: "d".into(),
@@ -708,12 +726,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 codec: "MP3".into(),
                 bitrate: 56,
                 tags: "news".into(),
+                favicon: String::new(),
+                homepage: "https://www.bbc.co.uk/worldservice".into(),
+                language: "english".into(),
+                countrycode: "GB".into(),
+                votes: 7300,
+                clicks: 8800,
             },
         ]
     };
-    case!("60-radio", at(Screen::Radio, ""), |ui, _| {
+    case!("60-radio", at(Screen::Radio, ""), move |ui, m| {
         ui.radio.online = true;
         ui.radio.favorites = vec!["a".into(), "b".into()];
+        ui.radio.now = Some(stations().remove(0));
+        ui.radio.set_song(Some("Ahmad Jamal - Poinciana"));
+        m.navigation.focus = 0;
+    });
+    case!("60b-radio-idle", at(Screen::Radio, ""), |ui, m| {
+        ui.radio.online = true;
+        ui.radio.favorites = vec!["a".into(), "b".into()];
+        m.navigation.focus = 1;
     });
     case!("61-radio-no-wifi", at(Screen::Radio, ""), |ui, _| ui
         .radio
@@ -724,9 +756,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::RadioStations, "Popular"),
         move |ui, m| {
             ui.radio.online = true;
-            ui.radio.stations = stations();
-            ui.radio.favorites = vec!["b".into()];
-            m.navigation.focus = 1;
+            ui.radio.set_stations_ranked(stations(), 2);
+            ui.radio.favorites = vec!["b".into(), "c".into()];
+            ui.radio.now = Some(stations().remove(1));
+            m.navigation.focus = 2;
         }
     );
     case!(
@@ -734,19 +767,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::RadioCategories, "Countries"),
         |ui, _| {
             ui.radio.online = true;
-            ui.radio.categories = [
-                ("DE", "Germany", 5124),
-                ("US", "USA", 6301),
-                ("FR", "France", 2048),
-                ("AT", "Austria", 412),
-            ]
-            .into_iter()
-            .map(|(id, name, n)| reborn_ui::RadioCategory {
-                id: id.into(),
-                name: name.into(),
-                stations: n,
-            })
-            .collect();
+            ui.radio.set_categories(
+                [
+                    ("DE", "Germany", 5124),
+                    ("US", "USA", 6301),
+                    ("FR", "France", 2048),
+                    ("AT", "Austria", 412),
+                    ("GB", "UK", 1890),
+                    ("CH", "Switzerland", 310),
+                ]
+                .into_iter()
+                .map(|(id, name, n)| reborn_ui::RadioCategory {
+                    id: id.into(),
+                    name: name.into(),
+                    stations: n,
+                })
+                .collect(),
+            );
+        }
+    );
+    case!(
+        "63b-radio-genres",
+        at(Screen::RadioCategories, "Genres"),
+        |ui, m| {
+            ui.radio.online = true;
+            ui.radio.genres = true;
+            ui.radio.set_categories(
+                [
+                    ("pop", 9120),
+                    ("news", 6400),
+                    ("jazz", 2300),
+                    ("classical", 3100),
+                    ("hip hop", 1200),
+                    ("80s", 980),
+                ]
+                .into_iter()
+                .map(|(name, n)| reborn_ui::RadioCategory {
+                    id: name.into(),
+                    name: name.into(),
+                    stations: n,
+                })
+                .collect(),
+            );
+            m.navigation.focus = 3;
+        }
+    );
+    case!(
+        "66-radio-station-info",
+        at(Screen::RadioInfo, ""),
+        move |ui, _| {
+            ui.radio.online = true;
+            ui.radio.favorites = vec!["a".into()];
+            ui.radio.info = Some(stations().remove(0));
+            ui.radio.now = Some(stations().remove(0));
         }
     );
     case!("64-radio-search", at(Screen::Radio, ""), |ui, m| {
@@ -777,7 +850,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.replace_queue(vec![reborn_core::Track::radio(&station)], 0)
                 .unwrap();
             m.queue[0].artist = "Ahmad Jamal - Poinciana".into();
+            ui.radio.now = Some(station);
+            ui.radio.set_song(Some("Ahmad Jamal - Poinciana"));
             m.position_ms = 754_000;
+            m.playback = reborn_core::PlaybackState::Playing;
+        }
+    );
+    case!(
+        "65b-radio-tuning-in",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            let station = stations().remove(2);
+            m.replace_queue(vec![reborn_core::Track::radio(&station)], 0)
+                .unwrap();
+            m.queue[0].artist = "Connecting…".into();
+            ui.radio.now = Some(station);
+            m.position_ms = 3_000;
             m.playback = reborn_core::PlaybackState::Playing;
         }
     );

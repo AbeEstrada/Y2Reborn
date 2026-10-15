@@ -1614,6 +1614,57 @@ int rb_media_art_file(const char *path, uint8_t *out, int side) {
   return r;
 }
 
+/* Station logos: the whole picture, aspect kept, centred in side x side
+ * straight-alpha RGBA with transparent margins (a cover is cropped to fill
+ * its square; a logo must never be cut or stretched). Same decoders and
+ * bounds as covers. */
+int rb_media_logo_file(const char *path, uint8_t *out, int side) {
+  if (!path || !out || side < 1 || side > 256)
+    return AVERROR(EINVAL);
+  AVPacket *packet = NULL;
+  enum AVCodecID id;
+  int r = read_image_file(path, &packet, &id);
+  if (r < 0)
+    return r;
+  const AVCodec *codec = avcodec_find_decoder(id);
+  AVCodecContext *ctx = codec ? avcodec_alloc_context3(codec) : NULL;
+  AVFrame *frame = av_frame_alloc();
+  if (!ctx || !frame) r = AVERROR(ENOMEM);
+  if (r >= 0) {
+    ctx->max_pixels = id == AV_CODEC_ID_MJPEG ? 16 * 1024 * 1024 : 4 * 1024 * 1024;
+    ctx->thread_count = 1;
+    if (id == AV_CODEC_ID_MJPEG) ctx->lowres = artwork_lowres(codec, packet, side);
+    r = avcodec_open2(ctx, codec, NULL);
+  }
+  if (r >= 0) r = avcodec_send_packet(ctx, packet);
+  if (r >= 0) r = avcodec_receive_frame(ctx, frame);
+  if (r >= 0 && (frame->width < 1 || frame->height < 1)) r = AVERROR_INVALIDDATA;
+  if (r >= 0) {
+    int w = side, h = side;
+    if (frame->width >= frame->height)
+      h = (int)((int64_t)side * frame->height / frame->width);
+    else
+      w = (int)((int64_t)side * frame->width / frame->height);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    memset(out, 0, (size_t)side * side * 4);
+    struct SwsContext *scale = sws_getContext(frame->width, frame->height, frame->format,
+        w, h, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL, NULL, NULL);
+    if (!scale) r = AVERROR(ENOMEM);
+    else {
+      uint8_t *dest[] = {out + ((size_t)((side - h) / 2) * side + (side - w) / 2) * 4};
+      int stride[] = {side * 4};
+      r = sws_scale(scale, (const uint8_t *const *)frame->data, frame->linesize,
+          0, frame->height, dest, stride);
+      sws_freeContext(scale);
+    }
+  }
+  avcodec_free_context(&ctx);
+  av_frame_free(&frame);
+  av_packet_free(&packet);
+  return r < 0 ? r : 0;
+}
+
 /* Skin pictures: decoded at their own size into straight-alpha RGBA. An image
  * larger than max_w x max_h is refused, never scaled, so a skin looks the same
  * everywhere. `out` holds max_w * max_h * 4 bytes; *w and *h receive the size. */

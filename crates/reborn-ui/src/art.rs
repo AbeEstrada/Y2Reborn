@@ -191,3 +191,198 @@ mod tests {
         assert_eq!(art[(80 * 160 + 80) * 4 + 3], 255);
     }
 }
+
+/// A station logo as a square 160x160 opaque tile. `fitted` is the whole
+/// logo centred in 160x160 with transparent margins (`logo_image`). A logo
+/// with a plain background of its own fills the tile in that colour; a
+/// transparent logo sits at 80 % on a light or dark tile, whichever it
+/// stands out on.
+pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
+    const N: usize = 160;
+    if fitted.len() != N * N * 4 {
+        return None;
+    }
+    let alpha = |x: usize, y: usize| fitted[(y * N + x) * 4 + 3];
+    // The logo's own extent (its non-transparent pixels).
+    let (mut x0, mut y0, mut x1, mut y1) = (N, N, 0, 0);
+    for y in 0..N {
+        for x in 0..N {
+            if alpha(x, y) > 16 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x0 > x1 {
+        return None;
+    }
+    // Its border: opaque and one colour means a background of its own.
+    let mut border = vec![];
+    for x in x0..=x1 {
+        border.push((x, y0));
+        border.push((x, y1));
+    }
+    for y in y0..=y1 {
+        border.push((x0, y));
+        border.push((x1, y));
+    }
+    let opaque: Vec<[f32; 3]> = border
+        .iter()
+        .filter(|&&(x, y)| alpha(x, y) > 230)
+        .map(|&(x, y)| {
+            let i = (y * N + x) * 4;
+            [fitted[i] as f32, fitted[i + 1] as f32, fitted[i + 2] as f32]
+        })
+        .collect();
+    let mean = |v: &[[f32; 3]]| {
+        let n = v.len().max(1) as f32;
+        let mut m = [0f32; 3];
+        for p in v {
+            for c in 0..3 {
+                m[c] += p[c] / n;
+            }
+        }
+        m
+    };
+    // The most common border colour (16 levels per channel) and how much of
+    // the border is close to it.
+    let mut buckets = std::collections::HashMap::new();
+    for p in &opaque {
+        let key = (p[0] as u8 >> 4, p[1] as u8 >> 4, p[2] as u8 >> 4);
+        *buckets.entry(key).or_insert(0usize) += 1;
+    }
+    let common = buckets.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k);
+    let near: Vec<[f32; 3]> = opaque
+        .iter()
+        .copied()
+        .filter(|p| common == Some((p[0] as u8 >> 4, p[1] as u8 >> 4, p[2] as u8 >> 4)))
+        .collect();
+    let edge = mean(&near);
+    let close = opaque
+        .iter()
+        .filter(|p| (0..3).all(|c| (p[c] - edge[c]).abs() < 24.))
+        .count();
+    let rectangle = opaque.len() * 10 >= border.len() * 9;
+    let plain = rectangle && close * 100 >= border.len() * 85;
+    let (background, scale) = if plain {
+        (edge, 1.0)
+    } else if rectangle {
+        // A picture (a photo, a square artwork): it fills the tile; beside a
+        // wide or tall one, its own colours darkened.
+        let all = mean(&opaque);
+        (all.map(|c| c * 0.35 + 8.), 1.0)
+    } else {
+        // Light logos on a dark tile, dark ones on a light tile.
+        let (mut lum, mut weight) = (0f32, 0f32);
+        for i in (0..N * N * 4).step_by(4) {
+            let a = fitted[i + 3] as f32 / 255.;
+            lum += a
+                * (0.2126 * fitted[i] as f32
+                    + 0.7152 * fitted[i + 1] as f32
+                    + 0.0722 * fitted[i + 2] as f32);
+            weight += a;
+        }
+        let light = lum / weight.max(1.) > 150.;
+        (
+            if light {
+                [0x20 as f32, 0x23 as f32, 0x2B as f32]
+            } else {
+                [0xF3 as f32, 0xF3 as f32, 0xF5 as f32]
+            },
+            0.8,
+        )
+    };
+    let mut out = vec![0u8; N * N * 4];
+    let centre = (N as f32 - 1.) / 2.;
+    for y in 0..N {
+        for x in 0..N {
+            // Bilinear sample of the logo shrunk around the centre.
+            let sx = centre + (x as f32 - centre) / scale;
+            let sy = centre + (y as f32 - centre) / scale;
+            let mut px = [0f32; 4];
+            if (0.0..(N - 1) as f32).contains(&sx) && (0.0..(N - 1) as f32).contains(&sy) {
+                let (ix, iy) = (sx as usize, sy as usize);
+                let (fx, fy) = (sx - ix as f32, sy - iy as f32);
+                for (dx, dy, w) in [
+                    (0, 0, (1. - fx) * (1. - fy)),
+                    (1, 0, fx * (1. - fy)),
+                    (0, 1, (1. - fx) * fy),
+                    (1, 1, fx * fy),
+                ] {
+                    let i = ((iy + dy) * N + ix + dx) * 4;
+                    let a = fitted[i + 3] as f32;
+                    for c in 0..3 {
+                        px[c] += w * fitted[i + c] as f32 * a / 255.;
+                    }
+                    px[3] += w * a;
+                }
+            }
+            let a = px[3] / 255.;
+            let o = (y * N + x) * 4;
+            for c in 0..3 {
+                out[o + c] = (px[c] + background[c] * (1. - a)).round().clamp(0., 255.) as u8;
+            }
+            out[o + 3] = 255;
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod logo_tests {
+    use super::*;
+    const N: usize = 160;
+    fn fitted(f: impl Fn(usize, usize) -> [u8; 4]) -> Vec<u8> {
+        (0..N * N).flat_map(|i| f(i % N, i / N)).collect()
+    }
+    #[test]
+    fn a_logo_with_its_own_background_fills_the_tile_in_that_colour() {
+        // A wide white logo with a red mark, margins transparent above and below.
+        let logo = fitted(|x, y| match y {
+            0..40 | 120..160 => [0, 0, 0, 0],
+            _ if (70..90).contains(&x) => [200, 0, 0, 255],
+            _ => [255, 255, 255, 255],
+        });
+        let tile = logo_tile(&logo).unwrap();
+        assert_eq!(
+            &tile[0..4],
+            &[255, 255, 255, 255],
+            "margins take the logo's white"
+        );
+        let mid = (80 * N + 80) * 4;
+        assert_eq!(&tile[mid..mid + 3], &[200, 0, 0]);
+    }
+    #[test]
+    fn a_picture_logo_fills_the_tile() {
+        // A square photo-like logo: no plain border, but opaque to its edges.
+        let photo = fitted(|x, y| [(x * 255 / 160) as u8, (y * 255 / 160) as u8, 90, 255]);
+        let tile = logo_tile(&photo).unwrap();
+        assert_eq!(&tile[0..3], &photo[0..3], "drawn to the corner, not shrunk");
+    }
+    #[test]
+    fn a_transparent_logo_sits_on_a_contrasting_tile() {
+        let disc = |x: usize, y: usize| (x as f32 - 80.).hypot(y as f32 - 80.) < 40.;
+        let white = fitted(|x, y| {
+            if disc(x, y) {
+                [255, 255, 255, 255]
+            } else {
+                [0, 0, 0, 0]
+            }
+        });
+        assert_eq!(&logo_tile(&white).unwrap()[0..3], &[0x20, 0x23, 0x2B]);
+        let black = fitted(|x, y| {
+            if disc(x, y) {
+                [10, 10, 10, 255]
+            } else {
+                [0, 0, 0, 0]
+            }
+        });
+        assert_eq!(&logo_tile(&black).unwrap()[0..3], &[0xF3, 0xF3, 0xF5]);
+        assert!(
+            logo_tile(&fitted(|_, _| [0, 0, 0, 0])).is_none(),
+            "nothing to show"
+        );
+    }
+}

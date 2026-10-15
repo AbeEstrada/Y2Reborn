@@ -32,6 +32,56 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// Stations kept on top of a country's, a genre's or the popular list.
+const TOP_STATIONS: usize = 10;
+
+/// Station logos: one background download at a time, each logo once (a
+/// failure is remembered on disk for a few days). The player asks for the
+/// logos a frame wanted; finished ones are then decoded like covers.
+struct LogoFetcher {
+    requests: std::sync::mpsc::Sender<(u64, String)>,
+    done: std::sync::mpsc::Receiver<u64>,
+    pending: std::collections::HashSet<u64>,
+}
+impl LogoFetcher {
+    fn spawn(cache: PathBuf) -> Option<Self> {
+        let (requests, queue) = std::sync::mpsc::channel::<(u64, String)>();
+        let (finished, done) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("radio-logos".into())
+            .spawn(move || {
+                while let Ok((key, url)) = queue.recv() {
+                    if !reborn_platform::radio::logo_settled(&cache, key) {
+                        let _ = reborn_platform::radio::fetch_logo(&url, &cache, key);
+                    }
+                    if finished.send(key).is_err() {
+                        return;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Self {
+            requests,
+            done,
+            pending: Default::default(),
+        })
+    }
+    fn want(&mut self, key: u64, url: &str) {
+        if self.pending.len() < 64 && self.pending.insert(key) {
+            let _ = self.requests.send((key, url.to_owned()));
+        }
+    }
+    /// Downloads that finished since the last call.
+    fn finished(&mut self) -> usize {
+        let mut n = 0;
+        while let Ok(key) = self.done.try_recv() {
+            self.pending.remove(&key);
+            n += 1;
+        }
+        n
+    }
+}
+
 /// A finished station-directory request; `u64` matches `Runtime::radio_sequence`.
 enum RadioReply {
     Stations(u64, Result<Vec<reborn_core::RadioStation>, String>),
@@ -80,6 +130,15 @@ struct Runtime {
     radio_directory: Arc<Mutex<Option<Arc<reborn_platform::radio::Directory>>>>,
     /// The live line last shown for the station (title or connection state).
     radio_live: Option<String>,
+    /// The list a station was started from, for Previous/Next between stations.
+    radio_list: Vec<reborn_core::RadioStation>,
+    /// Station logos: downloads (once per logo) and the logo shown as Now
+    /// Playing's picture.
+    radio_logos: Option<LogoFetcher>,
+    /// The logo accepted as Now Playing's picture, and one being decoded
+    /// (kept after a failed decode, so a broken logo is not retried).
+    radio_art: Option<u64>,
+    radio_art_pending: Option<u64>,
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
@@ -407,7 +466,7 @@ impl Runtime {
         use reborn_core::RadioRequest;
         use reborn_platform::radio::{own_stations, Directory};
         let local = |ui: &mut Ui, stations: Vec<reborn_core::RadioStation>| {
-            ui.radio.stations = stations;
+            ui.radio.set_stations(stations);
             ui.radio.loading = false;
             ui.radio.error = None;
         };
@@ -441,6 +500,8 @@ impl Runtime {
                 let station = self.radio_current.clone().ok_or("no station is playing")?;
                 self.toggle_favorite(station)?;
             }
+            RadioRequest::PlayStation(station) => self.play_radio(*station)?,
+            RadioRequest::ToggleFavoriteStation(station) => self.toggle_favorite(*station)?,
             network => {
                 self.radio_sequence += 1;
                 let sequence = self.radio_sequence;
@@ -487,7 +548,16 @@ impl Runtime {
             RadioReply::Stations(sequence, result) if sequence == self.radio_sequence => {
                 match result {
                     Ok(stations) => {
-                        self.ui.radio.stations = stations;
+                        self.refresh_favorites(&stations);
+                        // A country's, a genre's and the popular list keep
+                        // their ten most listened stations on top.
+                        use reborn_core::RadioRequest::{Country, Genre, Popular};
+                        match self.ui.radio.last_request {
+                            Some(Country { .. } | Genre(_) | Popular) => {
+                                self.ui.radio.set_stations_ranked(stations, TOP_STATIONS)
+                            }
+                            _ => self.ui.radio.set_stations(stations),
+                        }
                         (sequence, None)
                     }
                     Err(e) => (sequence, Some(e)),
@@ -496,14 +566,15 @@ impl Runtime {
             RadioReply::Categories(sequence, result) if sequence == self.radio_sequence => {
                 match result {
                     Ok(list) => {
-                        self.ui.radio.categories = list
-                            .into_iter()
-                            .map(|c| reborn_ui::RadioCategory {
-                                id: c.id,
-                                name: c.name,
-                                stations: c.stations,
-                            })
-                            .collect();
+                        self.ui.radio.set_categories(
+                            list.into_iter()
+                                .map(|c| reborn_ui::RadioCategory {
+                                    id: c.id,
+                                    name: c.name,
+                                    stations: c.stations,
+                                })
+                                .collect(),
+                        );
                         (sequence, None)
                     }
                     Err(e) => (sequence, Some(e)),
@@ -522,6 +593,23 @@ impl Runtime {
         }
         self.model.replace_queue(vec![Track::radio(&station)], 0)?;
         self.radio_live = None;
+        // Previous/Next move through the list the station was chosen from.
+        if self
+            .ui
+            .radio
+            .stations
+            .iter()
+            .any(|s| s.key() == station.key())
+        {
+            self.radio_list = self.ui.radio.stations.clone();
+        } else if !self.radio_list.iter().any(|s| s.key() == station.key()) {
+            self.radio_list.clear();
+        }
+        self.ui.radio.now = Some(station.clone());
+        self.ui.radio.set_song(None);
+        self.radio_art = None;
+        self.radio_art_pending = None;
+        self.art = false;
         self.load()?;
         if !station.uuid.is_empty() {
             // The directory counts plays for its popularity lists; best effort.
@@ -569,20 +657,77 @@ impl Runtime {
             .collect();
         // The Favorites list on screen follows at once.
         if self.ui.radio.last_request == Some(reborn_core::RadioRequest::Favorites) {
-            self.ui.radio.stations = self.radio_favorites.clone();
+            self.ui.radio.set_stations(self.radio_favorites.clone());
         }
         Ok(())
+    }
+    /// Favorites saved before the directory sent logos and details get them
+    /// when the station turns up in a list again.
+    fn refresh_favorites(&mut self, fresh: &[reborn_core::RadioStation]) {
+        let mut changed = false;
+        for saved in &mut self.radio_favorites {
+            if saved.uuid.is_empty() {
+                continue;
+            }
+            if let Some(f) = fresh.iter().find(|f| f.uuid == saved.uuid) {
+                if f != saved {
+                    *saved = f.clone();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let _ = reborn_platform::radio::save_favorites(
+                &self.root.join("state/radio.json"),
+                &self.radio_favorites,
+            );
+        }
+    }
+    /// Previous/Next while a station plays: the neighbouring station of the
+    /// list it was started from.
+    fn zap(&mut self, delta: i32) -> Result<bool, String> {
+        let Some(current) = self.radio_current.as_ref() else {
+            return Ok(false);
+        };
+        let Some(at) = self
+            .radio_list
+            .iter()
+            .position(|s| s.key() == current.key())
+        else {
+            return Ok(false);
+        };
+        let n = self.radio_list.len() as isize;
+        if n < 2 {
+            return Ok(false);
+        }
+        let next = self.radio_list[(at as isize + delta as isize).rem_euclid(n) as usize].clone();
+        self.play_radio(next)?;
+        Ok(true)
     }
     /// The live line under a playing station: its announced song, or how the
     /// connection is doing.
     fn radio_tick(&mut self) {
-        let Some(current) = self.model.current() else {
-            return;
-        };
-        if !current.is_radio() {
+        let radio = self.model.current().is_some_and(Track::is_radio);
+        if !radio {
+            if self.ui.radio.now.take().is_some() {
+                self.ui.radio.set_song(None);
+                self.radio_art = None;
+                self.dirty.mark_render();
+            }
             return;
         }
         use reborn_platform::radio::StreamState;
+        let song = match reborn_platform::radio::live() {
+            Some((StreamState::Playing, Some(title))) => Some(title),
+            _ => None,
+        };
+        if self.ui.radio.song.is_some() != song.is_some()
+            || song
+                .as_deref()
+                .is_some_and(|t| self.radio_live.as_deref() != Some(t))
+        {
+            self.ui.radio.set_song(song.as_deref());
+        }
         let line = match reborn_platform::radio::live() {
             Some((StreamState::Connecting, _)) => "Connecting…".to_owned(),
             Some((StreamState::Reconnecting { attempt }, _)) => {
@@ -1447,7 +1592,10 @@ impl Runtime {
                 } else {
                     -1
                 };
-                if self.model.step(delta) {
+                // A station has no next track: the next station of its list.
+                if self.model.current().is_some_and(Track::is_radio) {
+                    self.zap(delta)?;
+                } else if self.model.step(delta) {
                     self.load()?
                 } else {
                     self.model.invalidate();
@@ -2929,6 +3077,14 @@ fn run() -> Result<(), String> {
         radio_replies: std::sync::mpsc::channel(),
         radio_directory: Arc::new(Mutex::new(None)),
         radio_live: None,
+        radio_list: vec![],
+        radio_logos: if headless {
+            None
+        } else {
+            LogoFetcher::spawn(root.join("cache"))
+        },
+        radio_art: None,
+        radio_art_pending: None,
         headless,
         last_activity: Instant::now(),
         query: Some(initial_catalog),
@@ -3085,6 +3241,22 @@ fn run() -> Result<(), String> {
                 if performance.enabled() {
                     performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.rgba.as_ref().map(Vec::len)}));
                 }
+                if reply.full && rt.radio_art == Some(reply.thumb) {
+                    // The station's logo as Now Playing's picture and colour.
+                    if reply.rgba.is_some() {
+                        rt.radio_art_pending = None;
+                    }
+                    if let (Some(rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
+                        rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
+                        let mut rounded = rgba;
+                        reborn_ui::art::round_corners(&mut rounded, 160);
+                        if renderer.artwork(&rounded).is_ok() {
+                            rt.art = true;
+                            rt.dirty.mark_render();
+                        }
+                    }
+                    continue;
+                }
                 if reply.full {
                     // Cover Flow's centre cover at full resolution.
                     if let (Some(mut rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
@@ -3128,13 +3300,64 @@ fn run() -> Result<(), String> {
                                     .find(|s| s.id == track.source_id)
                                     .and_then(|s| s.mount_id),
                                 &rt.model.settings.music_directory,
-                            ),
+                            )
+                            .into(),
                             cache: rt.root.join("cache"),
                         })
                     })
                     .collect::<Vec<_>>();
+                let mut jobs = jobs;
+                // Station logos: decode the ones on disk, download the others.
+                let cache = rt.root.join("cache");
+                if rt.radio_logos.as_mut().is_some_and(|f| f.finished() > 0) {
+                    rt.dirty.mark_render();
+                }
+                for (key, url) in rt.ui.take_wanted_logos() {
+                    if rt.graphics.as_ref().is_some_and(|g| g.thumb_resident(key)) {
+                        continue;
+                    }
+                    let file = reborn_platform::radio::logo_file(&cache, key);
+                    if file.exists() {
+                        jobs.push(artwork::Job {
+                            thumb: key,
+                            art: artwork::Art::Logo(file),
+                            cache: cache.clone(),
+                        });
+                    } else if rt.ui.radio.online {
+                        if let Some(fetcher) = &mut rt.radio_logos {
+                            fetcher.want(key, &url);
+                        }
+                    }
+                }
                 if !jobs.is_empty() {
                     worker.want(jobs);
+                }
+                // The playing station's logo becomes Now Playing's picture.
+                if !rt.art {
+                    if let Some((key, url)) = rt
+                        .ui
+                        .radio
+                        .now
+                        .as_ref()
+                        .and_then(|s| Some((s.logo_key()?, s.favicon.clone())))
+                    {
+                        let file = reborn_platform::radio::logo_file(&cache, key);
+                        if file.exists() {
+                            if rt.radio_art_pending != Some(key) {
+                                rt.radio_art = Some(key);
+                                rt.radio_art_pending = Some(key);
+                                worker.want_cover(artwork::Job {
+                                    thumb: key,
+                                    art: artwork::Art::Logo(file),
+                                    cache: cache.clone(),
+                                });
+                            }
+                        } else if rt.ui.radio.online {
+                            if let Some(fetcher) = &mut rt.radio_logos {
+                                fetcher.want(key, &url);
+                            }
+                        }
+                    }
                 }
                 if let Some((key, index)) = rt.ui.take_cover_request() {
                     if let Some(track) = tracks.get(index) {
@@ -3148,7 +3371,8 @@ fn run() -> Result<(), String> {
                                     .find(|s| s.id == track.source_id)
                                     .and_then(|s| s.mount_id),
                                 &rt.model.settings.music_directory,
-                            ),
+                            )
+                            .into(),
                             cache: rt.root.join("cache"),
                         });
                     }

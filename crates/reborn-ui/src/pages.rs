@@ -102,6 +102,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Radio => radio_menu(ui),
         Screen::RadioStations => radio_stations(ui),
         Screen::RadioCategories => radio_categories(ui),
+        Screen::RadioInfo => radio_info(ui),
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
@@ -357,34 +358,72 @@ fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
     })
 }
 
-/// Internet radio: the owner's lists first, then the community directory.
+/// Internet radio: the station on air, then the owner's lists, then the
+/// community directory. Without Wi-Fi a first row leads to Wi-Fi; favorites
+/// and own lists stay usable.
 fn radio_menu(ui: &Ui) -> Page {
     let r = &ui.radio;
     let favorites = match r.favorites.len() {
-        0 => String::new(),
+        0 => "Hold Select on a station to add it".to_owned(),
         1 => "1 station".into(),
         n => format!("{n} stations"),
     };
-    let rows = vec![
-        row("Favorites", "radio_favorites", favorites),
-        row("Popular", "radio_popular", ""),
-        row("Countries", "radio_countries", ""),
-        row("Genres", "radio_genres", ""),
-        row("Search", "radio_search", ""),
-        row("My Stations", "radio_own", "Radio folder"),
-    ];
-    if !r.online {
-        return Page::hero(
-            "Radio Needs Wi-Fi",
-            "Connect to Wi-Fi to listen to internet radio. Favorites and your own lists stay here.",
-        )
-        .with_rows(
-            std::iter::once(row("Wi-Fi", "radio_wifi", ""))
-                .chain(rows)
-                .collect(),
-        );
+    let mut rows = vec![];
+    if let Some(now) = &r.now {
+        rows.push(row(&now.name, "radio_now", "On Air"));
     }
+    if !r.online {
+        rows.push(row(
+            "Connect to Wi-Fi",
+            "radio_wifi",
+            "Radio needs the internet",
+        ));
+    }
+    rows.extend([
+        row("Favorites", "radio_favorites", favorites),
+        row("Popular", "radio_popular", "Most listened worldwide"),
+        row(
+            "Countries",
+            "radio_countries",
+            "Stations from every country",
+        ),
+        row("Genres", "radio_genres", "Jazz, rock, news and more"),
+        row("Search", "radio_search", "Find a station by name"),
+        row("My Stations", "radio_own", "Your .m3u and .pls lists"),
+    ]);
     Page::rows(rows)
+}
+
+/// One station's details; its actions are the rows.
+fn radio_info(ui: &Ui) -> Page {
+    let Some(station) = &ui.radio.info else {
+        return Page::hero("No Station", "Choose a station first.").with_rows(radio_back());
+    };
+    let playing = ui
+        .radio
+        .now
+        .as_ref()
+        .is_some_and(|now| now.key() == station.key());
+    Page::rows(vec![
+        row(
+            if playing { "Now Playing" } else { "Play" },
+            if playing {
+                "radio_now"
+            } else {
+                "radio_info_play"
+            },
+            "",
+        ),
+        row(
+            if ui.radio.is_favorite(station) {
+                "Remove from Favorites"
+            } else {
+                "Add to Favorites"
+            },
+            "radio_info_favorite",
+            "",
+        ),
+    ])
 }
 
 fn radio_back() -> Vec<Item> {

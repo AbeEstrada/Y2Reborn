@@ -499,6 +499,45 @@ def ic_eye_off(p):
     p.line([(6, 27), (26, 7)], 2.4)
 
 
+# Radio (Beta 5.1): favourite stars, countries, popular, a live broadcast.
+def star_points(cx=16, cy=16.8, outer=12.5, inner=5.2):
+    pts = []
+    for k in range(10):
+        r = outer if k % 2 == 0 else inner
+        a = math.radians(-90 + 36 * k)
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def ic_star(p):
+    pts = star_points()
+    p.line(pts + [pts[0]], 2.0)
+
+
+def ic_star_on(p):
+    p.poly(star_points())
+
+
+def ic_globe(p):
+    p.ellipse(16, 16, 11.5, outline=True, width=2.2)
+    p.line([(4.8, 16), (27.2, 16)], 2.0)
+    # The meridian: a lens of two arcs.
+    p.arc(31, 16, 19, 143, 217, 2.0)
+    p.arc(1, 16, 19, 323, 37, 2.0)
+
+
+def ic_trend(p):
+    p.line([(5, 23), (12, 15.5), (17, 20), (26, 10)], 2.6)
+    arrow(p, (27.5, 8.5), (0.707, -0.707), 4.2)
+
+
+def ic_broadcast(p):
+    p.ellipse(16, 16, 3.2)
+    for r in (7.5, 12.5):
+        p.arc(16, 16, r, -42, 42, 2.4)
+        p.arc(16, 16, r, 138, 222, 2.4)
+
+
 ICONS = [
     ('back', 32, ic_back), ('chevron', 32, ic_chevron), ('check', 32, ic_check), ('close', 32, ic_close),
     ('play', 32, lambda p: ic_play(p, 32)), ('pause', 32, lambda p: ic_pause(p, 32)),
@@ -515,6 +554,8 @@ ICONS = [
     ('vinyl', 32, ic_disc), ('person', 32, ic_person), ('crossfade', 32, ic_crossfade),
     ('shift', 32, ic_shift), ('shift_on', 32, ic_shift_on), ('backspace', 32, ic_backspace),
     ('eye', 32, ic_eye), ('eye_off', 32, ic_eye_off),
+    ('star', 32, ic_star), ('star_on', 32, ic_star_on), ('globe', 32, ic_globe),
+    ('trend', 32, ic_trend), ('broadcast', 32, ic_broadcast),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

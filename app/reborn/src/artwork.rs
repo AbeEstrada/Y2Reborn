@@ -61,11 +61,57 @@ impl Key {
         .then(|| Arc::new(pin))
     }
 }
-/// A thumbnail wanted by the UI: the opaque id the renderer uses, the track
-/// whose cover supplies it and the directory of the on-disk cache.
+/// What supplies a picture: a track's cover or a downloaded station logo.
+pub enum Art {
+    Track(Key),
+    // The benchmark build shares this file and decodes covers only.
+    #[allow(dead_code)]
+    Logo(PathBuf),
+}
+impl From<Key> for Art {
+    fn from(key: Key) -> Self {
+        Self::Track(key)
+    }
+}
+impl Art {
+    /// The picture as a 160x160 RGBA square: a cover, or a logo on its tile.
+    fn load(&self, cancel: &Cancel) -> Option<Vec<u8>> {
+        match self {
+            Self::Track(key) => key.load_cover(cancel),
+            Self::Logo(path) => {
+                let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
+                    reborn_platform::workload::Class::ArtworkDecode,
+                );
+                reborn_media::logo_image(path, 160)
+                    .ok()
+                    .and_then(|fitted| reborn_ui::art::logo_tile(&fitted))
+            }
+        }
+    }
+    /// Size and modification time of the source, part of a cache file's name.
+    fn revision(&self) -> (u64, i64) {
+        match self {
+            Self::Track(key) => key.revision(),
+            Self::Logo(path) => std::fs::metadata(path)
+                .map(|m| {
+                    (
+                        m.len(),
+                        m.modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map_or(0, |d| d.as_secs() as i64),
+                    )
+                })
+                .unwrap_or((0, 0)),
+        }
+    }
+}
+
+/// A thumbnail wanted by the UI: the opaque id the renderer uses, what
+/// supplies the picture and the directory of the on-disk cache.
 pub struct Job {
     pub thumb: u64,
-    pub art: Key,
+    pub art: Art,
     pub cache: PathBuf,
 }
 pub struct Reply {
@@ -267,9 +313,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         }
         let started = std::time::Instant::now();
         if full {
-            let rgba = Cancel::new()
-                .ok()
-                .and_then(|cancel| job.art.load_cover(&cancel));
+            let rgba = Cancel::new().ok().and_then(|cancel| job.art.load(&cancel));
             if let Ok(mut guard) = lock.lock() {
                 guard.current = None;
                 *guard.unread.entry((job.thumb, true)).or_insert(0) += 1;
@@ -295,7 +339,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
             None => {
                 let cancel = Cancel::new().ok();
                 let rgba = cancel
-                    .and_then(|cancel| job.art.load_cover(&cancel))
+                    .and_then(|cancel| job.art.load(&cancel))
                     .and_then(|cover| reborn_ui::art::thumbnail(&cover));
                 if let Some(bytes) = &rgba {
                     if cached < CACHE_LIMIT {
@@ -380,7 +424,7 @@ mod tests {
     fn job(root: &Path, track: &Track, thumb: u64) -> Job {
         Job {
             thumb,
-            art: Key::new(track, None, root),
+            art: Key::new(track, None, root).into(),
             cache: root.join("cache"),
         }
     }
@@ -564,5 +608,53 @@ mod tests {
         std::fs::remove_file(root.join("cover.png")).unwrap();
         assert_eq!(key.load_cover(&Cancel::new().unwrap()).unwrap(), embedded);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Real logos end to end (needs the internet):
+    /// `REBORN_LOGO_OUT=dir cargo test -p reborn -- --ignored live_logos`
+    /// writes each 160x160 tile as raw RGBA next to a list of the stations.
+    #[test]
+    #[ignore]
+    fn live_logos_download_decode_and_tile() {
+        use reborn_platform::radio;
+        let out = PathBuf::from(std::env::var("REBORN_LOGO_OUT").unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("reborn-logos")
+                .display()
+                .to_string()
+        }));
+        std::fs::create_dir_all(&out).unwrap();
+        let directory = radio::Directory::discover();
+        let stations = directory.popular().unwrap();
+        let (mut tried, mut tiles) = (0, 0);
+        let mut names = String::new();
+        for s in stations.iter().filter(|s| !s.favicon.is_empty()).take(24) {
+            tried += 1;
+            let key = s.logo_key().unwrap();
+            let Ok(file) = radio::fetch_logo(&s.favicon, &out, key) else {
+                names.push_str(&format!("{key:016x}\tno logo\t{}\n", s.name));
+                continue;
+            };
+            let tile = Art::Logo(file).load(&Cancel::new().unwrap());
+            if let Some(tile) = &tile {
+                tiles += 1;
+                std::fs::write(out.join(format!("{key:016x}.rgba")), tile).unwrap();
+            }
+            names.push_str(&format!(
+                "{key:016x}\t{}\t{}\n",
+                if tile.is_some() {
+                    "tile"
+                } else {
+                    "undecodable"
+                },
+                s.name
+            ));
+        }
+        std::fs::write(out.join("stations.tsv"), names).unwrap();
+        eprintln!("{tiles} tiles from {tried} logos in {}", out.display());
+        assert!(
+            tiles * 2 >= tried,
+            "most popular stations have a usable logo"
+        );
     }
 }

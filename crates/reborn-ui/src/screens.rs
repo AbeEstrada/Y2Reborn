@@ -74,6 +74,9 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
+        Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
+            crate::views_radio::screen(&mut c, ui, m, tracks, interactive)
+        }
         _ => views_system::page(&mut c, ui, m, tracks, interactive),
     }
     overlays(&mut c, ui, m, tracks);
@@ -114,6 +117,9 @@ fn native_screen(
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
+        Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
+            crate::views_radio::screen(c, ui, m, tracks, interactive)
+        }
         _ => views_system::page(c, ui, m, tracks, interactive),
     }
 }
@@ -156,6 +162,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Radio => keys!("radio"),
         Screen::RadioStations => keys!("radio_stations"),
         Screen::RadioCategories => keys!("radio_categories"),
+        Screen::RadioInfo => keys!("radio_info"),
         Screen::Bluetooth => keys!("bluetooth"),
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
@@ -613,6 +620,7 @@ pub fn screen_title(m: &AppModel) -> String {
         }
         Screen::RadioStations => "Stations".into(),
         Screen::RadioCategories => "Radio".into(),
+        Screen::RadioInfo => "Station Info".into(),
         Screen::Bluetooth => "Bluetooth".into(),
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),
@@ -647,7 +655,8 @@ pub(crate) fn count_label(n: usize) -> String {
     let mut out = String::new();
     for (i, ch) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push('\u{2009}');
+            // A no-break space: the thin space (U+2009) is not in the fonts.
+            out.push('\u{a0}');
         }
         out.push(ch);
     }

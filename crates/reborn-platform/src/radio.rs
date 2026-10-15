@@ -394,6 +394,100 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
+// ---------------------------------------------------------------- logos
+
+/// Logos larger than this are not downloaded (a logo is a few kilobytes).
+const LOGO_MAX_BYTES: usize = 300_000;
+/// A logo that could not be fetched is not asked for again this long.
+const LOGO_RETRY: Duration = Duration::from_secs(3 * 24 * 3600);
+
+/// Where a station logo is kept: `<cache>/radio-logos/<key>.img`.
+pub fn logo_file(cache: &Path, key: u64) -> PathBuf {
+    cache.join("radio-logos").join(format!("{key:016x}.img"))
+}
+
+/// The logo is on disk, or fetching it failed recently: do not fetch.
+pub fn logo_settled(cache: &Path, key: u64) -> bool {
+    let file = logo_file(cache, key);
+    file.exists()
+        || std::fs::metadata(file.with_extension("none"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age < LOGO_RETRY)
+}
+
+/// Download a station logo once and keep it as a picture the decoder reads:
+/// PNG, JPEG or WebP as sent, the largest PNG inside an .ico. Anything else
+/// (SVG, GIF, BMP icons, web pages) is remembered as missing for a while.
+pub fn fetch_logo(url: &str, cache: &Path, key: u64) -> Result<PathBuf, String> {
+    let file = logo_file(cache, key);
+    let result = (|| {
+        if !http_url(url) {
+            return Err("not an http(s) address".to_owned());
+        }
+        let output = Command::new(curl())
+            .args(["--silent", "--fail", "--location", "--max-redirs", "4"])
+            .args(["--proto", "=http,https", "--proto-redir", "=http,https"])
+            .args(["--connect-timeout", "8", "--max-time", "15"])
+            .args(["--max-filesize", &LOGO_MAX_BYTES.to_string()])
+            .args(["--user-agent", USER_AGENT, "--", url])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("network tool unavailable: {e}"))?;
+        if !output.status.success() || output.stdout.len() > LOGO_MAX_BYTES {
+            return Err("logo not available".into());
+        }
+        logo_picture(&output.stdout)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| "unsupported logo format".to_owned())
+    })();
+    let _ = std::fs::create_dir_all(file.parent().unwrap_or(cache));
+    match result {
+        Ok(bytes) => {
+            let temp = file.with_extension("tmp");
+            std::fs::write(&temp, &bytes)
+                .and_then(|()| std::fs::rename(&temp, &file))
+                .map_err(|e| e.to_string())?;
+            Ok(file)
+        }
+        Err(e) => {
+            let _ = std::fs::write(file.with_extension("none"), b"");
+            Err(e)
+        }
+    }
+}
+
+/// The decodable picture in a downloaded logo, if any.
+pub fn logo_picture(bytes: &[u8]) -> Option<&[u8]> {
+    let png = |b: &[u8]| b.starts_with(b"\x89PNG\r\n\x1a\n");
+    if png(bytes)
+        || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+    {
+        return Some(bytes);
+    }
+    // ICO: reserved 0, type 1, count; 16-byte entries (width, height, ...,
+    // size at 8, offset at 12). Pick the largest entry that is a PNG.
+    if bytes.len() < 6 || bytes[..4] != [0, 0, 1, 0] {
+        return None;
+    }
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    let entry = |i: usize| -> Option<(u32, &[u8])> {
+        let e = bytes.get(6 + i * 16..6 + i * 16 + 16)?;
+        let side = |b: u8| if b == 0 { 256 } else { u32::from(b) };
+        let size = u32::from_le_bytes(e[8..12].try_into().ok()?) as usize;
+        let offset = u32::from_le_bytes(e[12..16].try_into().ok()?) as usize;
+        let data = bytes.get(offset..offset.checked_add(size)?)?;
+        png(data).then_some((side(e[0]) * side(e[1]), data))
+    };
+    (0..count.min(32))
+        .filter_map(entry)
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, data)| data)
+}
+
 // ---------------------------------------------------------------- stream
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -876,6 +970,16 @@ pub fn stations(value: &serde_json::Value) -> Vec<Station> {
                 },
                 bitrate: s["bitrate"].as_u64().unwrap_or(0).min(10_000) as u32,
                 tags: text("tags").chars().take(120).collect(),
+                favicon: Some(text("favicon"))
+                    .filter(|u| http_url(u) && u.len() <= 512)
+                    .unwrap_or_default(),
+                homepage: Some(text("homepage"))
+                    .filter(|u| http_url(u) && u.len() <= 512)
+                    .unwrap_or_default(),
+                language: text("language").chars().take(60).collect(),
+                countrycode: text("countrycode").chars().take(2).collect(),
+                votes: s["votes"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
+                clicks: s["clickcount"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
             })
         })
         .collect()
@@ -1151,6 +1255,36 @@ mod tests {
             finished.recv_timeout(Duration::from_secs(5)).is_ok(),
             "stopping the station hung"
         );
+    }
+
+    #[test]
+    fn logos_are_kept_as_png_jpeg_or_webp_and_icons_give_their_largest_png() {
+        let png: &[u8] = b"\x89PNG\r\n\x1a\nrest";
+        assert_eq!(logo_picture(png), Some(png));
+        assert!(logo_picture(&[0xFF, 0xD8, 0xFF, 0xE0]).is_some());
+        assert!(logo_picture(b"<svg xmlns=...").is_none());
+        assert!(logo_picture(b"GIF89a....").is_none());
+        // An .ico with a 16 px BMP and a 64 px PNG entry: the PNG.
+        let small_png = [png, b"16"].concat();
+        let big_png = [png, b"64px"].concat();
+        let mut ico = vec![0, 0, 1, 0, 3, 0];
+        let header = 6 + 3 * 16;
+        let entries: [(u8, &[u8]); 3] = [(16, b"BMPDATA"), (64, &big_png), (32, &small_png)];
+        let mut offset = header;
+        for (side, data) in entries {
+            ico.extend([side, side, 0, 0, 1, 0, 32, 0]);
+            ico.extend((data.len() as u32).to_le_bytes());
+            ico.extend((offset as u32).to_le_bytes());
+            offset += data.len();
+        }
+        for (_, data) in entries {
+            ico.extend(data);
+        }
+        assert_eq!(logo_picture(&ico), Some(&big_png[..]));
+        // A corrupt directory entry never reads outside the file.
+        let mut broken = ico.clone();
+        broken[6 + 16 + 12] = 0xFF;
+        assert_eq!(logo_picture(&broken), Some(&small_png[..]));
     }
 
     /// Live check against the real directory and a real station (needs the

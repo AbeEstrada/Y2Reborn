@@ -338,7 +338,7 @@ fn run() -> Result<(), String> {
             fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
             worker.want(vec![artwork::Job {
                 thumb: index as u64 + 1,
-                art: artwork::Key::new(&track, None, std::path::Path::new(dir)),
+                art: artwork::Key::new(&track, None, std::path::Path::new(dir)).into(),
                 cache: cache.clone(),
             }]);
             let reply = worker

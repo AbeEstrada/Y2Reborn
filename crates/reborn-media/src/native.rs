@@ -137,6 +137,7 @@ struct MediaApi {
     seek: MediaSeek,
     artwork: MediaArtwork,
     artwork_file: MediaArtworkFile,
+    logo_file: MediaArtworkFile,
     image_file: MediaImageFile,
     convert: MediaConvert,
     crossfade: MediaCrossfade,
@@ -209,6 +210,7 @@ impl MediaApi {
                     seek: Self::symbol(handle, b"rb_media_seek\0")?,
                     artwork: Self::symbol(handle, b"rb_media_art\0")?,
                     artwork_file: Self::symbol(handle, b"rb_media_art_file\0")?,
+                    logo_file: Self::symbol(handle, b"rb_media_logo_file\0")?,
                     image_file: Self::symbol(handle, b"rb_media_image_file\0")?,
                     convert: Self::symbol(handle, b"rb_media_convert\0")?,
                     crossfade: Self::symbol(handle, b"rb_media_crossfade\0")?,
@@ -814,6 +816,24 @@ pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
     let mut b = vec![0; 160 * 160 * 4];
     // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
     let r = unsafe { (api.artwork_file)(name.as_ptr(), b.as_mut_ptr(), 160) };
+    if r < 0 {
+        Err(error(api, r))
+    } else {
+        Ok(b)
+    }
+}
+/// A station logo (JPEG, PNG or WebP) whole and undistorted, centred in a
+/// `side` x `side` straight-alpha RGBA square with transparent margins.
+pub fn logo_image(path: &Path, side: u32) -> Result<Vec<u8>, String> {
+    use std::os::unix::ffi::OsStrExt;
+    if side == 0 || side > 256 {
+        return Err("logo size".into());
+    }
+    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+    let api = api()?;
+    let mut b = vec![0; side as usize * side as usize * 4];
+    // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
+    let r = unsafe { (api.logo_file)(name.as_ptr(), b.as_mut_ptr(), side as c_int) };
     if r < 0 {
         Err(error(api, r))
     } else {

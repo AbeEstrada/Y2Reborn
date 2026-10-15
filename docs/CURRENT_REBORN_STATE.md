@@ -1,6 +1,30 @@
 # Current Reborn state on the Y2
 
-## Since 1.0.0-beta.5 (not yet released): live search and a faster search index
+## Since 1.0.0-beta.5 (not yet released): live search, a faster search index, Radio as its own section
+
+**Radio, reworked** (`views_radio`, owner: "radio should feel like its own premium section", "sort
+everything by alphabet", "top 10 radio stations for each country on top"):
+- Home of Radio: an On Air card for the station playing (logo, ON AIR, the announced song), then Favorites,
+  Popular, Countries, Genres, Search and My Stations as coloured icon tiles with a line each; without Wi-Fi
+  a Connect to Wi-Fi row on top (favorites and own lists stay usable).
+- Station logos from the directory (`favicon`): downloaded once per logo by a background thread
+  (`radio::fetch_logo`, ≤300 kB, PNG/JPEG/WebP, the largest PNG in an .ico; failures remembered three days),
+  decoded whole without stretching (`rb_media_logo_file`) and laid on a tile (`art::logo_tile`: a logo's own
+  plain background fills the tile, a picture fills it, a transparent logo sits on a light or dark tile).
+  Without a logo, a tinted tile with the station's initials. Live check: 21 of 24 popular stations' logos.
+- Lists A to Z (stations, favorites, own lists, countries, genres); a country's, a genre's and the popular
+  list keep their ten most listened stations on top, ranked, the rest A to Z. Station rows: logo, name,
+  country · genre · format, a star on favorites, LIVE on the station playing. Countries carry their code,
+  genres are capitalised.
+- Station Info (hold Select on a station or on Now Playing): logo, country, language, format, votes,
+  genres, homepage; Play / Now Playing and Favorites.
+- Now Playing: the logo as the picture and colour, a LIVE badge with the station's name, the announced
+  song as title and artist, the station, format and country; Previous/Next switch to the neighbouring
+  station of the list it was started from.
+- Directory details kept per station (logo, homepage, language, country code, votes, plays); favorites
+  saved earlier gain them when the station shows up in a list again.
+- Fixed: grouped numbers (1 000 songs and more on Home) used a thin space missing from the fonts.
+
 
 **Live search.** The library search shows its results above a compact keyboard while you type: three rows
 (artists, then albums, then songs, up to 60), the count in the field, a hint while empty. Back on the top key

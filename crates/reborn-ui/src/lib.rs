@@ -20,6 +20,7 @@ pub mod theme;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
+mod views_radio;
 mod views_settings;
 mod views_system;
 
@@ -235,11 +236,68 @@ pub struct RadioView {
     pub online: bool,
     /// Repeats the last list request ("Try Again").
     pub last_request: Option<reborn_core::RadioRequest>,
+    /// The station playing now (Radio's On Air card, Now Playing).
+    pub now: Option<reborn_core::RadioStation>,
+    /// The song the station announces: (title, artist), artist possibly empty.
+    pub song: Option<(String, String)>,
+    /// The station whose details Station Info shows.
+    pub info: Option<reborn_core::RadioStation>,
+    /// The list starts with this many stations ranked by popularity (the
+    /// directory's order); the rest follow A to Z.
+    pub ranked: usize,
 }
 impl RadioView {
     pub fn is_favorite(&self, station: &reborn_core::RadioStation) -> bool {
         self.favorites.iter().any(|k| k == station.key())
     }
+    /// A station list, A to Z by name (case, accents and "The" aside).
+    pub fn set_stations(&mut self, mut stations: Vec<reborn_core::RadioStation>) {
+        sort_stations(&mut stations);
+        self.stations = stations;
+        self.ranked = 0;
+    }
+    /// A list in the directory's popularity order: its first `top` stay on
+    /// top, ranked, and every other station follows A to Z.
+    pub fn set_stations_ranked(
+        &mut self,
+        mut stations: Vec<reborn_core::RadioStation>,
+        top: usize,
+    ) {
+        let top = top.min(stations.len());
+        let mut rest = stations.split_off(top);
+        sort_stations(&mut rest);
+        stations.extend(rest);
+        self.stations = stations;
+        self.ranked = top;
+    }
+    /// Countries or genres, A to Z; genre names capitalised ("Hip Hop").
+    pub fn set_categories(&mut self, mut categories: Vec<RadioCategory>) {
+        if self.genres {
+            for c in &mut categories {
+                c.name = reborn_core::capitalise(&c.name);
+            }
+        }
+        categories.sort_by_cached_key(|c| {
+            reborn_core::sort::sort_key(&c.name, reborn_core::sort::SortAs::Title)
+        });
+        self.categories = categories;
+    }
+    /// The station announces "Artist - Title" (most do); split it.
+    pub fn set_song(&mut self, line: Option<&str>) {
+        self.song = line.map(|line| match line.split_once(" - ") {
+            Some((artist, title)) if !artist.trim().is_empty() && !title.trim().is_empty() => {
+                (title.trim().to_owned(), artist.trim().to_owned())
+            }
+            _ => (line.trim().to_owned(), String::new()),
+        });
+    }
+}
+
+/// Stations A to Z by name, as library lists sort.
+pub fn sort_stations(stations: &mut [reborn_core::RadioStation]) {
+    stations.sort_by_cached_key(|s| {
+        reborn_core::sort::sort_key(&s.name, reborn_core::sort::SortAs::Title)
+    });
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -279,6 +337,8 @@ pub struct Ui {
     version_taps: u8,
     resident: HashSet<u64>,
     wanted: RefCell<Vec<(u64, usize)>>,
+    /// Station logos the last frame wanted: thumbnail key and logo address.
+    wanted_logos: RefCell<Vec<(u64, String)>>,
     counts: RefCell<CountsCache>,
     /// A dialog the player raises by itself (Bluetooth failure, low battery).
     pub alert: Option<Alert>,
@@ -758,6 +818,18 @@ impl Ui {
         }
     }
 
+    pub(crate) fn want_logo(&self, key: u64, url: &str) {
+        let mut wanted = self.wanted_logos.borrow_mut();
+        if wanted.len() < 32 && !wanted.iter().any(|(k, _)| *k == key) {
+            wanted.push((key, url.to_owned()));
+        }
+    }
+
+    /// Station logos the last `draw` could not show yet, with their address.
+    pub fn take_wanted_logos(&self) -> Vec<(u64, String)> {
+        std::mem::take(&mut self.wanted_logos.borrow_mut())
+    }
+
     /// Thumbnails the last `draw` could not show yet, with a library track
     /// index that carries each cover.
     pub fn take_wanted_thumbs(&self) -> Vec<(u64, usize)> {
@@ -998,7 +1070,7 @@ impl Ui {
                     current.filename.clone()
                 };
                 let saved = self.radio.favorites.contains(&key);
-                return vec![
+                let mut rows = vec![
                     Item::new(
                         if saved {
                             "Remove from Favorites"
@@ -1009,6 +1081,10 @@ impl Ui {
                     ),
                     Item::new("Stop Radio", "radio_stop"),
                 ];
+                if self.radio.now.is_some() {
+                    rows.insert(1, Item::new("Station Info", "radio_info_current"));
+                }
+                return rows;
             }
             return vec![
                 Item::new("Up Next", "show_queue"),
@@ -1064,6 +1140,7 @@ impl Ui {
                         },
                         "radio_favorite",
                     ),
+                    Item::new("Station Info", "radio_info"),
                 ]
             }
             Screen::Queue => {
@@ -1636,7 +1713,7 @@ impl Ui {
             }
             Screen::Bluetooth => return self.bluetooth_select(m, key),
             Screen::Wifi => return self.wifi_select(m, key),
-            Screen::Radio | Screen::RadioStations | Screen::RadioCategories => {
+            Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
                 return self.radio_select(m, key)
             }
             _ => {}
@@ -1697,6 +1774,23 @@ impl Ui {
                 Self::go(m, Screen::Wifi, "");
                 Effect::None
             }
+            "radio_now" => {
+                Self::go(m, Screen::NowPlaying, "");
+                Effect::None
+            }
+            "radio_info_play" => match self.radio.info.clone() {
+                Some(station) => {
+                    Self::go(m, Screen::NowPlaying, "");
+                    Effect::Radio(RadioRequest::PlayStation(Box::new(station)))
+                }
+                None => Effect::None,
+            },
+            "radio_info_favorite" => match self.radio.info.clone() {
+                Some(station) => {
+                    Effect::Radio(RadioRequest::ToggleFavoriteStation(Box::new(station)))
+                }
+                None => Effect::None,
+            },
             "radio_back" => {
                 Self::back(m);
                 Effect::None
@@ -2055,6 +2149,19 @@ impl Ui {
             "radio_favorite_current" => {
                 Self::close_modal(m);
                 return Effect::Radio(RadioRequest::ToggleFavoriteCurrent);
+            }
+            "radio_info" | "radio_info_current" => {
+                let shown = if menu_key == "radio_info" {
+                    station.and_then(|i| self.radio.stations.get(i)).cloned()
+                } else {
+                    self.radio.now.clone()
+                };
+                Self::close_modal(m);
+                if let Some(shown) = shown {
+                    self.radio.info = Some(shown);
+                    Self::go(m, Screen::RadioInfo, "");
+                }
+                return Effect::None;
             }
             "radio_stop" => {
                 Self::close_modal(m);

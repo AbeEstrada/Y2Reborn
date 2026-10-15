@@ -2099,6 +2099,7 @@ fn station(name: &str, uuid: &str) -> reborn_core::RadioStation {
         codec: "MP3".into(),
         bitrate: 128,
         tags: "jazz".into(),
+        ..Default::default()
     }
 }
 
@@ -2109,11 +2110,10 @@ fn radio_menu_lists_own_and_directory_sources_and_explains_wifi() {
     let mut m = app(Screen::Home);
     assert_eq!(select_key(&mut ui, &mut m, "radio"), Effect::None);
     assert_eq!(m.screen, Screen::Radio);
-    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
-    assert_eq!(
-        page.hero.as_ref().map(|h| h.title.as_str()),
-        Some("Radio Needs Wi-Fi")
-    );
+    // Offline: a first row leads to Wi-Fi; favorites and own lists stay.
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].key, "radio_wifi");
+    assert_eq!(rows[0].label, "Connect to Wi-Fi");
     ui.radio.online = true;
     let labels: Vec<_> = ui
         .rows(&m, &m.library.tracks)
@@ -2145,6 +2145,110 @@ fn radio_menu_lists_own_and_directory_sources_and_explains_wifi() {
 }
 
 #[test]
+fn radio_lists_sort_a_to_z_and_the_song_splits_into_title_and_artist() {
+    let mut ui = radios();
+    ui.radio.set_stations(vec![
+        station("the zebra fm", "z"),
+        station("Älpler Radio", "a"),
+        station("BBC Radio 1", "b"),
+    ]);
+    let names: Vec<_> = ui.radio.stations.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Älpler Radio", "BBC Radio 1", "the zebra fm"]);
+    assert_eq!(ui.radio.ranked, 0);
+    // A country's list: its most listened stations first, then A to Z.
+    ui.radio.set_stations_ranked(
+        vec![
+            station("Zeta", "1"),
+            station("Mitte", "2"),
+            station("delta", "3"),
+            station("Alpha", "4"),
+        ],
+        2,
+    );
+    let names: Vec<_> = ui.radio.stations.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Zeta", "Mitte", "Alpha", "delta"]);
+    assert_eq!(ui.radio.ranked, 2);
+    ui.radio.genres = true;
+    ui.radio.set_categories(vec![
+        crate::RadioCategory {
+            id: "pop".into(),
+            name: "pop".into(),
+            stations: 5,
+        },
+        crate::RadioCategory {
+            id: "hip hop".into(),
+            name: "hip hop".into(),
+            stations: 5,
+        },
+    ]);
+    let names: Vec<_> = ui
+        .radio
+        .categories
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["Hip Hop", "Pop"]);
+    assert_eq!(
+        ui.radio.categories[0].id, "hip hop",
+        "the directory still gets its tag"
+    );
+    ui.radio.set_song(Some("Ahmad Jamal - Poinciana"));
+    assert_eq!(
+        ui.radio.song,
+        Some(("Poinciana".into(), "Ahmad Jamal".into()))
+    );
+    ui.radio.set_song(Some("News at nine"));
+    assert_eq!(ui.radio.song, Some(("News at nine".into(), String::new())));
+}
+
+#[test]
+fn station_info_shows_a_station_and_plays_or_saves_it() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::RadioStations);
+    ui.radio.set_stations(vec![station("Jazz One", "a-1")]);
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::ContextMenu);
+    m.navigation.modal_focus = 2;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::RadioInfo);
+    assert_eq!(ui.radio.info.as_ref().map(|s| s.uuid.as_str()), Some("a-1"));
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels, ["Play", "Add to Favorites"]);
+    m.navigation.focus = 1;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Radio(RadioRequest::ToggleFavoriteStation(Box::new(station(
+            "Jazz One", "a-1"
+        ))))
+    );
+    m.navigation.focus = 0;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Radio(RadioRequest::PlayStation(Box::new(station(
+            "Jazz One", "a-1"
+        ))))
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // Drawn: the facts the directory has, never an empty label.
+    let mut m = app(Screen::RadioInfo);
+    let mut s = station("Jazz One", "a-1");
+    s.language = "german,english".into();
+    ui.radio.info = Some(s);
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks.clone(), false));
+    assert!(
+        text.contains("German, English") && text.contains("Jazz One"),
+        "{text}"
+    );
+    m.screen = Screen::Radio;
+}
+
+#[test]
 fn radio_stations_play_mark_favorites_and_offer_options() {
     use reborn_core::RadioRequest;
     let mut ui = radios();
@@ -2166,7 +2270,7 @@ fn radio_stations_play_mark_favorites_and_offer_options() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(options, ["Play", "Remove from Favorites"]);
+    assert_eq!(options, ["Play", "Remove from Favorites", "Station Info"]);
     m.navigation.modal_focus = 1;
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
