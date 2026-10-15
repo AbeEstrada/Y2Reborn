@@ -342,11 +342,32 @@ struct ScanFinish {
     verified: bool,
     removed: u64,
 }
+/// A card fully scanned under its CID id: its rows under the bare `uuid:` id
+/// from before card ids carried the CID (an earlier image) are a second,
+/// never online copy of every song (Y2Reborn issue #15). Only that bare id,
+/// offline at the same root, is retired; an id with another CID is another
+/// card and stays.
+fn retire_pre_cid_copy(c: &Connection, source: &Source) -> Result<u64, String> {
+    let MediaSource::SdCard(uuid) = &source.kind else {
+        return Ok(0);
+    };
+    let bare = format!("uuid:{uuid}");
+    if source.id == bare {
+        return Ok(0);
+    }
+    c.execute(
+        "UPDATE tracks SET deleted=1 WHERE source_id=?1 AND deleted=0 AND EXISTS (SELECT 1 FROM sources WHERE id=?1 AND root=?2 AND online=0)",
+        params![bare, source.root.to_string_lossy()],
+    )
+    .map(|n| n as u64)
+    .map_err(err)
+}
 fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<ScanFinish, String> {
     let prune = complete && source_identity_is_current(source);
     let tx = c.transaction().map_err(err)?;
     let removed = if prune {
         tx.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND deleted=0 AND NOT EXISTS (SELECT 1 FROM scan_seen WHERE id=tracks.id)", [&source.id]).map_err(err)? as u64
+            + retire_pre_cid_copy(&tx, source)?
     } else {
         0
     };
@@ -1932,6 +1953,71 @@ mod consistency_tests {
         c.execute("INSERT INTO sources VALUES('sd','/media/sd',1)", [])
             .unwrap();
         (p, c)
+    }
+    #[test]
+    fn a_card_scanned_under_its_cid_id_retires_its_pre_cid_copy() {
+        let (path, mut c) = setup("pre-cid");
+        let cid = format!("uuid:0CDF-1366:cid:{}", "b".repeat(64));
+        let other = format!("uuid:0CDF-1366:cid:{}", "c".repeat(64));
+        for (id, online) in [
+            ("uuid:0CDF-1366", 0),
+            (cid.as_str(), 1),
+            (other.as_str(), 0),
+        ] {
+            c.execute(
+                "INSERT INTO sources VALUES(?1,'/media/sd',?2)",
+                params![id, online],
+            )
+            .unwrap();
+        }
+        let song = |source: &str, n: u32| Track {
+            source_id: source.into(),
+            path: PathBuf::from(format!("/media/sd/Album/{n}.flac")),
+            title: format!("Song {n}"),
+            ..Default::default()
+        };
+        let mut rows = vec![];
+        for source in ["uuid:0CDF-1366", cid.as_str(), other.as_str()] {
+            rows.extend((0..3).map(|n| song(source, n)));
+        }
+        batch(&mut c, rows, 1).unwrap();
+        let card = Source {
+            id: cid.clone(),
+            kind: MediaSource::SdCard("0CDF-1366".into()),
+            root: "/media/sd".into(),
+            online: true,
+            mount: "/dev/mmcblk1p1".into(),
+            mount_id: None,
+        };
+        // The bare id, offline at the same root: retired, once.
+        assert_eq!(retire_pre_cid_copy(&c, &card).unwrap(), 3);
+        assert_eq!(retire_pre_cid_copy(&c, &card).unwrap(), 0);
+        let live = |c: &Connection, source: &str| -> i64 {
+            c.query_row(
+                "SELECT count(*) FROM tracks WHERE source_id=?1 AND deleted=0",
+                [source],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(live(&c, "uuid:0CDF-1366"), 0);
+        // The card itself and another card with the same volume id stay.
+        assert_eq!(live(&c, &cid), 3);
+        assert_eq!(live(&c, &other), 3);
+        // A card known only by its bare id, or internal storage, retires nothing.
+        let bare = Source {
+            id: "uuid:0CDF-1366".into(),
+            ..card.clone()
+        };
+        assert_eq!(retire_pre_cid_copy(&c, &bare).unwrap(), 0);
+        let internal = Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            ..card
+        };
+        assert_eq!(retire_pre_cid_copy(&c, &internal).unwrap(), 0);
+        drop(c);
+        let _ = fs::remove_file(path);
     }
     #[test]
     fn v1_index_upgrade_preserves_all_filter_combinations_and_rows() {
