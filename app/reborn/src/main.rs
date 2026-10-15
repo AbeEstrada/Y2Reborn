@@ -517,7 +517,7 @@ impl Runtime {
         self.dirty.mark_render();
     }
     fn play_radio(&mut self, station: reborn_core::RadioStation) -> Result<(), String> {
-        if !self.ui.radio.online {
+        if self.ui.wifi.status == WifiStatus::Disconnected {
             return Err("Connect to Wi-Fi to listen to radio".into());
         }
         self.model.replace_queue(vec![Track::radio(&station)], 0)?;
@@ -3490,10 +3490,15 @@ fn run() -> Result<(), String> {
                     rt.ui.wifi = view;
                     rt.dirty.mark_render();
                 }
-                rt.ui.radio.online = matches!(rt.ui.wifi.status, WifiStatus::Connected(_));
                 rt.wifi_state = s;
             }
         }
+        // From the current Wi-Fi view every pass, not only when an event arrives
+        // (Beta 4 refused a station right after start while Wi-Fi was up).
+        rt.ui.radio.online = matches!(
+            rt.ui.wifi.status,
+            WifiStatus::Connected(_) | WifiStatus::NoInternet(_)
+        );
         let radio_replies: Vec<RadioReply> = rt.radio_replies.1.try_iter().collect();
         for reply in radio_replies {
             rt.radio_reply(reply);
@@ -4730,6 +4735,13 @@ mod ui_readiness_tests {
         }
         s.readiness = "Online".into();
         assert_eq!(wifi_view(&s).status, WifiStatus::Connected("Home".into()));
+        // A late platform record falls back to the supplicant: associated
+        // with an address is connected, not "Not connected" (Beta 4).
+        s.readiness = String::new();
+        s.readiness_reason = Some("platform_readiness_stale".into());
+        s.ip = "192.0.2.2".into();
+        assert_eq!(wifi_view(&s).status, WifiStatus::Connected("Home".into()));
+        s.ip.clear();
         s.readiness = "Failed".into();
         s.readiness_reason = Some("wrong_credentials".into());
         assert_eq!(

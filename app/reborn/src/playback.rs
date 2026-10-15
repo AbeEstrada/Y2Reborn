@@ -674,6 +674,10 @@ impl Playback {
                 if de.load(Ordering::Acquire) != job.generation {
                     continue;
                 }
+                // A station may wait up to 45 s for data while it reconnects
+                // (media.c RB_STREAM_STALL_MS); that is not a stuck worker.
+                let heartbeat_s = if job.track.is_radio() { 60 } else { 20 };
+                dl.heartbeat("playback", heartbeat_s);
                 let operation: Result<(), String> = (|| {
                     let mut tracks = Vec::with_capacity(1 + job.queue.len());
                     tracks.push(job.track.clone());
@@ -782,7 +786,7 @@ impl Playback {
                         }
                     }
                     loop {
-                        dl.heartbeat("playback", 20);
+                        dl.heartbeat("playback", heartbeat_s);
                         if de.load(Ordering::Acquire) != job.generation {
                             return Ok(());
                         }
@@ -2749,18 +2753,22 @@ mod tests {
                 Cancel::new().unwrap(),
             )
             .unwrap();
-            let mut frames = 0;
+            let (mut frames, mut energy, mut peak) = (0u64, 0f64, 0i32);
             while frames < 48_000 * 3 {
-                frames += decoder
-                    .read()
-                    .unwrap()
-                    .expect("live stream does not end")
-                    .frames;
+                let pcm = decoder.read().unwrap().expect("live stream does not end");
+                frames += pcm.frames;
+                for sample in pcm.data.as_chunks::<2>().0 {
+                    let v = i16::from_le_bytes(*sample) as i32;
+                    energy += (v * v) as f64;
+                    peak = peak.max(v.abs());
+                }
             }
+            let rms = (energy / (frames * 2) as f64).sqrt();
             eprintln!(
-                "{codec}: {} decoded 3 s ({:?})",
-                station.name, decoder.metadata.codec
+                "{codec}: {} decoded 3 s, rms {rms:.0}, peak {peak}",
+                station.name
             );
+            assert!(rms > 100.0, "decoded audio is silent");
         }
     }
 }

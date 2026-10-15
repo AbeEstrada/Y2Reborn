@@ -424,7 +424,9 @@ pub fn live() -> Option<(StreamState, Option<String>)> {
 
 /// One station being received. Dropping it stops the network transfer.
 pub struct Stream {
-    read: OwnedFd,
+    /// Taken (closed) first on drop: a fetcher blocked writing into a full
+    /// pipe only wakes up when no reader is left.
+    read: Option<OwnedFd>,
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
 }
@@ -458,14 +460,14 @@ impl Stream {
             .name("radio-fetch".into())
             .spawn(move || run(&url, std::fs::File::from(write), &worker_shared))?;
         Ok(Self {
-            read,
+            read: Some(read),
             shared,
             worker: Some(worker),
         })
     }
     /// The read end for `Decoder::open_stream`.
     pub fn reader(&self) -> BorrowedFd<'_> {
-        self.read.as_fd()
+        self.read.as_ref().expect("open until drop").as_fd()
     }
     pub fn state(&self) -> StreamState {
         self.shared
@@ -482,6 +484,11 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
+        // Beta 4 hung here: playback had stopped reading, the pipe was full,
+        // the fetcher waited in write() and this join waited for it forever.
+        // The decoder closes its own copy before this (field order in the
+        // player's BoundDecoder); closing ours turns the write into EPIPE.
+        drop(self.read.take());
         if let Ok(mut child) = self.shared.child.lock() {
             if let Some(child) = child.as_mut() {
                 let _ = child.kill();
@@ -1110,6 +1117,40 @@ mod tests {
         server.join().unwrap();
         drop(stream);
         assert!(live().is_none(), "a stopped station is not live");
+    }
+
+    /// Playback stops reading (paused, or the output stalled), the pipe fills
+    /// and the fetcher waits in write(); stopping the station must still
+    /// return at once. Beta 4 deadlocked here on the player.
+    #[test]
+    fn stopping_a_station_with_a_full_pipe_returns_promptly() {
+        use std::net::TcpListener;
+        if !Path::new(&curl()).exists() {
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = socket.read(&mut request);
+            let _ = socket.write_all(b"HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\n\r\n");
+            let block = [0x55u8; 16384];
+            while socket.write_all(&block).is_ok() {}
+        });
+        let stream = Stream::start(&format!("http://127.0.0.1:{port}/live")).unwrap();
+        // Nobody reads: let the pipe (64 KiB) and the socket buffers fill.
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(stream.state(), StreamState::Playing);
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(stream);
+            let _ = done.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "stopping the station hung"
+        );
     }
 
     /// Live check against the real directory and a real station (needs the

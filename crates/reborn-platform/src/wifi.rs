@@ -424,12 +424,18 @@ fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
             s.readiness = state;
             s.readiness_reason = reason;
         } else {
-            s.readiness = "Unavailable".into();
+            // No usable record: the supplicant's own state decides (an empty
+            // readiness). "Unavailable" showed a working, associated player
+            // as not connected while the platform record was late.
+            s.readiness = String::new();
             s.readiness_reason = Some("platform_readiness_stale".into());
         }
     }
     s
 }
+
+const RECORD_S: f64 = 15.0;
+const ONLINE_RECORD_S: f64 = 45.0;
 
 fn network_readiness(
     record: &serde_json::Value,
@@ -438,10 +444,18 @@ fn network_readiness(
     live: &Status,
 ) -> Option<(String, Option<String>)> {
     let age = now - record["monotonic_s"].as_f64()?;
-    if record["schema"] != 1 || record["boot_id"] != boot || !(0.0..15.0).contains(&age) {
+    if record["schema"] != 1 || record["boot_id"] != boot || !(0.0..ONLINE_RECORD_S).contains(&age)
+    {
         return None;
     }
     let state = record["state"].as_str()?;
+    // With the screen dark the platform writes every 10 s and one pass can
+    // take several seconds more (Beta 4 measured 12 s ages). An Online claim
+    // is checked against the live association and address below, so it may
+    // be older; any other state must be recent.
+    if state != "Online" && age >= RECORD_S {
+        return None;
+    }
     if ![
         "Off",
         "Starting",
@@ -894,8 +908,14 @@ mod tests {
             "Online"
         );
         assert!(network_readiness(&value, "two", 101.0, &live).is_none());
-        assert!(network_readiness(&value, "one", 116.0, &live).is_none());
+        // A late Online record still matches the live association.
+        assert!(network_readiness(&value, "one", 116.0, &live).is_some());
+        assert!(network_readiness(&value, "one", 146.0, &live).is_none());
         assert!(network_readiness(&value, "one", 99.0, &live).is_none());
+        let mut acquiring = value.clone();
+        acquiring["state"] = json!("AcquiringIP");
+        assert!(network_readiness(&acquiring, "one", 114.0, &live).is_some());
+        assert!(network_readiness(&acquiring, "one", 116.0, &live).is_none());
     }
     #[test]
     fn online_readiness_must_match_current_association_and_address() {
