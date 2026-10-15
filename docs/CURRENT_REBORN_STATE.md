@@ -1,6 +1,29 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.3 — Y2Linux 1.0 Beta 3 (Baseline 52), 2026-10-15 (latest)
+## Unreleased — internet radio (for Y2Linux 1.0 Beta 4)
+
+**Internet radio.** Home → Radio: Favorites (saved in `/data/reborn/state/radio.json`), Popular,
+Countries, Genres and Search (wheel keyboard) from radio-browser.info (mirrors found through DNS as the
+service asks; plays are counted with its `/json/url/` call), and My Stations from `.m3u`/`.pls` files in a
+`Radio` folder on Internal Storage or the SD card. Hold Select on a station, or on Now Playing, to add or
+remove a favorite. Now Playing shows LIVE RADIO, the station's announced song (ICY `StreamTitle`) or the
+connection state, listening time and LIVE instead of a countdown.
+
+How it works: `reborn_platform::radio` runs `curl` (TLS with certificate checks, redirects, `.pls`/`.m3u`
+indirection, 15-s stall limit) and strips the ICY metadata blocks; the audio bytes go through a pipe to
+`Decoder::open_stream`, a non-seekable input of the existing FFmpeg decoder (`rbpipe:<fd>`, formats mp3,
+aac, ogg, flac). FFmpeg keeps `--disable-network` and its `file`-only protocol policy. A dropped
+connection is retried after 1, 2, 4, 8, 15 and 30 s; the decoder waits up to 45 s. A station is never
+pre-opened for gapless playback, never seeked, and an SD card change never pauses it. HLS/DASH-only
+stations are left out of the directory lists and named when a playlist leads to one.
+
+Host checks: 426 workspace tests (radio: ICY splitting at every byte boundary, header/redirect parsing,
+playlists, Radio folders, directory filtering, favorites, a local Shoutcast server that drops and is
+reconnected, stream decoding of MP3/AAC/Ogg from a slow pipe, the Radio screens), fmt, strict Clippy.
+Live (ignored by default): the real directory and two real stations (France Info MP3, Europe 1 AAC) decode
+through the playback path. Not yet on the device.
+
+## 1.0.0-beta.3 — Y2Linux 1.0 Beta 3 (Baseline 52), 2026-10-15
 
 **Bluetooth quality and stability.** The platform now runs AAC with the FDK afterburner at the
 highest rate the headphones accept where a frame still fits one packet (AirPods Pro advertise

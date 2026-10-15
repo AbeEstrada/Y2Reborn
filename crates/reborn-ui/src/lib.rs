@@ -24,7 +24,7 @@ mod views_system;
 use reborn_core::{
     platform::{LowBattery, UsbTransfer, WifiProblem},
     Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal, NavigationFrame,
-    PlatformTask, RadioScan, RepeatMode, Screen, Track,
+    PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, Track,
 };
 use reborn_graphics::Quad;
 use std::{
@@ -216,6 +216,37 @@ pub struct BluetoothView {
     pub problem: Option<String>,
 }
 
+/// Internet radio lists as the player last received them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RadioView {
+    /// Title of the station list on screen.
+    pub title: String,
+    pub stations: Vec<reborn_core::RadioStation>,
+    /// Countries or genres of the directory.
+    pub categories: Vec<RadioCategory>,
+    pub genres: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// `RadioStation::key` of every favorite.
+    pub favorites: Vec<String>,
+    /// Wi-Fi is online: the directory and stations are reachable.
+    pub online: bool,
+    /// Repeats the last list request ("Try Again").
+    pub last_request: Option<reborn_core::RadioRequest>,
+}
+impl RadioView {
+    pub fn is_favorite(&self, station: &reborn_core::RadioStation) -> bool {
+        self.favorites.iter().any(|k| k == station.key())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RadioCategory {
+    pub id: String,
+    pub name: String,
+    pub stations: u32,
+}
+
 /// Presentation-owned transient state. Playback, queue, navigation, settings,
 /// and screen state remain authoritative in `AppModel`; services are reached
 /// only through the typed `Effect` returned by `action`.
@@ -225,6 +256,9 @@ pub struct Ui {
     pub notice_until: Option<Instant>,
     pub wifi: WifiView,
     pub bluetooth: BluetoothView,
+    pub radio: RadioView,
+    /// The text entry searches stations instead of taking a Wi-Fi password.
+    pub entry_search: bool,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
     password: String,
@@ -952,8 +986,27 @@ impl Ui {
 
     fn context_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         if m.screen == Screen::NowPlaying {
-            if m.current().is_none() {
+            let Some(current) = m.current() else {
                 return vec![];
+            };
+            if current.is_radio() {
+                let key = if current.filename.is_empty() {
+                    current.path.to_string_lossy().into_owned()
+                } else {
+                    current.filename.clone()
+                };
+                let saved = self.radio.favorites.contains(&key);
+                return vec![
+                    Item::new(
+                        if saved {
+                            "Remove from Favorites"
+                        } else {
+                            "Add to Favorites"
+                        },
+                        "radio_favorite_current",
+                    ),
+                    Item::new("Stop Radio", "radio_stop"),
+                ];
             }
             return vec![
                 Item::new("Up next", "show_queue"),
@@ -991,6 +1044,26 @@ impl Ui {
         }
         match m.screen {
             Screen::Albums | Screen::Artists | Screen::Genres => vec![],
+            Screen::RadioStations => {
+                let Some(station) = key
+                    .and_then(|k| k.strip_prefix("station:"))
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.radio.stations.get(i))
+                else {
+                    return vec![];
+                };
+                vec![
+                    Item::new("Play", "radio_play"),
+                    Item::new(
+                        if self.radio.is_favorite(station) {
+                            "Remove from Favorites"
+                        } else {
+                            "Add to Favorites"
+                        },
+                        "radio_favorite",
+                    ),
+                ]
+            }
             Screen::Queue => {
                 let Some(i) = self.queue_target(m, key) else {
                     return vec![];
@@ -1178,6 +1251,11 @@ impl Ui {
                             .map(|n| n.ssid.clone())
                     }),
                     Screen::Queue => Some("Queue".to_owned()),
+                    Screen::RadioStations => key
+                        .and_then(|k| k.strip_prefix("station:"))
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .and_then(|i| self.radio.stations.get(i))
+                        .map(|s| s.name.clone()),
                     _ => None,
                 };
                 return (named.unwrap_or_else(|| "Options".into()), String::new());
@@ -1292,7 +1370,7 @@ impl Ui {
             };
         }
         if self.text_entry {
-            return self.entry(action);
+            return self.entry(m, action);
         }
         match action {
             Action::Home => {
@@ -1549,9 +1627,100 @@ impl Ui {
             }
             Screen::Bluetooth => return self.bluetooth_select(m, key),
             Screen::Wifi => return self.wifi_select(m, key),
+            Screen::Radio | Screen::RadioStations | Screen::RadioCategories => {
+                return self.radio_select(m, key)
+            }
             _ => {}
         }
         Effect::None
+    }
+
+    fn radio_select(&mut self, m: &mut AppModel, key: &str) -> Effect {
+        let list = |m: &mut AppModel, ui: &mut Self, title: &str, request: RadioRequest| {
+            ui.radio.title = title.into();
+            ui.radio.stations.clear();
+            ui.radio.loading = true;
+            ui.radio.error = None;
+            ui.radio.last_request = Some(request.clone());
+            Self::go(m, Screen::RadioStations, title);
+            Effect::Radio(request)
+        };
+        let categories = |m: &mut AppModel, ui: &mut Self, genres: bool| {
+            ui.radio.categories.clear();
+            ui.radio.genres = genres;
+            ui.radio.loading = true;
+            ui.radio.error = None;
+            let request = if genres {
+                RadioRequest::Genres
+            } else {
+                RadioRequest::Countries
+            };
+            ui.radio.last_request = Some(request.clone());
+            Self::go(
+                m,
+                Screen::RadioCategories,
+                if genres { "Genres" } else { "Countries" },
+            );
+            Effect::Radio(request)
+        };
+        match key {
+            "radio_favorites" => list(m, self, "Favorites", RadioRequest::Favorites),
+            "radio_own" => list(m, self, "My Stations", RadioRequest::Own),
+            "radio_popular" => list(m, self, "Popular", RadioRequest::Popular),
+            "radio_countries" => categories(m, self, false),
+            "radio_genres" => categories(m, self, true),
+            "radio_search" => {
+                self.entry_search = true;
+                self.password.clear();
+                self.ssid = "Search Stations".into();
+                self.letter = 0;
+                self.text_entry = true;
+                Effect::None
+            }
+            "radio_retry" => match self.radio.last_request.clone() {
+                Some(request) => {
+                    self.radio.loading = true;
+                    self.radio.error = None;
+                    Effect::Radio(request)
+                }
+                None => Effect::None,
+            },
+            "radio_wifi" => {
+                Self::go(m, Screen::Wifi, "");
+                Effect::None
+            }
+            "radio_back" => {
+                Self::back(m);
+                Effect::None
+            }
+            k => {
+                if let Some(i) = k
+                    .strip_prefix("station:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                {
+                    if i < self.radio.stations.len() {
+                        Self::go(m, Screen::NowPlaying, "");
+                        return Effect::Radio(RadioRequest::Play(i));
+                    }
+                }
+                if let Some(category) = k
+                    .strip_prefix("category:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.radio.categories.get(i).cloned())
+                {
+                    let request = if self.radio.genres {
+                        RadioRequest::Genre(category.id.clone())
+                    } else {
+                        RadioRequest::Country {
+                            code: category.id.clone(),
+                            name: category.name.clone(),
+                        }
+                    };
+                    return list(m, self, &category.name, request);
+                }
+                Effect::None
+            }
+        }
     }
 
     /// Settings rows that change a value in place: one Select, one step.
@@ -1862,7 +2031,27 @@ impl Ui {
                 .strip_prefix("track:")
                 .and_then(|value| value.parse().ok())
         };
+        let station = source_key
+            .strip_prefix("station:")
+            .and_then(|value| value.parse::<usize>().ok());
         match menu_key {
+            "radio_play" if station.is_some() => {
+                Self::close_modal(m);
+                Self::go(m, Screen::NowPlaying, "");
+                return Effect::Radio(RadioRequest::Play(station.unwrap_or(0)));
+            }
+            "radio_favorite" if station.is_some() => {
+                Self::close_modal(m);
+                return Effect::Radio(RadioRequest::ToggleFavorite(station.unwrap_or(0)));
+            }
+            "radio_favorite_current" => {
+                Self::close_modal(m);
+                return Effect::Radio(RadioRequest::ToggleFavoriteCurrent);
+            }
+            "radio_stop" => {
+                Self::close_modal(m);
+                return Effect::StopPlayback;
+            }
             "bt_forget" => {
                 m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ForgetBluetooth));
                 m.navigation.modal_focus = 0;
@@ -1960,7 +2149,7 @@ impl Ui {
         }
     }
 
-    fn entry(&mut self, action: Action) -> Effect {
+    fn entry(&mut self, m: &mut AppModel, action: Action) -> Effect {
         let count = LETTERS.len() + 3;
         match action {
             // Character entry is a value context: one detent, one character.
@@ -1971,7 +2160,7 @@ impl Ui {
                 self.letter = (self.letter + count - 1) % count
             }
             Action::Select if self.letter < LETTERS.len() => {
-                if self.password.len() < 63 {
+                if self.password.len() < if self.entry_search { 40 } else { 63 } {
                     self.password.push(LETTERS[self.letter] as char);
                 }
             }
@@ -1981,6 +2170,24 @@ impl Ui {
             Action::ContextMenu | Action::Select
                 if action == Action::ContextMenu || self.letter == LETTERS.len() + 1 =>
             {
+                if self.entry_search {
+                    let text = self.password.trim().to_owned();
+                    if text.chars().count() < 2 {
+                        self.flash("Type at least two letters");
+                        return Effect::None;
+                    }
+                    self.text_entry = false;
+                    self.entry_search = false;
+                    self.password.clear();
+                    let title = format!("“{text}”");
+                    self.radio.title = title.clone();
+                    self.radio.stations.clear();
+                    self.radio.loading = true;
+                    self.radio.error = None;
+                    self.radio.last_request = Some(RadioRequest::Search(text.clone()));
+                    Self::go(m, Screen::RadioStations, &title);
+                    return Effect::Radio(RadioRequest::Search(text));
+                }
                 if self.password.len() >= 8 {
                     self.text_entry = false;
                     return Effect::WifiConnect {
@@ -1993,6 +2200,7 @@ impl Ui {
             Action::Back | Action::Home | Action::Select => {
                 self.password.clear();
                 self.text_entry = false;
+                self.entry_search = false;
             }
             _ => {}
         }
@@ -2045,6 +2253,7 @@ fn route(key: &str) -> Option<Screen> {
         "about" => Screen::About,
         "maintenance" => Screen::Maintenance,
         "diagnostics" => Screen::Diagnostics,
+        "radio" => Screen::Radio,
         _ => return None,
     })
 }

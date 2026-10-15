@@ -32,6 +32,7 @@
 #include <libswscale/version.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <ctype.h>
@@ -133,6 +134,8 @@ typedef struct {
   AVFormatContext *f;
   AVIOContext *io;
   FILE *file;
+  /* Internet radio: a pipe from the network fetcher, never a socket. */
+  int stream_fd;
   int64_t file_size;
   uint64_t io_read;
   int io_limited;
@@ -964,6 +967,7 @@ void rb_media_close(RbMedia *m) {
     avio_context_free(&m->io);
   }
   if (m->file) fclose(m->file);
+  if (m->stream_fd > 0) close(m->stream_fd);
   free(m->pending);
   free(m);
 }
@@ -997,12 +1001,90 @@ static int64_t local_seek(void *opaque, int64_t offset, int whence) {
   if (fseeko(m->file, offset, whence) != 0) return AVERROR(errno);
   return ftello(m->file);
 }
+/* Internet radio. The network fetcher (curl, outside FFmpeg) writes plain
+ * audio bytes into a pipe; FFmpeg stays built without network protocols.
+ * Reads wait in short polls so cancellation is prompt, keep the per-call
+ * deadline alive while the fetcher reconnects, and give up after a stall. */
+#define RB_STREAM_STALL_MS 45000
+static int stream_read(void *opaque, uint8_t *buffer, int size) {
+  RbMedia *m = opaque;
+  uint64_t waited = 0;
+  for (;;) {
+    if (!m->cancel || atomic_load(&m->cancel->cancelled)) return AVERROR_EXIT;
+    struct pollfd p = {m->stream_fd, POLLIN, 0};
+    int r = poll(&p, 1, 200);
+    if (r < 0 && errno != EINTR) return AVERROR(errno);
+    if (r > 0) {
+      ssize_t n = read(m->stream_fd, buffer, (size_t)size);
+      if (n > 0) {
+        deadline(m->cancel);
+        m->io_read += (uint64_t)n;
+        return (int)n;
+      }
+      if (n == 0) return AVERROR_EOF;
+      if (errno != EAGAIN && errno != EINTR) return AVERROR(errno);
+    }
+    waited += 200;
+    deadline(m->cancel);
+    if (waited >= RB_STREAM_STALL_MS) return AVERROR(ETIMEDOUT);
+  }
+}
+static int64_t stream_seek(void *opaque, int64_t offset, int whence) {
+  (void)opaque; (void)offset;
+  if (whence & AVSEEK_SIZE) return -1;
+  return AVERROR(ESPIPE);
+}
+static int stream_fd_from_path(const char *path) {
+  static const char prefix[] = "rbpipe:";
+  if (strncmp(path, prefix, sizeof(prefix) - 1)) return -1;
+  const char *digits = path + sizeof(prefix) - 1;
+  if (!*digits) return -1;
+  long value = 0;
+  for (const char *c = digits; *c; c++) {
+    if (!isdigit((unsigned char)*c) || value > 65535) return -1;
+    value = value * 10 + (*c - '0');
+  }
+  return value > 2 && value <= 65535 ? (int)value : -1;
+}
+static int open_stream(RbMedia *m, int fd) {
+  struct stat info;
+  if (fstat(fd, &info) < 0 || !S_ISFIFO(info.st_mode)) return AVERROR(EINVAL);
+  m->stream_fd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+  if (m->stream_fd < 0) return AVERROR(errno);
+  uint8_t *buffer = av_malloc(32768);
+  if (!buffer) return AVERROR(ENOMEM);
+  m->io = avio_alloc_context(buffer, 32768, 0, m, stream_read, NULL, stream_seek);
+  if (!m->io) { av_free(buffer); return AVERROR(ENOMEM); }
+  m->io->seekable = 0;
+  m->f->pb = m->io;
+  m->f->flags |= AVFMT_FLAG_CUSTOM_IO;
+  m->file_size = -1;
+  /* Start quickly: one second of analysis is plenty for a radio stream. */
+  m->f->probesize = 256 * 1024;
+  m->f->max_analyze_duration = AV_TIME_BASE;
+  m->f->max_streams = 4;
+  AVDictionary *options = NULL;
+  av_dict_set(&options, "protocol_whitelist", "file", 0);
+  av_dict_set(&options, "format_whitelist", "mp3,aac,ogg,flac", 0);
+  uint64_t start = micros();
+  int ret = avformat_open_input(&m->f, "", NULL, &options);
+  m->open_us = micros() - start;
+  av_dict_free(&options);
+  if (ret < 0) return ret;
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    if (m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+        !(m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC))
+      return AVERROR_INVALIDDATA;
+  return 0;
+}
 static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
   deadline(cancel);
   m->cancel = cancel;
   m->f = avformat_alloc_context();
   if (!m->f) return AVERROR(ENOMEM);
   m->f->interrupt_callback = (AVIOInterruptCB){interrupted, cancel};
+  int stream = stream_fd_from_path(path);
+  if (stream >= 0) return open_stream(m, stream);
   int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   if (fd < 0) return AVERROR(errno);
   struct stat info;

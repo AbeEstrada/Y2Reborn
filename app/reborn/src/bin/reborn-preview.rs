@@ -587,6 +587,116 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.queue.clear();
         m.queue_entry_ids.clear();
     });
+    // Internet radio (Beta 4)
+    let stations = || {
+        vec![
+            reborn_core::RadioStation {
+                uuid: "a".into(),
+                name: "Radio Swiss Jazz".into(),
+                url: "http://a/".into(),
+                country: "Switzerland".into(),
+                codec: "MP3".into(),
+                bitrate: 128,
+                tags: "jazz".into(),
+            },
+            reborn_core::RadioStation {
+                uuid: "b".into(),
+                name: "FIP".into(),
+                url: "http://b/".into(),
+                country: "France".into(),
+                codec: "AAC".into(),
+                bitrate: 192,
+                tags: "eclectic".into(),
+            },
+            reborn_core::RadioStation {
+                uuid: "c".into(),
+                name: "SomaFM Groove Salad".into(),
+                url: "http://c/".into(),
+                country: "USA".into(),
+                codec: "MP3".into(),
+                bitrate: 128,
+                tags: "ambient,chillout".into(),
+            },
+            reborn_core::RadioStation {
+                uuid: "d".into(),
+                name: "BBC World Service".into(),
+                url: "http://d/".into(),
+                country: "UK".into(),
+                codec: "MP3".into(),
+                bitrate: 56,
+                tags: "news".into(),
+            },
+        ]
+    };
+    case!("60-radio", at(Screen::Radio, ""), |ui, _| {
+        ui.radio.online = true;
+        ui.radio.favorites = vec!["a".into(), "b".into()];
+    });
+    case!("61-radio-no-wifi", at(Screen::Radio, ""), |ui, _| ui
+        .radio
+        .online =
+        false);
+    case!(
+        "62-radio-stations",
+        at(Screen::RadioStations, "Popular"),
+        move |ui, m| {
+            ui.radio.online = true;
+            ui.radio.stations = stations();
+            ui.radio.favorites = vec!["b".into()];
+            m.navigation.focus = 1;
+        }
+    );
+    case!(
+        "63-radio-countries",
+        at(Screen::RadioCategories, "Countries"),
+        |ui, _| {
+            ui.radio.online = true;
+            ui.radio.categories = [
+                ("DE", "Germany", 5124),
+                ("US", "USA", 6301),
+                ("FR", "France", 2048),
+                ("AT", "Austria", 412),
+            ]
+            .into_iter()
+            .map(|(id, name, n)| reborn_ui::RadioCategory {
+                id: id.into(),
+                name: name.into(),
+                stations: n,
+            })
+            .collect();
+        }
+    );
+    case!("64-radio-search", at(Screen::Radio, ""), |ui, m| {
+        ui.radio.online = true;
+        m.navigation.focus = 4;
+        ui.model_action(m, Action::Select);
+        // Type "jaz" on the wheel keyboard (a = 0, j = 9, z = 25).
+        let mut at = 0i32;
+        for target in [9i32, 0, 25] {
+            while at < target {
+                ui.model_action(m, Action::WheelClockwise(1));
+                at += 1;
+            }
+            while at > target {
+                ui.model_action(m, Action::WheelCounterClockwise(1));
+                at -= 1;
+            }
+            ui.model_action(m, Action::Select);
+        }
+    });
+    case!(
+        "65-radio-playing",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = teal;
+            let station = stations().remove(0);
+            m.replace_queue(vec![reborn_core::Track::radio(&station)], 0)
+                .unwrap();
+            m.queue[0].artist = "Ahmad Jamal - Poinciana".into();
+            m.position_ms = 754_000;
+            m.playback = reborn_core::PlaybackState::Playing;
+        }
+    );
     case!("46-service-menu", at(Screen::SettingsSystem, ""));
     case!("47-diagnostics", at(Screen::Diagnostics, ""));
     case!(

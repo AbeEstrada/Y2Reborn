@@ -32,6 +32,12 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// A finished station-directory request; `u64` matches `Runtime::radio_sequence`.
+enum RadioReply {
+    Stations(u64, Result<Vec<reborn_core::RadioStation>, String>),
+    Categories(u64, Result<Vec<reborn_platform::radio::Category>, String>),
+}
+
 struct Runtime {
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
@@ -63,6 +69,17 @@ struct Runtime {
     art: bool,
     dirty: DirtyState,
     root: PathBuf,
+    /// Internet radio: saved favorites, the station playing, directory replies.
+    radio_favorites: Vec<reborn_core::RadioStation>,
+    radio_current: Option<reborn_core::RadioStation>,
+    radio_sequence: u64,
+    radio_replies: (
+        std::sync::mpsc::Sender<RadioReply>,
+        std::sync::mpsc::Receiver<RadioReply>,
+    ),
+    radio_directory: Arc<Mutex<Option<Arc<reborn_platform::radio::Directory>>>>,
+    /// The live line last shown for the station (title or connection state).
+    radio_live: Option<String>,
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
@@ -385,6 +402,218 @@ impl Runtime {
         )
     }
 
+    /// Internet radio requests from the Radio screens and Now Playing.
+    fn radio(&mut self, request: reborn_core::RadioRequest) -> Result<(), String> {
+        use reborn_core::RadioRequest;
+        use reborn_platform::radio::{own_stations, Directory};
+        let local = |ui: &mut Ui, stations: Vec<reborn_core::RadioStation>| {
+            ui.radio.stations = stations;
+            ui.radio.loading = false;
+            ui.radio.error = None;
+        };
+        match request {
+            RadioRequest::Favorites => local(&mut self.ui, self.radio_favorites.clone()),
+            RadioRequest::Own => {
+                let stations = own_stations(&self.storage_roots());
+                local(&mut self.ui, stations);
+            }
+            RadioRequest::Play(index) => {
+                let station = self
+                    .ui
+                    .radio
+                    .stations
+                    .get(index)
+                    .cloned()
+                    .ok_or("station not found")?;
+                self.play_radio(station)?;
+            }
+            RadioRequest::ToggleFavorite(index) => {
+                let station = self
+                    .ui
+                    .radio
+                    .stations
+                    .get(index)
+                    .cloned()
+                    .ok_or("station not found")?;
+                self.toggle_favorite(station)?;
+            }
+            RadioRequest::ToggleFavoriteCurrent => {
+                let station = self.radio_current.clone().ok_or("no station is playing")?;
+                self.toggle_favorite(station)?;
+            }
+            network => {
+                self.radio_sequence += 1;
+                let sequence = self.radio_sequence;
+                let reply = self.radio_replies.0.clone();
+                let directory = self.radio_directory.clone();
+                std::thread::Builder::new()
+                    .name("radio-directory".into())
+                    .spawn(move || {
+                        // Mirror discovery (DNS) once, then reuse it.
+                        let directory = {
+                            let mut slot = directory.lock().unwrap_or_else(|e| e.into_inner());
+                            slot.get_or_insert_with(|| Arc::new(Directory::discover()))
+                                .clone()
+                        };
+                        let message = match network {
+                            RadioRequest::Countries => {
+                                RadioReply::Categories(sequence, directory.countries())
+                            }
+                            RadioRequest::Genres => {
+                                RadioReply::Categories(sequence, directory.genres())
+                            }
+                            RadioRequest::Country { code, .. } => {
+                                RadioReply::Stations(sequence, directory.by_country(&code))
+                            }
+                            RadioRequest::Genre(tag) => {
+                                RadioReply::Stations(sequence, directory.by_genre(&tag))
+                            }
+                            RadioRequest::Search(name) => {
+                                RadioReply::Stations(sequence, directory.by_name(&name))
+                            }
+                            _ => RadioReply::Stations(sequence, directory.popular()),
+                        };
+                        let _ = reply.send(message);
+                    })
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        self.dirty.mark_render();
+        Ok(())
+    }
+    /// A reply from the directory worker; replies to older requests are dropped.
+    fn radio_reply(&mut self, reply: RadioReply) {
+        let (sequence, error) = match reply {
+            RadioReply::Stations(sequence, result) if sequence == self.radio_sequence => {
+                match result {
+                    Ok(stations) => {
+                        self.ui.radio.stations = stations;
+                        (sequence, None)
+                    }
+                    Err(e) => (sequence, Some(e)),
+                }
+            }
+            RadioReply::Categories(sequence, result) if sequence == self.radio_sequence => {
+                match result {
+                    Ok(list) => {
+                        self.ui.radio.categories = list
+                            .into_iter()
+                            .map(|c| reborn_ui::RadioCategory {
+                                id: c.id,
+                                name: c.name,
+                                stations: c.stations,
+                            })
+                            .collect();
+                        (sequence, None)
+                    }
+                    Err(e) => (sequence, Some(e)),
+                }
+            }
+            _ => return,
+        };
+        let _ = sequence;
+        self.ui.radio.loading = false;
+        self.ui.radio.error = error;
+        self.dirty.mark_render();
+    }
+    fn play_radio(&mut self, station: reborn_core::RadioStation) -> Result<(), String> {
+        if !self.ui.radio.online {
+            return Err("Connect to Wi-Fi to listen to radio".into());
+        }
+        self.model.replace_queue(vec![Track::radio(&station)], 0)?;
+        self.radio_live = None;
+        self.load()?;
+        if !station.uuid.is_empty() {
+            // The directory counts plays for its popularity lists; best effort.
+            let directory = self.radio_directory.clone();
+            let uuid = station.uuid.clone();
+            let _ = std::thread::Builder::new()
+                .name("radio-click".into())
+                .spawn(move || {
+                    let directory = {
+                        let mut slot = directory.lock().unwrap_or_else(|e| e.into_inner());
+                        slot.get_or_insert_with(|| {
+                            Arc::new(reborn_platform::radio::Directory::discover())
+                        })
+                        .clone()
+                    };
+                    let _ = directory.play_url(&uuid);
+                });
+        }
+        self.log.emit(Level::Info, "radio", "station_started", "Internet radio station started", None,
+            json!({"codec":station.codec,"bitrate":station.bitrate,"directory":!station.uuid.is_empty()}));
+        self.radio_current = Some(station);
+        Ok(())
+    }
+    fn toggle_favorite(&mut self, station: reborn_core::RadioStation) -> Result<(), String> {
+        let key = station.key().to_owned();
+        if let Some(i) = self.radio_favorites.iter().position(|s| s.key() == key) {
+            self.radio_favorites.remove(i);
+            self.ui.flash("Removed from Favorites");
+        } else {
+            if self.radio_favorites.len() >= 200 {
+                return Err("Favorites are full (200 stations)".into());
+            }
+            self.radio_favorites.push(station);
+            self.ui.flash("Added to Favorites");
+        }
+        reborn_platform::radio::save_favorites(
+            &self.root.join("state/radio.json"),
+            &self.radio_favorites,
+        )
+        .map_err(|e| format!("Couldn't save favorites: {e}"))?;
+        self.ui.radio.favorites = self
+            .radio_favorites
+            .iter()
+            .map(|s| s.key().to_owned())
+            .collect();
+        // The Favorites list on screen follows at once.
+        if self.ui.radio.last_request == Some(reborn_core::RadioRequest::Favorites) {
+            self.ui.radio.stations = self.radio_favorites.clone();
+        }
+        Ok(())
+    }
+    /// The live line under a playing station: its announced song, or how the
+    /// connection is doing.
+    fn radio_tick(&mut self) {
+        let Some(current) = self.model.current() else {
+            return;
+        };
+        if !current.is_radio() {
+            return;
+        }
+        use reborn_platform::radio::StreamState;
+        let line = match reborn_platform::radio::live() {
+            Some((StreamState::Connecting, _)) => "Connecting…".to_owned(),
+            Some((StreamState::Reconnecting { attempt }, _)) => {
+                format!("Reconnecting… (try {attempt})")
+            }
+            Some((StreamState::Failed(reason), _)) => reason,
+            Some((StreamState::Playing, Some(title))) => title,
+            Some((StreamState::Playing, None)) => "Live".to_owned(),
+            None => return,
+        };
+        if self.radio_live.as_deref() != Some(line.as_str()) {
+            let position = self.model.queue_position;
+            if let Some(track) = self.model.queue.get_mut(position) {
+                track.artist = line.clone();
+            }
+            self.radio_live = Some(line);
+            self.dirty.mark_render();
+        }
+    }
+    /// Internal Storage and online SD cards, where Themes and Radio live.
+    fn storage_roots(&self) -> Vec<PathBuf> {
+        let mut roots = vec![self.model.settings.music_directory.clone()];
+        roots.extend(
+            self.model
+                .sources
+                .iter()
+                .filter(|s| s.online && matches!(s.kind, reborn_core::MediaSource::SdCard(_)))
+                .map(|s| s.root.clone()),
+        );
+        roots
+    }
     fn play_members(
         &mut self,
         index: usize,
@@ -714,10 +943,18 @@ impl Runtime {
             ));
         self.reconfiguration_attempted = true;
         let track = self.model.current().cloned().ok_or("queue is empty")?;
-        if !track.path.is_file() {
+        let radio = track.is_radio();
+        if !radio && !track.path.is_file() {
             return Err("track source unavailable".into());
         }
-        let _source = storage::pin_track(&track, &self.model.settings.music_directory)?;
+        let _source = if radio {
+            None
+        } else {
+            Some(storage::pin_track(
+                &track,
+                &self.model.settings.music_directory,
+            )?)
+        };
         let music_root = self.model.settings.music_directory.clone();
         let output = self.model.output.clone();
         let bluetooth_pcm = match &output {
@@ -735,7 +972,9 @@ impl Runtime {
             .model
             .current_entry_id()
             .unwrap_or(QueueEntryId(self.model.queue_position as u64 + 1));
-        let (queue, queue_entry_ids) = if self.model.settings.repeat == RepeatMode::Track {
+        // A station is never pre-opened for gapless playback: that would start
+        // a second network transfer.
+        let (queue, queue_entry_ids) = if radio || self.model.settings.repeat == RepeatMode::Track {
             (Vec::new(), Vec::new())
         } else {
             (
@@ -1031,6 +1270,7 @@ impl Runtime {
                 self.pause();
                 self.model.playback = PlaybackState::Stopped;
             }
+            Effect::Radio(request) => self.radio(request)?,
             Effect::SetCodecPreference(preference) => {
                 if !codec_change_allowed(
                     self.model.playback,
@@ -1214,6 +1454,8 @@ impl Runtime {
                     self.playback.stop(self.model.generation);
                 }
             }
+            // A live station has nothing to seek in.
+            Effect::Seek(_) if self.model.current().is_some_and(Track::is_radio) => {}
             Effect::Seek(delta) => {
                 self.model.position_ms = self.model.position_ms.saturating_add_signed(delta).min(
                     self.model
@@ -2681,6 +2923,12 @@ fn run() -> Result<(), String> {
             persistence: false,
         },
         root: root.clone(),
+        radio_favorites: reborn_platform::radio::load_favorites(&root.join("state/radio.json")),
+        radio_current: None,
+        radio_sequence: 0,
+        radio_replies: std::sync::mpsc::channel(),
+        radio_directory: Arc::new(Mutex::new(None)),
+        radio_live: None,
         headless,
         last_activity: Instant::now(),
         query: Some(initial_catalog),
@@ -2700,6 +2948,11 @@ fn run() -> Result<(), String> {
         wifi_idle_off: false,
         wifi_idle_failed: false,
     };
+    rt.ui.radio.favorites = rt
+        .radio_favorites
+        .iter()
+        .map(|s| s.key().to_owned())
+        .collect();
     if !rt.model.settings.theme.is_empty() {
         let id = rt.model.settings.theme.clone();
         // A skin on a missing SD card or a refused skin falls back to Reborn's
@@ -3237,9 +3490,15 @@ fn run() -> Result<(), String> {
                     rt.ui.wifi = view;
                     rt.dirty.mark_render();
                 }
+                rt.ui.radio.online = matches!(rt.ui.wifi.status, WifiStatus::Connected(_));
                 rt.wifi_state = s;
             }
         }
+        let radio_replies: Vec<RadioReply> = rt.radio_replies.1.try_iter().collect();
+        for reply in radio_replies {
+            rt.radio_reply(reply);
+        }
+        rt.radio_tick();
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {

@@ -18,9 +18,16 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// What keeps a decoder's input valid: a pinned library file, or a radio
+/// station's network transfer (stopped when the decoder is dropped).
+enum Source {
+    File(Box<reborn_platform::storage::PinnedTrack>),
+    /// Held only so dropping the decoder also stops the transfer.
+    Radio(#[allow(dead_code)] reborn_platform::radio::Stream),
+}
 struct BoundDecoder {
     decoder: Decoder,
-    _source: reborn_platform::storage::PinnedTrack,
+    _source: Source,
 }
 impl BoundDecoder {
     fn open(
@@ -30,11 +37,26 @@ impl BoundDecoder {
         dsp: DspConfig,
         cancel: Cancel,
     ) -> Result<Self, String> {
+        if track.is_radio() {
+            let url = track.path.to_string_lossy();
+            let stream = reborn_platform::radio::Stream::start(&url)
+                .map_err(|e| format!("radio station could not start: {e}"))?;
+            let decoder = Decoder::open_stream(stream.reader(), spec, dsp, cancel).map_err(
+                |e| match stream.state() {
+                    reborn_platform::radio::StreamState::Failed(reason) => reason,
+                    _ => format!("radio station could not be played: {e}"),
+                },
+            )?;
+            return Ok(Self {
+                decoder,
+                _source: Source::Radio(stream),
+            });
+        }
         let source = reborn_platform::storage::pin_track(track, music)?;
         let decoder = Decoder::open_with(source.path(), spec, dsp, cancel)?;
         Ok(Self {
             decoder,
-            _source: source,
+            _source: Source::File(Box::new(source)),
         })
     }
 }
@@ -552,7 +574,10 @@ fn publish_artwork(
     // The folder's cover first, the embedded picture only when the folder has
     // none (same order as the thumbnail worker). Only embedded pictures are
     // cached here: a folder image can change without the track changing.
-    if let Ok(folder) = pinned_folder_artwork(&decoder._source) {
+    let Source::File(pinned) = &decoder._source else {
+        return None; // a station has no folder or embedded cover
+    };
+    if let Ok(folder) = pinned_folder_artwork(pinned) {
         return Some(folder);
     }
     let path = cache.join(format!("{}-{}-{}.rgba", track.id, track.size, track.mtime));
@@ -692,10 +717,16 @@ impl Playback {
                         dl.add("audio_resamples", 1.);
                     }
                     dl.add("ffmpeg_corrupt_packets", decoder.metadata.corrupt_packets as f64);
-                    if job.position > 0 {
+                    // A live station has no position to return to.
+                    if job.position > 0 && !tracks[0].is_radio() {
                         decoder.seek(job.position)?;
                     }
-                    if let Some(bytes) = publish_artwork(&cache, &tracks[0], &mut decoder) {
+                    let artwork = if tracks[0].is_radio() {
+                        None
+                    } else {
+                        publish_artwork(&cache, &tracks[0], &mut decoder)
+                    };
+                    if let Some(bytes) = artwork {
                         send_stream_item(
                             &pt,
                             &db,
@@ -2690,5 +2721,46 @@ mod tests {
         assert!(boundary);
         assert_eq!(frames.load(Ordering::Relaxed), 5987);
         p.shutdown(32).unwrap();
+    }
+
+    /// Live end-to-end check (needs the internet): a real station through
+    /// the fetcher and the stream decoder, as playback opens it.
+    #[test]
+    #[ignore]
+    fn live_radio_station_decodes() {
+        let directory = reborn_platform::radio::Directory::discover();
+        let popular = directory.popular().expect("directory reachable");
+        for codec in ["MP3", "AAC"] {
+            let station = popular
+                .iter()
+                .find(|s| s.codec == codec)
+                .expect("station")
+                .clone();
+            let track = reborn_core::Track::radio(&station);
+            let spec = OutputSpec {
+                rate: 48_000,
+                format: PcmFormat::S16LE,
+            };
+            let mut decoder = BoundDecoder::open(
+                &track,
+                std::path::Path::new("/"),
+                spec,
+                DspConfig::with_volume(100),
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let mut frames = 0;
+            while frames < 48_000 * 3 {
+                frames += decoder
+                    .read()
+                    .unwrap()
+                    .expect("live stream does not end")
+                    .frames;
+            }
+            eprintln!(
+                "{codec}: {} decoded 3 s ({:?})",
+                station.name, decoder.metadata.codec
+            );
+        }
     }
 }

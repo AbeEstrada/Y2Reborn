@@ -692,15 +692,37 @@ impl Decoder {
         dsp: DspConfig,
         cancel: Cancel,
     ) -> Result<Self, String> {
-        if !(8000..=384_000).contains(&spec.rate) {
-            return Err("unsupported sink rate".into());
-        }
         if !path.is_file() {
             return Err("media must be an existing regular file".into());
         }
-        let api = cancel.0.api;
         use std::os::unix::ffi::OsStrExt;
         let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+        Self::open_named(name, spec, dsp, cancel)
+    }
+    /// Internet radio: decode plain audio bytes (MP3, AAC/ADTS, Ogg, FLAC)
+    /// from the read end of a pipe the network fetcher writes. The decoder
+    /// keeps its own duplicate of the descriptor; FFmpeg itself never opens
+    /// a network connection. Not seekable; ends when the writer closes.
+    pub fn open_stream(
+        pipe: std::os::fd::BorrowedFd<'_>,
+        spec: OutputSpec,
+        dsp: DspConfig,
+        cancel: Cancel,
+    ) -> Result<Self, String> {
+        use std::os::fd::AsRawFd;
+        let name = CString::new(format!("rbpipe:{}", pipe.as_raw_fd())).map_err(|_| "NUL")?;
+        Self::open_named(name, spec, dsp, cancel)
+    }
+    fn open_named(
+        name: CString,
+        spec: OutputSpec,
+        dsp: DspConfig,
+        cancel: Cancel,
+    ) -> Result<Self, String> {
+        if !(8000..=384_000).contains(&spec.rate) {
+            return Err("unsupported sink rate".into());
+        }
+        let api = cancel.0.api;
         let raw_dsp = dsp.raw();
         let mut ptr = std::ptr::null_mut();
         // SAFETY: output storage and path live through this synchronous call; C retains only the cancellation pointer.
@@ -911,6 +933,78 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/fixtures")
             .join(n)
+    }
+    /// Feed a fixture through a pipe in small, slow chunks, as a radio
+    /// stream arrives, and decode it with the stream decoder.
+    fn decode_streamed(name: &str, chunk: usize, pause_ms: u64) -> (u64, Result<(), String>) {
+        use std::io::Write;
+        use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 fills two descriptors that we take ownership of.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let writer = std::thread::spawn(move || {
+            let mut file = std::fs::File::from(write);
+            for part in bytes.chunks(chunk) {
+                if file.write_all(part).is_err() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(pause_ms));
+            }
+        });
+        let spec = OutputSpec {
+            rate: 48_000,
+            format: PcmFormat::S16LE,
+        };
+        let mut frames = 0;
+        let result = Decoder::open_stream(
+            read.as_fd(),
+            spec,
+            DspConfig::with_volume(100),
+            Cancel::new().unwrap(),
+        )
+        .and_then(|mut d| {
+            drop(read);
+            while let Some(pcm) = d.read()? {
+                frames += pcm.frames;
+            }
+            Ok(())
+        });
+        writer.join().unwrap();
+        (frames, result)
+    }
+    #[test]
+    fn radio_streams_decode_from_a_pipe_without_seeking() {
+        for name in ["tone.mp3", "aac.aac", "tone.ogg"] {
+            let (frames, result) = decode_streamed(name, 4096, 1);
+            assert!(result.is_ok(), "{name}: {result:?}");
+            assert!(frames > 1000, "{name}: {frames} frames");
+        }
+    }
+    #[test]
+    fn stream_decoder_refuses_regular_files_and_odd_names() {
+        let file = std::fs::File::open(fixture("tone.mp3")).unwrap();
+        use std::os::fd::AsFd;
+        let spec = OutputSpec {
+            rate: 48_000,
+            format: PcmFormat::S16LE,
+        };
+        assert!(Decoder::open_stream(
+            file.as_fd(),
+            spec,
+            DspConfig::with_volume(100),
+            Cancel::new().unwrap()
+        )
+        .is_err());
+        // A library path can never be mistaken for a pipe.
+        assert!(Decoder::open_with(
+            Path::new("rbpipe:5"),
+            spec,
+            DspConfig::with_volume(100),
+            Cancel::new().unwrap()
+        )
+        .is_err());
     }
     #[test]
     fn skin_pictures_decode_at_their_own_size_with_alpha_and_never_scale() {

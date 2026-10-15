@@ -78,6 +78,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Genres", "genres", ""),
             row("Songs", "tracks", ""),
             row("Folders", "folders", ""),
+            row("Radio", "radio", ""),
             row("Settings", "settings", ""),
         ]),
         Screen::Music => Page::rows(vec![
@@ -96,6 +97,9 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::TrackInfo => track_info(m, tracks),
         Screen::Settings => settings(ui, m),
         Screen::Wifi => radio_firmware(m, "Wi-Fi").unwrap_or_else(|| wifi(ui)),
+        Screen::Radio => radio_menu(ui),
+        Screen::RadioStations => radio_stations(ui),
+        Screen::RadioCategories => radio_categories(ui),
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
@@ -349,6 +353,117 @@ fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
         ),
         RadioFirmware::Ready | RadioFirmware::Unknown => return None,
     })
+}
+
+/// Internet radio: the owner's lists first, then the community directory.
+fn radio_menu(ui: &Ui) -> Page {
+    let r = &ui.radio;
+    let favorites = match r.favorites.len() {
+        0 => String::new(),
+        1 => "1 station".into(),
+        n => format!("{n} stations"),
+    };
+    let rows = vec![
+        row("Favorites", "radio_favorites", favorites),
+        row("Popular", "radio_popular", ""),
+        row("Countries", "radio_countries", ""),
+        row("Genres", "radio_genres", ""),
+        row("Search", "radio_search", ""),
+        row("My Stations", "radio_own", "Radio folder"),
+    ];
+    if !r.online {
+        return Page::hero(
+            "Radio Needs Wi-Fi",
+            "Connect to Wi-Fi to listen to internet radio. Favorites and your own lists stay here.",
+        )
+        .with_rows(
+            std::iter::once(row("Wi-Fi", "radio_wifi", ""))
+                .chain(rows)
+                .collect(),
+        );
+    }
+    Page::rows(rows)
+}
+
+fn radio_back() -> Vec<Item> {
+    vec![row("Back to Radio", "radio_back", "")]
+}
+
+fn radio_stations(ui: &Ui) -> Page {
+    let r = &ui.radio;
+    if r.loading {
+        return Page::hero("Loading Stations…", "Asking the station directory.")
+            .with_rows(radio_back());
+    }
+    if let Some(error) = &r.error {
+        return Page::hero("Couldn't Load Stations", error).with_rows(vec![row(
+            "Try Again",
+            "radio_retry",
+            "",
+        )]);
+    }
+    if r.stations.is_empty() {
+        return match r.last_request {
+            Some(reborn_core::RadioRequest::Favorites) => Page::hero(
+                "No Favorites Yet",
+                "Hold Select on a station, or on Now Playing, and choose Add to Favorites.",
+            ),
+            Some(reborn_core::RadioRequest::Own) => Page::hero(
+                "No Stations of Your Own",
+                "Copy .m3u or .pls station lists into a folder named Radio on Internal Storage or the SD card.",
+            ),
+            _ => Page::hero("No Stations Found", "Try another name, country or genre."),
+        }
+        .with_rows(radio_back());
+    }
+    Page::rows(
+        r.stations
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let mut detail = s.summary();
+                if r.is_favorite(s) {
+                    detail = if detail.is_empty() {
+                        "Favorite".into()
+                    } else {
+                        format!("Favorite · {detail}")
+                    };
+                }
+                row(&s.name, &format!("station:{i}"), detail)
+            })
+            .collect(),
+    )
+}
+
+fn radio_categories(ui: &Ui) -> Page {
+    let r = &ui.radio;
+    if r.loading {
+        return Page::hero("Loading…", "Asking the station directory.").with_rows(radio_back());
+    }
+    if r.categories.is_empty() && r.error.is_none() {
+        return Page::hero("Nothing Here", "The directory sent an empty list.")
+            .with_rows(radio_back());
+    }
+    if let Some(error) = &r.error {
+        return Page::hero("Couldn't Load the List", error).with_rows(vec![row(
+            "Try Again",
+            "radio_retry",
+            "",
+        )]);
+    }
+    Page::rows(
+        r.categories
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                row(
+                    &c.name,
+                    &format!("category:{i}"),
+                    format!("{} stations", c.stations),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn wifi(ui: &Ui) -> Page {

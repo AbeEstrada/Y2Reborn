@@ -39,10 +39,11 @@ pub fn now_playing(
         components::placeholder(c, 26., 46., 176., 15., 0);
     }
 
+    let radio = t.is_radio();
     c.text_tracked(
         222.,
         61. + Face::S10.mid_offset(),
-        "NOW PLAYING",
+        if radio { "LIVE RADIO" } else { "NOW PLAYING" },
         Face::S10,
         accent,
         1.8,
@@ -70,16 +71,21 @@ pub fn now_playing(
         color::MUTED,
     );
     let info_cy = artist_baseline + 45.;
-    let source_offline =
-        !m.sources.is_empty() && !m.sources.iter().any(|s| s.id == t.source_id && s.online);
+    let source_offline = !radio
+        && !m.sources.is_empty()
+        && !m.sources.iter().any(|s| s.id == t.source_id && s.online);
     if source_offline
         || m.playback == PlaybackState::Error
         || m.playback == PlaybackState::Buffering
     {
         let note = if source_offline {
             "SD card removed · reinsert it"
+        } else if m.playback == PlaybackState::Error && radio {
+            "Station stopped · choose it again"
         } else if m.playback == PlaybackState::Error {
             "No audio output · check headphones"
+        } else if radio {
+            "Tuning in…"
         } else {
             "Starting…"
         };
@@ -91,14 +97,23 @@ pub fn now_playing(
 
     // Progress.
     let (x0, x1) = (26., WIDTH - 26.);
+    // A station has no length: a full bar, listening time and LIVE.
     components::slider(
         c,
         x0,
         263.,
         x1 - x0,
-        components::progress(m.position_ms, t.duration_ms),
-        color::TEXT,
-        true,
+        if radio {
+            1.
+        } else {
+            components::progress(m.position_ms, t.duration_ms)
+        },
+        if radio {
+            alpha(accent, 0xB0)
+        } else {
+            color::TEXT
+        },
+        !radio,
     );
     c.text_mid(
         x0,
@@ -108,10 +123,14 @@ pub fn now_playing(
         Face::R11,
         color::MUTED,
     );
-    let remaining = format!(
-        "-{}",
-        components::time(t.duration_ms.saturating_sub(m.position_ms))
-    );
+    let remaining = if radio {
+        "LIVE".to_owned()
+    } else {
+        format!(
+            "-{}",
+            components::time(t.duration_ms.saturating_sub(m.position_ms))
+        )
+    };
     c.text_mid_right(x1, 281., &remaining, Face::R11, color::MUTED);
 
     // Transport.

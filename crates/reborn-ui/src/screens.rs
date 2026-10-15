@@ -150,6 +150,9 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::TrackInfo => keys!("song_info"),
         Screen::Settings => keys!("settings"),
         Screen::Wifi => keys!("wifi"),
+        Screen::Radio => keys!("radio"),
+        Screen::RadioStations => keys!("radio_stations"),
+        Screen::RadioCategories => keys!("radio_categories"),
         Screen::Bluetooth => keys!("bluetooth"),
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
@@ -599,6 +602,12 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::TrackInfo => "Song info".into(),
         Screen::Settings => "Settings".into(),
         Screen::Wifi => "Wi-Fi".into(),
+        Screen::Radio => "Radio".into(),
+        Screen::RadioStations | Screen::RadioCategories if !m.navigation.filter.is_empty() => {
+            m.navigation.filter.clone()
+        }
+        Screen::RadioStations => "Stations".into(),
+        Screen::RadioCategories => "Radio".into(),
         Screen::Bluetooth => "Bluetooth".into(),
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),

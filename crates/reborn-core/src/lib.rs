@@ -234,6 +234,7 @@ pub struct Source {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Track {
+    /// Library row id; radio stations use negative ids (never in the library).
     pub id: i64,
     pub source_id: String,
     pub path: PathBuf,
@@ -256,6 +257,97 @@ pub struct Track {
     /// Genre tag as read from the file; empty when the file has none.
     #[serde(default)]
     pub genre: String,
+}
+
+/// `Track::source_id` of an internet radio station in the queue.
+pub const RADIO_SOURCE: &str = "radio";
+impl Track {
+    /// An internet radio station: `path` holds the stream address, `filename`
+    /// the directory id (if any), `album` a short description.
+    pub fn is_radio(&self) -> bool {
+        self.source_id == RADIO_SOURCE
+    }
+    pub fn radio(station: &RadioStation) -> Self {
+        Self {
+            id: -1,
+            source_id: RADIO_SOURCE.into(),
+            path: PathBuf::from(&station.url),
+            filename: station.uuid.clone(),
+            title: station.name.clone(),
+            album: station.summary(),
+            codec: station.codec.clone(),
+            bitrate: u64::from(station.bitrate) * 1000,
+            online: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// An internet radio station from the community directory or an owner's
+/// own playlist.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RadioStation {
+    /// radio-browser station UUID; empty for the owner's own playlists.
+    #[serde(default)]
+    pub uuid: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub country: String,
+    #[serde(default)]
+    pub codec: String,
+    #[serde(default)]
+    pub bitrate: u32,
+    #[serde(default)]
+    pub tags: String,
+}
+impl RadioStation {
+    /// One line under the station name: "Germany · MP3 128 kbps · jazz".
+    pub fn summary(&self) -> String {
+        let mut parts = vec![];
+        if !self.country.is_empty() {
+            parts.push(self.country.clone());
+        }
+        match (self.codec.is_empty(), self.bitrate) {
+            (false, b) if b > 0 => parts.push(format!("{} {b} kbps", self.codec)),
+            (false, _) => parts.push(self.codec.clone()),
+            (true, b) if b > 0 => parts.push(format!("{b} kbps")),
+            _ => {}
+        }
+        if let Some(tag) = self.tags.split(',').map(str::trim).find(|t| !t.is_empty()) {
+            parts.push(tag.to_owned());
+        }
+        parts.join(" · ")
+    }
+    /// Identity for favorites: the directory UUID, else the stream URL.
+    pub fn key(&self) -> &str {
+        if self.uuid.is_empty() {
+            &self.url
+        } else {
+            &self.uuid
+        }
+    }
+}
+
+/// What the Radio screens ask the player for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RadioRequest {
+    Favorites,
+    Own,
+    Popular,
+    Countries,
+    Genres,
+    Country {
+        code: String,
+        name: String,
+    },
+    Genre(String),
+    Search(String),
+    /// Play the station at this index of the list on screen.
+    Play(usize),
+    ToggleFavorite(usize),
+    /// Add or remove the station playing now.
+    ToggleFavoriteCurrent,
 }
 
 /* A queue occurrence is a playback identity, not a library identity. Two
@@ -371,6 +463,12 @@ pub enum Screen {
     ValueDetail,
     TextEntry,
     Pairing,
+    /// Internet radio: favorites, own stations, the directory, search.
+    Radio,
+    /// A list of stations (the list's title is in the navigation filter).
+    RadioStations,
+    /// Countries or genres of the station directory.
+    RadioCategories,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -605,6 +703,7 @@ pub enum Effect {
     Platform(PlatformTask),
     WifiDisconnect,
     StopPlayback,
+    Radio(RadioRequest),
     SetCodecPreference(CodecPreference),
     Play(usize),
     PlayShuffled(usize),
@@ -867,10 +966,9 @@ impl AppModel {
             }
             Event::SourceChanged(sources) => {
                 self.sources = sources;
-                if self
-                    .current()
-                    .is_some_and(|t| !self.sources.iter().any(|s| s.online && s.id == t.source_id))
-                {
+                if self.current().is_some_and(|t| {
+                    !t.is_radio() && !self.sources.iter().any(|s| s.online && s.id == t.source_id)
+                }) {
                     self.playback = PlaybackState::Paused;
                     self.invalidate();
                 }
@@ -1145,5 +1243,22 @@ mod tests {
         assert!(m.screen_off);
         m.apply(Event::ScreenWake);
         assert!(!m.screen_off);
+    }
+
+    #[test]
+    fn storage_changes_never_pause_a_radio_station() {
+        let station = RadioStation {
+            name: "Jazz".into(),
+            url: "http://jazz.example/".into(),
+            ..Default::default()
+        };
+        let mut m = AppModel::default();
+        m.replace_queue(vec![Track::radio(&station)], 0).unwrap();
+        m.playback = PlaybackState::Playing;
+        m.apply(Event::SourceChanged(vec![]));
+        assert_eq!(m.playback, PlaybackState::Playing);
+        let track = m.current().unwrap();
+        assert!(track.is_radio() && track.id < 0);
+        assert_eq!(track.path, PathBuf::from("http://jazz.example/"));
     }
 }

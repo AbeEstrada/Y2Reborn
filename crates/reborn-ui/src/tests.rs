@@ -211,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 26] = [
+const NORMAL_SCREENS: [Screen; 29] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -238,6 +238,9 @@ const NORMAL_SCREENS: [Screen; 26] = [
     Screen::Storage,
     Screen::Update,
     Screen::About,
+    Screen::Radio,
+    Screen::RadioStations,
+    Screen::RadioCategories,
 ];
 
 const ENGINEERING: [&str; 30] = [
@@ -291,6 +294,7 @@ fn root_is_a_small_music_player_menu() {
             "Genres",
             "Songs",
             "Folders",
+            "Radio",
             "Settings"
         ]
     );
@@ -2010,4 +2014,181 @@ fn the_album_grid_of_a_genre_is_titled_with_the_genre() {
     m.navigation.filter = "genre:Jazz".into();
     let text = drawn_text(&ui.draw(&m, &tracks, false));
     assert!(text.contains("JAZZ") && !text.contains("ALBUMS"), "{text}");
+}
+
+fn station(name: &str, uuid: &str) -> reborn_core::RadioStation {
+    reborn_core::RadioStation {
+        uuid: uuid.into(),
+        name: name.into(),
+        url: format!("http://{name}.example/stream")
+            .to_ascii_lowercase()
+            .replace(' ', ""),
+        country: "Germany".into(),
+        codec: "MP3".into(),
+        bitrate: 128,
+        tags: "jazz".into(),
+    }
+}
+
+#[test]
+fn radio_menu_lists_own_and_directory_sources_and_explains_wifi() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    assert_eq!(select_key(&mut ui, &mut m, "radio"), Effect::None);
+    assert_eq!(m.screen, Screen::Radio);
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(
+        page.hero.as_ref().map(|h| h.title.as_str()),
+        Some("Radio Needs Wi-Fi")
+    );
+    ui.radio.online = true;
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Favorites",
+            "Popular",
+            "Countries",
+            "Genres",
+            "Search",
+            "My Stations"
+        ]
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_popular"),
+        Effect::Radio(RadioRequest::Popular)
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::RadioStations, "Popular")
+    );
+    assert!(ui.radio.loading);
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.map(|h| h.title), Some("Loading Stations…".into()));
+}
+
+#[test]
+fn radio_stations_play_mark_favorites_and_offer_options() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::RadioStations);
+    ui.radio.stations = vec![station("Jazz One", "a-1"), station("Rock Two", "b-2")];
+    ui.radio.favorites = vec!["b-2".into()];
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].secondary, "Germany · MP3 128 kbps · jazz");
+    assert_eq!(
+        rows[1].secondary,
+        "Favorite · Germany · MP3 128 kbps · jazz"
+    );
+    // Hold: options for that station.
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(options, ["Play", "Remove from Favorites"]);
+    m.navigation.modal_focus = 1;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Radio(RadioRequest::ToggleFavorite(1))
+    );
+    // Select plays it and shows Now Playing.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "station:0"),
+        Effect::Radio(RadioRequest::Play(0))
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+}
+
+#[test]
+fn radio_countries_and_genres_open_their_station_lists() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::Radio);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_countries"),
+        Effect::Radio(RadioRequest::Countries)
+    );
+    assert_eq!(m.screen, Screen::RadioCategories);
+    ui.radio.loading = false;
+    ui.radio.categories = vec![crate::RadioCategory {
+        id: "AT".into(),
+        name: "Austria".into(),
+        stations: 420,
+    }];
+    assert_eq!(ui.rows(&m, &m.library.tracks)[0].secondary, "420 stations");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "category:0"),
+        Effect::Radio(RadioRequest::Country {
+            code: "AT".into(),
+            name: "Austria".into()
+        })
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::RadioStations, "Austria")
+    );
+    // A failed request offers to try again with the same request.
+    ui.radio.loading = false;
+    ui.radio.error = Some("The server didn't answer.".into());
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_retry"),
+        Effect::Radio(RadioRequest::Country {
+            code: "AT".into(),
+            name: "Austria".into()
+        })
+    );
+}
+
+#[test]
+fn station_search_uses_the_wheel_keyboard() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::Radio);
+    assert_eq!(select_key(&mut ui, &mut m, "radio_search"), Effect::None);
+    assert!(ui.text_entry && ui.entry_search);
+    // One letter is not enough.
+    ui.model_action(&mut m, Action::Select); // "a"
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert!(ui.text_entry);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::Select); // "b"
+    assert_eq!(
+        ui.model_action(&mut m, Action::ContextMenu),
+        Effect::Radio(RadioRequest::Search("ab".into()))
+    );
+    assert!(!ui.text_entry && !ui.entry_search);
+    assert_eq!(m.screen, Screen::RadioStations);
+    assert!(ui.radio.loading);
+}
+
+#[test]
+fn now_playing_radio_offers_favorite_and_stop_only() {
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    m.replace_queue(vec![Track::radio(&station("Jazz One", "a-1"))], 0)
+        .unwrap();
+    ui.model_action(&mut m, Action::Select);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(options, ["Add to Favorites", "Stop Radio"]);
+    m.navigation.modal_focus = 0;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Radio(RadioRequest::ToggleFavoriteCurrent)
+    );
 }

@@ -836,20 +836,25 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
 
 // ------------------------------------------------------- password entry
 
-/// The character wheel for a Wi-Fi password.
+/// The character wheel for a Wi-Fi password or a station search.
 pub fn password_entry(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    let search = ui.entry_search;
     let accent = ui.accent();
     c.rect(0., 0., WIDTH, HEIGHT, color::BG);
     components::status_bar(c, ui, m, &ui.ssid.to_uppercase(), true);
     c.text_center(
         240.,
         66. + Face::R13.mid_offset(),
-        "Password",
+        if search { "Station name" } else { "Password" },
         Face::R13,
         color::MUTED,
     );
     c.rrect(48., 82., WIDTH - 96., 44., 14., color::GLASS);
-    let dots = "•".repeat(ui.password.len().min(24));
+    let dots = if search {
+        text::fit(Face::S20, &ui.password, WIDTH - 140.)
+    } else {
+        "•".repeat(ui.password.len().min(24))
+    };
     let w = text::width(Face::S20, &dots);
     c.text(
         66.,
@@ -884,7 +889,12 @@ pub fn password_entry(c: &mut Canvas, ui: &Ui, m: &AppModel) {
             let text = if space {
                 "Space".to_owned()
             } else if words {
-                ["Delete", "Connect", "Cancel"][ui.letter - crate::LETTERS.len()].to_owned()
+                [
+                    "Delete",
+                    if search { "Search" } else { "Connect" },
+                    "Cancel",
+                ][ui.letter - crate::LETTERS.len()]
+                .to_owned()
             } else {
                 label(index)
             };

@@ -8,6 +8,7 @@ pub mod input;
 pub mod kernel_events;
 mod native;
 pub mod power;
+pub mod radio;
 pub mod storage;
 pub mod wifi;
 pub mod workload;

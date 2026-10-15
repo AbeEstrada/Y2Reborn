@@ -25,6 +25,11 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   until the headphones reconnect. AAC headphones get the encoder's high-quality mode at the highest
   rate they accept (AirPods: 256 kbit/s), and the rate steps down by itself on a weak link
   (service menu: AAC Quality, AAC Auto Rate; SBC XQ for SBC-only headphones).
+- Internet radio (Home → Radio): Favorites, Popular, Countries, Genres and Search from the free
+  community directory radio-browser.info, plus your own .m3u/.pls lists in a `Radio` folder on
+  Internal Storage or the SD card. MP3, AAC and Ogg streams over Wi-Fi with the station's song
+  title on Now Playing and automatic reconnect; HLS-only stations are not supported yet. FFmpeg
+  stays built without networking: `curl` receives the stream and hands Reborn plain audio.
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
   connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
