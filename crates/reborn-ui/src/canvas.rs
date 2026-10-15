@@ -50,6 +50,11 @@ pub enum Icon {
     Vinyl,
     Person,
     Crossfade,
+    Shift,
+    ShiftOn,
+    Backspace,
+    Eye,
+    EyeOff,
 }
 
 impl Icon {
@@ -94,6 +99,11 @@ impl Icon {
             Self::Vinyl => mask::VINYL,
             Self::Person => mask::PERSON,
             Self::Crossfade => mask::CROSSFADE,
+            Self::Shift => mask::SHIFT,
+            Self::ShiftOn => mask::SHIFT_ON,
+            Self::Backspace => mask::BACKSPACE,
+            Self::Eye => mask::EYE,
+            Self::EyeOff => mask::EYE_OFF,
         }
     }
 }

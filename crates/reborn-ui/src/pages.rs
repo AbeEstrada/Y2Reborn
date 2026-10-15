@@ -78,6 +78,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Genres", "genres", ""),
             row("Songs", "tracks", ""),
             row("Folders", "folders", ""),
+            row("Search", "search", ""),
             row("Radio", "radio", ""),
             row("Settings", "settings", ""),
         ]),
@@ -87,6 +88,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             Item::new("Genres", "genres"),
             Item::new("Songs", "tracks"),
             Item::new("Folders", "folders"),
+            Item::new("Search", "search"),
         ]),
         Screen::NowPlaying if m.current().is_none() => Page::hero(
             "Nothing Playing",

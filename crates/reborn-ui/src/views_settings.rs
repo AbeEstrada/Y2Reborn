@@ -1,5 +1,5 @@
-//! Settings and its pages: grouped cards, switches, pickers, the radios and
-//! the password entry.
+//! Settings and its pages: grouped cards, switches, pickers and the radios
+//! (the password is typed on `keyboard`).
 use crate::{
     canvas::{Canvas, Icon},
     components::{self, signal_bars},
@@ -831,101 +831,5 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
         focus,
         interactive,
         start_rows,
-    );
-}
-
-// ------------------------------------------------------- password entry
-
-/// The character wheel for a Wi-Fi password or a station search.
-pub fn password_entry(c: &mut Canvas, ui: &Ui, m: &AppModel) {
-    let search = ui.entry_search;
-    let accent = ui.accent();
-    c.rect(0., 0., WIDTH, HEIGHT, color::BG);
-    components::status_bar(c, ui, m, &ui.ssid.to_uppercase(), true);
-    c.text_center(
-        240.,
-        66. + Face::R13.mid_offset(),
-        if search { "Station name" } else { "Password" },
-        Face::R13,
-        color::MUTED,
-    );
-    c.rrect(48., 82., WIDTH - 96., 44., 14., color::GLASS);
-    let dots = if search {
-        text::fit(Face::S20, &ui.password, WIDTH - 140.)
-    } else {
-        "•".repeat(ui.password.len().min(24))
-    };
-    let w = text::width(Face::S20, &dots);
-    c.text(
-        66.,
-        104. + Face::S20.mid_offset(),
-        &dots,
-        Face::S20,
-        color::TEXT,
-    );
-    c.rect((66. + w + 3.).round(), 92., 2., 24., accent);
-    // One row of characters with the focused one lifted.
-    let count = crate::LETTERS.len() + 3;
-    let label = |index: usize| -> String {
-        if index < crate::LETTERS.len() {
-            if crate::LETTERS[index] == b' ' {
-                "_".into()
-            } else {
-                (crate::LETTERS[index] as char).to_string()
-            }
-        } else {
-            ["Del", "Go", "Esc"][index - crate::LETTERS.len()].into()
-        }
-    };
-    for offset in -3i32..=3 {
-        let index = (ui.letter as i32 + offset).rem_euclid(count as i32) as usize;
-        let cx = 240. + offset as f32 * 52.;
-        if offset == 0 {
-            let at = c.draw.len();
-            c.rrect(cx - 26., 158., 52., 76., 16., 0xF2F3F5FF);
-            c.mark_focus(at);
-            let space = ui.letter < crate::LETTERS.len() && crate::LETTERS[ui.letter] == b' ';
-            let words = ui.letter >= crate::LETTERS.len() || space;
-            let text = if space {
-                "Space".to_owned()
-            } else if words {
-                [
-                    "Delete",
-                    if search { "Search" } else { "Connect" },
-                    "Cancel",
-                ][ui.letter - crate::LETTERS.len()]
-                .to_owned()
-            } else {
-                label(index)
-            };
-            let face = if words { Face::S13 } else { Face::S36 };
-            c.text_center(cx, 196. + face.mid_offset(), &text, face, color::INK);
-        } else {
-            let tint = if offset.abs() < 3 {
-                0xAAAEBAFF
-            } else {
-                0x6E727EFF
-            };
-            let face = if offset.abs() == 1 {
-                Face::L23
-            } else {
-                Face::R17
-            };
-            c.text_center(cx, 196. + face.mid_offset(), &label(index), face, tint);
-        }
-    }
-    c.text_center(
-        240.,
-        296. + Face::R11.mid_offset(),
-        "Turn wheel: letter  ·  Select: add  ·  Hold Select: done",
-        Face::R11,
-        color::DIM,
-    );
-    c.text_center(
-        240.,
-        320. + Face::R11.mid_offset(),
-        "Back cancels",
-        Face::R11,
-        color::DIM,
     );
 }

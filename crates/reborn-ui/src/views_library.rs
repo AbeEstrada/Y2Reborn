@@ -213,7 +213,11 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
                 .position(|t| t.id == q.id && t.source_id == q.source_id)
                 .map(|i| (i, &tracks[i]))
         });
-        if artists {
+        if row.key == "search_edit" {
+            c.rrect(20., y + 7., 38., 38., 8., color::GLASS);
+            c.icon(Icon::Search, 39., y + 26., 22., color::TEXT);
+        } else if artists || row.key.starts_with("artist:") {
+            // Artists are round, also among search results.
             cover(c, ui, art_track, 20., y + 7., 38.);
             c.round_off(20., y + 7., 38., 19., bg);
         } else {

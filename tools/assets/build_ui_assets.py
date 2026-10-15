@@ -470,6 +470,35 @@ def ic_person(p):
     p.arc(16, 30, 12, 195, 345, 5)
 
 
+# Keyboard keys (Beta 5): Shift (outline; filled while on), Delete, Show/Hide.
+SHIFT_ARROW = [(16, 5), (27, 17), (21, 17), (21, 27), (11, 27), (11, 17), (5, 17), (16, 5)]
+
+
+def ic_shift(p):
+    p.line(SHIFT_ARROW, 2.4)
+
+
+def ic_shift_on(p):
+    p.poly(SHIFT_ARROW[:-1])
+
+
+def ic_backspace(p):
+    p.line([(11, 7), (28, 7), (28, 25), (11, 25), (3, 16), (11, 7)], 2.2)
+    p.line([(15, 12), (23, 20)], 2.2)
+    p.line([(23, 12), (15, 20)], 2.2)
+
+
+def ic_eye(p):
+    p.arc(16, 33, 21, 230, 310, 2.4)
+    p.arc(16, 1, 21, 50, 130, 2.4)
+    p.ellipse(16, 17, 3.6)
+
+
+def ic_eye_off(p):
+    ic_eye(p)
+    p.line([(6, 27), (26, 7)], 2.4)
+
+
 ICONS = [
     ('back', 32, ic_back), ('chevron', 32, ic_chevron), ('check', 32, ic_check), ('close', 32, ic_close),
     ('play', 32, lambda p: ic_play(p, 32)), ('pause', 32, lambda p: ic_pause(p, 32)),
@@ -484,6 +513,8 @@ ICONS = [
     ('info', 32, ic_info), ('sun', 32, ic_sun), ('drive', 32, ic_drive), ('power', 32, ic_power),
     ('download', 32, ic_download), ('refresh', 32, ic_refresh), ('search', 32, ic_search),
     ('vinyl', 32, ic_disc), ('person', 32, ic_person), ('crossfade', 32, ic_crossfade),
+    ('shift', 32, ic_shift), ('shift_on', 32, ic_shift_on), ('backspace', 32, ic_backspace),
+    ('eye', 32, ic_eye), ('eye_off', 32, ic_eye_off),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

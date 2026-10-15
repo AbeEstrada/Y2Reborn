@@ -9,9 +9,11 @@ mod components;
 pub mod diagnostics;
 mod flow;
 mod fontdata;
+pub mod keyboard;
 mod maskdata;
 pub mod pages;
 mod screens;
+mod search;
 pub mod skin;
 mod text;
 pub mod theme;
@@ -257,14 +259,13 @@ pub struct Ui {
     pub wifi: WifiView,
     pub bluetooth: BluetoothView,
     pub radio: RadioView,
-    /// The text entry searches stations instead of taking a Wi-Fi password.
-    pub entry_search: bool,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
-    password: String,
-    ssid: String,
-    letter: usize,
-    pub text_entry: bool,
+    /// The full-screen keyboard, while it is open.
+    pub keyboard: Option<keyboard::Keyboard>,
+    /// The last station and library searches, offered again when reopened.
+    radio_query: String,
+    library_query: String,
     catalog: std::cell::RefCell<catalog::Catalog>,
     /// Accent colour taken from the current cover (0 = the default accent).
     pub accent: u32,
@@ -323,7 +324,6 @@ pub enum Alert {
     BatteryLow,
 }
 
-const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
 /// Library lists at least this long may use cadence-based wheel acceleration.
 const ACCELERATED_LIST_MINIMUM: usize = 40;
 /// Volume change per wheel detent on Now Playing.
@@ -842,7 +842,8 @@ impl Ui {
             | Screen::Folders
             | Screen::Artist
             | Screen::Album
-            | Screen::Tracks => self.catalog_rows(m, tracks),
+            | Screen::Tracks
+            | Screen::Search => self.catalog_rows(m, tracks),
             Screen::Queue => self.queue_rows(m),
             Screen::Diagnostics => diagnostics::root(m),
             Screen::DiagnosticSection => diagnostics::section_rows(m, &m.navigation.filter),
@@ -905,6 +906,7 @@ impl Ui {
                 | Screen::Album
                 | Screen::Artist
                 | Screen::Tracks
+                | Screen::Search
         )
     }
     pub(crate) fn row_at(&self, m: &AppModel, tracks: &[Track], index: usize) -> Option<Item> {
@@ -1043,7 +1045,7 @@ impl Ui {
             ];
         }
         match m.screen {
-            Screen::Albums | Screen::Artists | Screen::Genres => vec![],
+            Screen::Albums | Screen::Artists | Screen::Genres | Screen::Search => vec![],
             Screen::RadioStations => {
                 let Some(station) = key
                     .and_then(|k| k.strip_prefix("station:"))
@@ -1328,7 +1330,7 @@ impl Ui {
             Action::ShowNowPlaying
                 if !m.screen_off
                     && m.navigation.modal.is_none()
-                    && !self.text_entry
+                    && self.keyboard.is_none()
                     && self.pairing.is_none() =>
             {
                 Self::go(m, Screen::NowPlaying, "");
@@ -1369,8 +1371,8 @@ impl Ui {
                 _ => Effect::None,
             };
         }
-        if self.text_entry {
-            return self.entry(m, action);
+        if self.keyboard.is_some() {
+            return self.entry(m, tracks, action);
         }
         match action {
             Action::Home => {
@@ -1585,6 +1587,10 @@ impl Ui {
         if key == "shuffle:collection" {
             return self.play_filtered(m, tracks, true);
         }
+        if key == "search" || key == "search_edit" {
+            self.open_library_search(m, tracks);
+            return Effect::None;
+        }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
             // The picker lists what is installed now (skins arrive over MTP).
@@ -1607,6 +1613,9 @@ impl Ui {
             Screen::Albums => Self::go(m, Screen::Album, key),
             Screen::Folders if !key.starts_with("track:") => Self::go(m, Screen::Folders, key),
             Screen::Artist if key.starts_with("album:") => Self::go(m, Screen::Album, key),
+            Screen::Search if key.starts_with("artist:") => Self::go(m, Screen::Artist, key),
+            Screen::Search if key.starts_with("album:") => Self::go(m, Screen::Album, key),
+            Screen::Search => return self.play_track(m, tracks, key),
             Screen::Artist | Screen::Album | Screen::Tracks | Screen::Folders => {
                 if key == "artist_albums" {
                     Self::go(m, Screen::Albums, m.navigation.filter.clone());
@@ -1670,11 +1679,10 @@ impl Ui {
             "radio_countries" => categories(m, self, false),
             "radio_genres" => categories(m, self, true),
             "radio_search" => {
-                self.entry_search = true;
-                self.password.clear();
-                self.ssid = "Search Stations".into();
-                self.letter = 0;
-                self.text_entry = true;
+                self.keyboard = Some(keyboard::Keyboard::new(
+                    keyboard::Purpose::RadioSearch,
+                    self.radio_query.clone(),
+                ));
                 Effect::None
             }
             "radio_retry" => match self.radio.last_request.clone() {
@@ -1850,8 +1858,8 @@ impl Ui {
         effect
     }
     fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
-        if m.screen == Screen::Album {
-            // Album order, not library order.
+        if m.screen == Screen::Album || m.screen == Screen::Search {
+            // The page's own order (album, or search results), not library order.
             let mut c = self.catalog.borrow_mut();
             c.ensure(m, tracks);
             return c.rows.iter().filter_map(catalog::Row::track).collect();
@@ -1928,10 +1936,10 @@ impl Ui {
                 password: String::new(),
             },
             Some(true) => {
-                self.ssid = ssid.into();
-                self.password.clear();
-                self.letter = 0;
-                self.text_entry = true;
+                self.keyboard = Some(keyboard::Keyboard::new(
+                    keyboard::Purpose::WifiPassword { ssid: ssid.into() },
+                    "",
+                ));
                 Effect::None
             }
             None => Effect::None,
@@ -2149,62 +2157,105 @@ impl Ui {
         }
     }
 
-    fn entry(&mut self, m: &mut AppModel, action: Action) -> Effect {
-        let count = LETTERS.len() + 3;
-        match action {
-            // Character entry is a value context: one detent, one character.
-            Action::WheelClockwise(_) | Action::NavigateDown => {
-                self.letter = (self.letter + 1) % count
-            }
-            Action::WheelCounterClockwise(_) | Action::NavigateUp => {
-                self.letter = (self.letter + count - 1) % count
-            }
-            Action::Select if self.letter < LETTERS.len() => {
-                if self.password.len() < if self.entry_search { 40 } else { 63 } {
-                    self.password.push(LETTERS[self.letter] as char);
-                }
-            }
-            Action::Select if self.letter == LETTERS.len() => {
-                self.password.pop();
-            }
-            Action::ContextMenu | Action::Select
-                if action == Action::ContextMenu || self.letter == LETTERS.len() + 1 =>
-            {
-                if self.entry_search {
-                    let text = self.password.trim().to_owned();
-                    if text.chars().count() < 2 {
-                        self.flash("Type at least two letters");
-                        return Effect::None;
-                    }
-                    self.text_entry = false;
-                    self.entry_search = false;
-                    self.password.clear();
-                    let title = format!("“{text}”");
-                    self.radio.title = title.clone();
-                    self.radio.stations.clear();
-                    self.radio.loading = true;
-                    self.radio.error = None;
-                    self.radio.last_request = Some(RadioRequest::Search(text.clone()));
-                    Self::go(m, Screen::RadioStations, &title);
-                    return Effect::Radio(RadioRequest::Search(text));
-                }
-                if self.password.len() >= 8 {
-                    self.text_entry = false;
-                    return Effect::WifiConnect {
-                        ssid: self.ssid.clone(),
-                        password: std::mem::take(&mut self.password),
+    /// The keyboard has the buttons: see `keyboard` and the router's keyboard
+    /// mode. Playback buttons never reach here while it is open.
+    fn entry(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
+        use keyboard::{Outcome, Purpose};
+        let Some(k) = self.keyboard.as_mut() else {
+            return Effect::None;
+        };
+        match k.action(action) {
+            Outcome::Stay => Effect::None,
+            Outcome::Edited => {
+                if k.purpose == Purpose::LibrarySearch {
+                    let text = k.text.clone();
+                    let note = if text.trim().is_empty() {
+                        String::new()
+                    } else {
+                        self.catalog
+                            .borrow_mut()
+                            .index
+                            .search(tracks, &text)
+                            .summary()
                     };
+                    if let Some(k) = self.keyboard.as_mut() {
+                        k.note = note;
+                    }
                 }
-                self.flash("Wi-Fi passwords have at least 8 characters");
+                Effect::None
             }
-            Action::Back | Action::Home | Action::Select => {
-                self.password.clear();
-                self.text_entry = false;
-                self.entry_search = false;
+            Outcome::Cancel => {
+                self.keyboard = None;
+                Effect::None
             }
-            _ => {}
+            Outcome::Done => {
+                let text = k.text.trim().to_owned();
+                match k.purpose.clone() {
+                    Purpose::WifiPassword { ssid } => {
+                        // WPA passphrases keep their spaces.
+                        if k.text.len() < 8 {
+                            self.flash("Wi-Fi passwords have at least 8 characters");
+                            return Effect::None;
+                        }
+                        let password = std::mem::take(&mut k.text);
+                        self.keyboard = None;
+                        Effect::WifiConnect { ssid, password }
+                    }
+                    Purpose::RadioSearch => {
+                        if text.chars().count() < 2 {
+                            self.flash("Type at least two letters");
+                            return Effect::None;
+                        }
+                        self.keyboard = None;
+                        self.radio_query = text.clone();
+                        let title = format!("“{text}”");
+                        self.radio.title = title.clone();
+                        self.radio.stations.clear();
+                        self.radio.loading = true;
+                        self.radio.error = None;
+                        self.radio.last_request = Some(RadioRequest::Search(text.clone()));
+                        Self::go(m, Screen::RadioStations, &title);
+                        Effect::Radio(RadioRequest::Search(text))
+                    }
+                    Purpose::LibrarySearch => {
+                        if text.is_empty() {
+                            self.flash("Type a name to search for");
+                            return Effect::None;
+                        }
+                        self.keyboard = None;
+                        self.library_query = text.clone();
+                        // A new search replaces the results it was edited from.
+                        if m.screen == Screen::Search {
+                            m.navigation.filter = text;
+                            m.navigation.focus = 0;
+                            m.navigation.scroll = 0;
+                        } else {
+                            Self::go(m, Screen::Search, text);
+                        }
+                        Effect::None
+                    }
+                }
+            }
         }
-        Effect::None
+    }
+
+    /// Open the library search's keyboard with the last search.
+    fn open_library_search(&mut self, m: &AppModel, tracks: &[Track]) {
+        let text = if m.screen == Screen::Search {
+            m.navigation.filter.clone()
+        } else {
+            self.library_query.clone()
+        };
+        let mut k = keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, text.clone());
+        if !text.trim().is_empty() {
+            k.note = self
+                .catalog
+                .borrow_mut()
+                .index
+                .search(tracks, &text)
+                .summary();
+        }
+        self.keyboard = Some(k);
     }
 
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {

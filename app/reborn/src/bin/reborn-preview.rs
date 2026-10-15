@@ -421,12 +421,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("26-wifi-password", at(Screen::Wifi, ""), |ui, m| {
         m.navigation.focus = 3;
         ui.model_action(m, Action::Select);
-        for _ in 0..3 {
-            ui.model_action(m, Action::WheelClockwise(1));
+        for a in [Action::NavigateRight, Action::NavigateRight, Action::Select] {
+            ui.model_action(m, a);
+        }
+        for a in [Action::NavigateDown, Action::Select, Action::NavigateDown] {
+            ui.model_action(m, a);
+        }
+    });
+    case!("26b-wifi-password-shown", at(Screen::Wifi, ""), |ui, m| {
+        m.navigation.focus = 3;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "Correct Horse 42".into();
+            k.reveal = true;
+            k.layer = reborn_ui::keyboard::Layer::Digits;
+            k.row = 3;
+            k.col = 1;
+        }
+    });
+    // Keyboard and library search (Beta 5)
+    case!("70-search-keyboard", at(Screen::Home, ""), |ui, m| {
+        m.navigation.focus = 6;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "nort".into();
+        }
+        // "h" (middle row, sixth key) typed with the buttons; the count follows.
+        ui.model_action(m, Action::NavigateDown);
+        for _ in 0..5 {
+            ui.model_action(m, Action::NavigateRight);
         }
         ui.model_action(m, Action::Select);
-        ui.model_action(m, Action::Select);
     });
+    case!("71-search-results", at(Screen::Search, "north"), |_, m| m
+        .navigation
+        .focus =
+        1);
+    case!("72-search-keyboard-shift", at(Screen::Home, ""), |ui, m| {
+        m.navigation.focus = 6;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text.clear();
+            k.shift = reborn_ui::keyboard::Shift::Once;
+            k.row = 2;
+            k.col = 0;
+        }
+    });
+    case!("73-radio-search-accents", at(Screen::Radio, ""), |ui, m| {
+        ui.radio.online = true;
+        m.navigation.focus = 4;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "Radio Bremen Zwei".into();
+            k.layer = reborn_ui::keyboard::Layer::Accents;
+            k.row = 0;
+            k.col = 2;
+        }
+    });
+    case!("74-home-search", at(Screen::Home, ""), |_, m| m
+        .navigation
+        .focus =
+        6);
     case!("27-sound", at(Screen::SettingsAudio, ""), |_, m| {
         m.output = AudioOutput::Bluetooth("AA".into());
         m.settings.eq_enabled = true;

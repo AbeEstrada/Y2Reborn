@@ -1,5 +1,30 @@
 # Current Reborn state on the Y2
 
+## 1.0.0-beta.5 — Y2Linux 1.0 Beta 5, 2026-10-15 (latest): keyboard and search
+
+**Full-screen keyboard** (`reborn_ui::keyboard`) for the Wi-Fi password, radio station search and the
+new library search, replacing the one-row letter wheel. QWERTY in four rows (owner's choice), pages
+abc/ABC (Shift once, twice = lock), 123, #+= (all printable ASCII, so any WPA passphrase) and àé
+(accented letters, searches only; passwords get a show/hide key there). Buttons only (owner's choice):
+`ActionRouter::set_keyboard` turns Back, Play/Pause, Previous and Next into up, down, left and right on
+press, held Previous/Next repeat every 180 ms, holding Back cancels, the wheel does nothing; Select types,
+holding Select is Done. Rows wrap, so Done is one press above the letters. Playback buttons do not skip
+tracks while it is open; volume and Power keep their meaning; headphone buttons still control playback.
+
+**Library search** (Home → Search, also in the Music menu): artists, albums and songs where every typed
+word begins a word of the name, folded like A to Z order (`reborn_core::sort::fold`); an album is also
+found by its artist, a song by title, artist or album. The keyboard shows a live count ("2 artists · 3
+albums · 9 songs"); results open as a list (Edit Search, artists, albums, songs); Select on a song plays
+the result songs in order. Folded names are cached per library (`search::Index`).
+
+Since 1.0.0-beta.4 (in Beta 4.1): a stopped or paused station no longer hangs playback (`Stream::drop`
+closes its pipe first); Radio follows the Wi-Fi view every loop pass; a late platform network record no
+longer shows a connected player as offline.
+
+Host checks: 437 workspace tests (keyboard layout, movement, pages, limits, Done/Cancel; router keyboard
+mode with held buttons; search matching; the Wi-Fi, radio and library flows), fmt, strict Clippy; preview
+renders of the keyboard pages and search results in Reborn's look and in skins. Not yet on the device.
+
 ## 1.0.0-beta.4 — Y2Linux 1.0 Beta 4 (Baseline 53), 2026-10-15 (latest): internet radio
 
 **Internet radio.** Home → Radio: Favorites (saved in `/data/reborn/state/radio.json`), Popular,

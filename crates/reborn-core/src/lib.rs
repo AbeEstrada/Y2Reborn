@@ -469,6 +469,8 @@ pub enum Screen {
     RadioStations,
     /// Countries or genres of the station directory.
     RadioCategories,
+    /// Library search results; the navigation filter holds the search text.
+    Search,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

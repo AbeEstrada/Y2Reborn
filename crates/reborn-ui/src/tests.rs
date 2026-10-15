@@ -294,6 +294,7 @@ fn root_is_a_small_music_player_menu() {
             "Genres",
             "Songs",
             "Folders",
+            "Search",
             "Radio",
             "Settings"
         ]
@@ -699,19 +700,89 @@ fn now_playing_wheel_is_a_fixed_volume_step_and_select_opens_options() {
 }
 
 #[test]
-fn password_entry_moves_one_character_per_detent_and_is_never_drawn() {
+fn password_keyboard_types_with_buttons_and_never_draws_the_password() {
     let mut ui = radios();
     let mut m = app(Screen::Wifi);
     select_key(&mut ui, &mut m, "ssid:Café");
-    assert!(ui.text_entry);
+    assert!(ui.keyboard.is_some());
+    // The wheel does nothing on the keyboard; Next moves, Select types.
     ui.model_action(&mut m, Action::WheelClockwise(4));
+    ui.model_action(&mut m, Action::NavigateRight);
     ui.model_action(&mut m, Action::Select);
-    assert_eq!(ui.password, "b");
-    ui.password = "secretpass".into();
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "w");
+    // Too short for WPA: Done stays on the keyboard.
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert!(ui.keyboard.is_some());
+    ui.keyboard.as_mut().unwrap().text = "secretpass".into();
     let draw = ui.draw(&m, &m.library.tracks, false);
     assert!(!drawn_text(&draw).contains("secretpass"));
     assert!(drawn_text(&draw).contains("••••••••••"));
     assert_eq!(focus_target_count(&draw), 1);
+    // Playback buttons never reach the keyboard as playback (router), and
+    // holding Select joins.
+    assert_eq!(
+        ui.model_action(&mut m, Action::ContextMenu),
+        Effect::WifiConnect {
+            ssid: "Café".into(),
+            password: "secretpass".into()
+        }
+    );
+    assert!(ui.keyboard.is_none());
+    // Holding Back cancels a new entry.
+    select_key(&mut ui, &mut m, "ssid:Café");
+    assert_eq!(ui.model_action(&mut m, Action::Home), Effect::None);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Wifi, "cancel stays on the Wi-Fi page");
+}
+
+#[test]
+fn library_search_counts_while_typing_and_lists_artists_albums_songs() {
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Home);
+    m.library.tracks[4].title = "Beat It".into();
+    m.library.tracks[4].artist = "Michael Jackson".into();
+    assert_eq!(select_key(&mut ui, &mut m, "search"), Effect::None);
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.text = "bea".into();
+        // Delete one and type it again to trigger the live count.
+        k.row = 2;
+        k.col = 8;
+    }
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "be");
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.row = 1;
+        k.col = 0; // a
+    }
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.keyboard.as_ref().unwrap().note, "1 song");
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Search);
+    assert_eq!(m.navigation.filter, "bea");
+    let rows = ui.rows(&m, &m.library.tracks.clone());
+    assert_eq!(rows[0].key, "search_edit");
+    assert_eq!(rows[1].key, "track:4");
+    assert_eq!(rows[1].secondary, "Song · Michael Jackson");
+    // Select plays the song.
+    m.navigation.focus = 1;
+    assert!(matches!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::PlayCollection { selected: 4, .. } | Effect::Play(4)
+    ));
+    // Search finds artists and albums too, and Edit Search reopens with the text.
+    m.screen = Screen::Search;
+    m.navigation.filter = "album 1".into();
+    m.navigation.focus = 0;
+    let rows = ui.rows(&m, &m.library.tracks.clone());
+    assert!(
+        rows.iter().any(|r| r.secondary.starts_with("Album · ")),
+        "{rows:?}"
+    );
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "album 1");
 }
 
 #[test]
@@ -2151,26 +2222,34 @@ fn radio_countries_and_genres_open_their_station_lists() {
 }
 
 #[test]
-fn station_search_uses_the_wheel_keyboard() {
+fn station_search_uses_the_keyboard_and_remembers_the_last_search() {
     use reborn_core::RadioRequest;
     let mut ui = radios();
     ui.radio.online = true;
     let mut m = app(Screen::Radio);
     assert_eq!(select_key(&mut ui, &mut m, "radio_search"), Effect::None);
-    assert!(ui.text_entry && ui.entry_search);
+    assert!(ui.keyboard.is_some());
     // One letter is not enough.
+    ui.model_action(&mut m, Action::NavigateDown);
     ui.model_action(&mut m, Action::Select); // "a"
     assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
-    assert!(ui.text_entry);
-    ui.model_action(&mut m, Action::WheelClockwise(1));
-    ui.model_action(&mut m, Action::Select); // "b"
+    assert!(ui.keyboard.is_some());
+    ui.model_action(&mut m, Action::NavigateDown);
+    ui.model_action(&mut m, Action::NavigateRight);
+    ui.model_action(&mut m, Action::NavigateRight);
+    ui.model_action(&mut m, Action::NavigateRight);
+    ui.model_action(&mut m, Action::Select); // "c" (z x c)
     assert_eq!(
         ui.model_action(&mut m, Action::ContextMenu),
-        Effect::Radio(RadioRequest::Search("ab".into()))
+        Effect::Radio(RadioRequest::Search("ac".into()))
     );
-    assert!(!ui.text_entry && !ui.entry_search);
+    assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::RadioStations);
     assert!(ui.radio.loading);
+    // Reopened, the keyboard starts from the last search.
+    m.screen = Screen::Radio;
+    select_key(&mut ui, &mut m, "radio_search");
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "ac");
 }
 
 #[test]

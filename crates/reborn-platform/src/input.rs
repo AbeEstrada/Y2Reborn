@@ -801,9 +801,25 @@ pub struct ActionRouter {
     power_started_on: Option<bool>,
     screen_on: Option<bool>,
     precise_wheel: bool,
+    /// The on-screen keyboard is open: the wheel's four buttons are arrow keys.
+    keyboard: bool,
+    /// Buttons pressed as arrow keys; their hold and release belong to the
+    /// keyboard even when it closed meanwhile.
+    keyboard_held: HashSet<PhysicalControl>,
+    /// Held Previous/Next move every other repeat (180 ms), not every 90 ms.
+    keyboard_repeat: u32,
 }
 
 impl ActionRouter {
+    /// The on-screen keyboard opened or closed. While it is open Back,
+    /// Play/Pause, Previous and Next move the focus (up, down, left, right)
+    /// as soon as they are pressed; holding Back cancels, holding Previous
+    /// or Next keeps moving; the wheel does nothing. Select is unchanged
+    /// (hold: done). Volume and Power keep their meaning.
+    pub fn set_keyboard(&mut self, open: bool) {
+        self.keyboard = open;
+    }
+
     /// A screen transition inside an already-decoded batch must not carry
     /// invisible wheel cadence into the newly visible UI.
     pub fn begin_batch(&mut self) {
@@ -814,6 +830,9 @@ impl ActionRouter {
         if self.screen_on != Some(screen_on) {
             self.screen_on = Some(screen_on);
             self.precise_wheel = true;
+        }
+        if let Some(actions) = self.keyboard_route(event.input, screen_on) {
+            return actions;
         }
         match event.input {
             NormalizedInput::WheelClockwise(steps) if screen_on => {
@@ -931,7 +950,53 @@ impl ActionRouter {
         }
     }
 
+    fn keyboard_route(&mut self, input: NormalizedInput, screen_on: bool) -> Option<Vec<Action>> {
+        let arrow = |control| match control {
+            PhysicalControl::Back => Some(Action::NavigateUp),
+            PhysicalControl::PlayPause => Some(Action::NavigateDown),
+            PhysicalControl::Previous => Some(Action::NavigateLeft),
+            PhysicalControl::Next => Some(Action::NavigateRight),
+            _ => None,
+        };
+        match input {
+            NormalizedInput::Press(control) if self.keyboard && screen_on => {
+                let action = arrow(control)?;
+                self.keyboard_held.insert(control);
+                self.keyboard_repeat = 0;
+                Some(vec![action])
+            }
+            NormalizedInput::Repeat(control) if self.keyboard_held.contains(&control) => {
+                self.keyboard_repeat += 1;
+                Some(match arrow(control) {
+                    Some(action) if self.keyboard && self.keyboard_repeat.is_multiple_of(2) => {
+                        vec![action]
+                    }
+                    _ => vec![],
+                })
+            }
+            NormalizedInput::LongPress(control) if self.keyboard_held.contains(&control) => {
+                Some(if control == PhysicalControl::Back && self.keyboard {
+                    vec![Action::Home]
+                } else {
+                    vec![]
+                })
+            }
+            NormalizedInput::Release(control) | NormalizedInput::Cancel(control)
+                if self.keyboard_held.remove(&control) =>
+            {
+                Some(vec![])
+            }
+            NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
+                if self.keyboard =>
+            {
+                Some(vec![])
+            }
+            _ => None,
+        }
+    }
+
     pub fn reset(&mut self) {
+        self.keyboard_held.clear();
         self.long_pressed.clear();
         self.dark_navigation.clear();
         self.power_started_on = None;
@@ -1093,6 +1158,90 @@ mod tests {
         let _ = input.feed(PMIC_KEYS, EV_KEY, 116, 1, now);
         let power = input.feed(PMIC_KEYS, EV_KEY, 116, 0, now);
         assert_eq!(router.route(&power[0], false), vec![Action::ScreenWake]);
+    }
+
+    /// Keyboard mode: the four wheel buttons are arrow keys at once on press,
+    /// hold Back cancels, held Previous/Next keep moving, the wheel is inert,
+    /// Select keeps its meaning and nothing reaches playback.
+    #[test]
+    fn keyboard_mode_turns_wheel_buttons_into_arrow_keys() {
+        let mut input = InputManager::empty();
+        let now = std::time::Instant::now();
+        let mut router = ActionRouter::default();
+        router.set_keyboard(true);
+        let mut route = |input: &mut InputManager, code: u16, value: i32| -> Vec<Action> {
+            input
+                .feed(NAVIGATION_BUTTONS, EV_KEY, code, value, now)
+                .iter()
+                .flat_map(|e| router.route(e, true))
+                .collect()
+        };
+        for (code, arrow) in [
+            (158, Action::NavigateUp),
+            (164, Action::NavigateDown),
+            (105, Action::NavigateLeft),
+            (106, Action::NavigateRight),
+        ] {
+            assert_eq!(route(&mut input, code, 1), vec![arrow]);
+            assert_eq!(
+                route(&mut input, code, 0),
+                Vec::<Action>::new(),
+                "no playback on release"
+            );
+        }
+        assert_eq!(route(&mut input, 28, 1), Vec::<Action>::new());
+        assert_eq!(route(&mut input, 28, 0), vec![Action::Select]);
+        // Held: Back cancels at the long press; Next repeats every other tick.
+        let mut router = ActionRouter::default();
+        router.set_keyboard(true);
+        let mut input = InputManager::empty();
+        let start = std::time::Instant::now();
+        let mut actions = vec![];
+        for (code, value) in [(158, 1), (106, 1)] {
+            for e in input.feed(NAVIGATION_BUTTONS, EV_KEY, code, value, start) {
+                actions.extend(router.route(&e, true));
+            }
+        }
+        for ms in (0..=1400).step_by(10) {
+            for e in input.tick_at(start + Duration::from_millis(ms)) {
+                actions.extend(router.route(&e, true));
+            }
+        }
+        assert_eq!(actions.iter().filter(|a| **a == Action::Home).count(), 1);
+        let rights = actions
+            .iter()
+            .filter(|a| **a == Action::NavigateRight)
+            .count();
+        // One on press, then from 400 ms every 180 ms up to 1.4 s.
+        assert!((5..=8).contains(&rights), "{actions:?}");
+        assert!(!actions
+            .iter()
+            .any(|a| matches!(a, Action::SeekForward | Action::NextTrack)));
+        // The keyboard closed while Next was held: its release stays silent.
+        router.set_keyboard(false);
+        for e in input.feed(
+            NAVIGATION_BUTTONS,
+            EV_KEY,
+            106,
+            0,
+            start + Duration::from_millis(1500),
+        ) {
+            assert_eq!(router.route(&e, true), Vec::<Action>::new());
+        }
+        // The wheel does nothing while the keyboard is open.
+        router.set_keyboard(true);
+        let wheel = InputEvent {
+            device: CLICK_WHEEL.into(),
+            kernel_mono_us: None,
+            input: NormalizedInput::WheelClockwise(1),
+        };
+        assert_eq!(router.route(&wheel, true), Vec::<Action>::new());
+        // Closed again, the buttons are playback controls as before.
+        router.set_keyboard(false);
+        let mut input = InputManager::empty();
+        let _ = input.feed(NAVIGATION_BUTTONS, EV_KEY, 106, 1, now);
+        let release = input.feed(NAVIGATION_BUTTONS, EV_KEY, 106, 0, now);
+        assert_eq!(router.route(&release[0], true), vec![Action::NextTrack]);
     }
 
     fn detent(input: &mut InputManager, code: u16, at_ms: u64) -> Option<NormalizedInput> {

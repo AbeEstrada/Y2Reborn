@@ -160,7 +160,7 @@
   ],
   "mask_atlas": [
     512,
-    1456
+    1384
   ],
   "supersample": 4,
   "runtime_font_files": false

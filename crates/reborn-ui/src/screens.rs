@@ -42,7 +42,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
     }
     let interactive = m.navigation.modal.is_none()
         && ui.pairing.is_none()
-        && !ui.text_entry
+        && ui.keyboard.is_none()
         && ui.alert.is_none();
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
@@ -58,6 +58,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Artists
         | Screen::Genres
         | Screen::Tracks
+        | Screen::Search
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
@@ -97,6 +98,7 @@ fn native_screen(
         | Screen::Artists
         | Screen::Genres
         | Screen::Tracks
+        | Screen::Search
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
@@ -138,6 +140,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Artists => &["artists", "list"],
         Screen::Genres => &["genres", "list"],
         Screen::Tracks => &["songs", "list"],
+        Screen::Search => &["search", "list"],
         Screen::Folders => &["folders", "list"],
         Screen::Album => &["album", "list"],
         Screen::Artist => &["artist", "list"],
@@ -183,6 +186,7 @@ fn skin_page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Option<Page> {
         | Screen::Artists
         | Screen::Genres
         | Screen::Tracks
+        | Screen::Search
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
@@ -241,7 +245,7 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
     }
     let interactive = m.navigation.modal.is_none()
         && ui.pairing.is_none()
-        && !ui.text_entry
+        && ui.keyboard.is_none()
         && ui.alert.is_none();
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
@@ -327,9 +331,9 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
             false,
             true,
         ));
-    } else if ui.text_entry {
+    } else if let Some(k) = &ui.keyboard {
         let at = c.draw.len();
-        views_settings::password_entry(c, ui, m);
+        crate::keyboard::draw(c, ui, m, k);
         skin::remap(c, at, &skin.palette, ui.accent());
     } else if m.navigation.modal.is_some() {
         let (title, body) = ui.modal_copy(m);
@@ -483,8 +487,8 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
             ui.pairing_focus,
             false,
         );
-    } else if ui.text_entry {
-        views_settings::password_entry(c, ui, m);
+    } else if let Some(k) = &ui.keyboard {
+        crate::keyboard::draw(c, ui, m, k);
     } else if m.navigation.modal.is_some() {
         modal(c, ui, m, tracks);
     }
@@ -585,6 +589,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Genres => "Genres".into(),
         Screen::Artists => "Artists".into(),
         Screen::Tracks => "Songs".into(),
+        Screen::Search => "Search".into(),
         Screen::Folders => {
             if m.navigation.filter.is_empty() {
                 "Folders".into()

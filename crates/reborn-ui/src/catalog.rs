@@ -12,6 +12,8 @@ pub enum Row {
     Track(usize),
     /// A track on its album's own page; the artist line is redundant there.
     AlbumTrack(usize),
+    /// A song among search results, named as one.
+    SearchSong(usize),
     Item(Item),
 }
 impl Row {
@@ -23,12 +25,17 @@ impl Row {
                 item.secondary.clear();
                 item
             }
+            Self::SearchSong(i) => {
+                let mut item = track_item(*i, &tracks[*i]);
+                item.secondary = format!("Song · {}", item.secondary);
+                item
+            }
             Self::Item(i) => i.clone(),
         }
     }
     pub fn track(&self) -> Option<usize> {
         match self {
-            Self::Track(i) | Self::AlbumTrack(i) => Some(*i),
+            Self::Track(i) | Self::AlbumTrack(i) | Self::SearchSong(i) => Some(*i),
             Self::Item(_) => None,
         }
     }
@@ -37,6 +44,8 @@ impl Row {
 pub struct Catalog {
     stamp: Option<(usize, usize, Screen, String)>,
     pub rows: Vec<Row>,
+    /// Folded names for the library search (kept across routes).
+    pub index: crate::search::Index,
 }
 impl Catalog {
     fn push(&mut self, item: Item) {
@@ -44,6 +53,7 @@ impl Catalog {
     }
     pub fn clear(&mut self) {
         self.stamp = None;
+        self.index = Default::default();
     }
     pub fn ensure(&mut self, m: &AppModel, tracks: &[Track]) {
         let stamp = (
@@ -58,6 +68,40 @@ impl Catalog {
         self.stamp = Some(stamp);
         self.rows.clear();
         match m.screen {
+            Screen::Search => {
+                let results = self.index.search(tracks, &m.navigation.filter);
+                self.push(
+                    Item::new("Edit Search", "search_edit").with_secondary(format!(
+                        "“{}” · {}",
+                        m.navigation.filter,
+                        results.summary()
+                    )),
+                );
+                for (artist, i) in results.artists {
+                    let albums = tracks
+                        .iter()
+                        .filter(|t| t.online && t.artist == artist)
+                        .map(|t| t.album.as_str())
+                        .collect::<BTreeSet<_>>()
+                        .len();
+                    let mut item =
+                        Item::new(display_or_unknown(&artist), format!("artist:{artist}"))
+                            .with_secondary(match albums {
+                                1 => "Artist · 1 album".to_owned(),
+                                n => format!("Artist · {n} albums"),
+                            });
+                    item.art = Some(i);
+                    self.push(item);
+                }
+                for i in results.albums {
+                    let t = &tracks[i];
+                    let mut item = album_item(&t.album, &t.album_artist, i, t);
+                    item.secondary = format!("Album · {}", item.secondary);
+                    self.push(item);
+                }
+                self.rows
+                    .extend(results.songs.into_iter().map(Row::SearchSong));
+            }
             Screen::Albums => {
                 let mut albums = BTreeMap::new();
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| {

@@ -21,6 +21,15 @@ The Y2 UI consumes semantic actions only. Raw Linux input records stop at
 | Volume down | Any accepted input device, `EV_KEY 114` | `Press/Repeat(VolumeDown)` | Volume down; never navigation |
 | Volume up | Any accepted input device, `EV_KEY 115` | `Press/Repeat(VolumeUp)` | Volume up; never navigation |
 
+## Keyboard mode (since 1.0.0-beta.5)
+
+While the full-screen keyboard is open (`ActionRouter::set_keyboard(true)`, set by the main loop before
+each event), Back, Play/Pause, Previous and Next produce `NavigateUp`, `NavigateDown`, `NavigateLeft` and
+`NavigateRight` on press; their releases produce nothing. Held Previous/Next repeat every other repeat
+tick (180 ms). A long Back press produces `Home` (cancel). Wheel rotation produces nothing. Select keeps
+`Select` on release and `ContextMenu` (Done) on a long press. A button pressed as an arrow keeps its hold
+and release in keyboard mode even if the keyboard closed meanwhile.
+
 ## Timing owned by the input boundary
 
 - Long press: 650 ms.

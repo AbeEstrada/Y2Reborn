@@ -30,6 +30,11 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   Internal Storage or the SD card. MP3, AAC and Ogg streams over Wi-Fi with the station's song
   title on Now Playing and automatic reconnect; HLS-only stations are not supported yet. FFmpeg
   stays built without networking: `curl` receives the stream and hands Reborn plain audio.
+- Search (Home → Search) across artists, albums and songs: every typed word must begin a word of
+  the name (case, accents and a leading "The" ignored), with a live count while typing.
+- A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
+  Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
+  when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.
 - Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
   settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
   connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
