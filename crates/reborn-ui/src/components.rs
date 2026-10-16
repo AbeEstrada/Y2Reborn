@@ -8,7 +8,7 @@ use crate::{
     Ui,
 };
 use reborn_core::{
-    platform::{ChargingState, LowBattery},
+    platform::{ChargingState, LowBattery, UsbTransfer},
     AppModel, AudioOutput, Track,
 };
 
@@ -134,6 +134,18 @@ pub(crate) fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
     if matches!(b.charging, ChargingState::Charging) {
         c.icon(Icon::Bolt, right - 5., 18., 14., color::SUCCESS);
         right -= 16.;
+    }
+    // A computer has the drives (Beta 7.3: instead of a screen that covers
+    // the player); the accent while files are copied.
+    let usb = m.platform.snapshot.usb;
+    if matches!(usb, UsbTransfer::Ready | UsbTransfer::Copying) {
+        let tint = if usb == UsbTransfer::Copying {
+            color::ACCENT
+        } else {
+            color::TEXT
+        };
+        c.icon(Icon::Usb, right - 7., 18., 16., tint);
+        right -= 20.;
     }
     if ui.bluetooth.powered {
         let connected = ui.bluetooth.devices.iter().any(|d| d.connected);

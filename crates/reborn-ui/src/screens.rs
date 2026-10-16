@@ -50,12 +50,6 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         crate::motion::apply(ui, m, &mut c);
         return c.finish();
     }
-    if ui.usb_overlay(m) {
-        views_system::usb(&mut c, ui, m);
-        overlays(&mut c, ui, m, tracks);
-        crate::motion::apply(ui, m, &mut c);
-        return c.finish();
-    }
     match m.screen {
         Screen::NowPlaying if m.current().is_some() => {
             views_playing::now_playing(&mut c, ui, m, tracks, has_art, interactive)
@@ -281,12 +275,6 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         && ui.alert.is_none();
     if ui.update_run {
         views_settings::update_overlay(&mut c, ui, m);
-        skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
-        skinned_overlays(&mut c, ui, skin, m, tracks);
-        return c.finish();
-    }
-    if ui.usb_overlay(m) {
-        views_system::usb(&mut c, ui, m);
         skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
         skinned_overlays(&mut c, ui, skin, m, tracks);
         return c.finish();

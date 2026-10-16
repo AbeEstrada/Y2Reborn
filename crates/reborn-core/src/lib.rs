@@ -756,10 +756,6 @@ pub struct Settings {
     /// is Now Playing, Music, Playlists, Radio, Search and Settings.
     #[serde(default)]
     pub home_pins: Vec<String>,
-    /// Developers (service page): the player stays usable while a computer
-    /// has its drives. Off: the computer screen stays until the cable is out.
-    #[serde(default)]
-    pub usb_developer: bool,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -825,7 +821,6 @@ impl Default for Settings {
             time_zone: default_time_zone(),
             time_zone_auto: None,
             home_pins: Vec::new(),
-            usb_developer: false,
         }
     }
 }
@@ -958,8 +953,6 @@ pub enum Effect {
     SetHomePin(String, bool),
     /// Stop the update download in progress (Cancel on the update screen).
     CancelDownload,
-    /// Developers: keep the player usable while a computer has its drives.
-    SetUsbDeveloper(bool),
     QueueRemove(usize),
     QueueMove {
         index: usize,

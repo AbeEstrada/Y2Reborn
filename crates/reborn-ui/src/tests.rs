@@ -1807,58 +1807,38 @@ fn controls_keep_one_accent_while_the_cover_colour_follows_the_song() {
 }
 
 #[test]
-fn computer_screen_stays_while_connected_unless_a_developer_allows_use() {
+fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
+    // Beta 7.3: no screen covers the player while a computer has the drives.
     let mut ui = radios();
     let mut m = app(Screen::Albums);
-    m.platform.snapshot.usb = UsbTransfer::Ready;
-    assert!(
-        !ui.usb_overlay(&m),
-        "nothing before the state has been observed"
-    );
-    assert!(ui.observe(&m) || ui.usb_overlay(&m));
-    assert!(ui.usb_overlay(&m));
-    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
-    assert!(text.contains("Connected to a Computer"), "{text}");
-    // Nothing underneath moves and nothing leaves it (Beta 7.1); volume
-    // still works.
-    assert!(text.contains("Unplug the cable"), "{text}");
-    assert_eq!(
-        ui.model_action(&mut m, Action::WheelClockwise(1)),
-        Effect::None
-    );
-    assert_eq!(m.navigation.focus, 0);
-    assert_eq!(
-        ui.model_action(&mut m, Action::VolumeUp),
-        Effect::AdjustVolume(2)
-    );
-    for action in [
-        Action::Back,
-        Action::Home,
-        Action::Select,
-        Action::ContextMenu,
-    ] {
-        ui.model_action(&mut m, action);
-        assert!(ui.usb_overlay(&m), "{action:?} left the computer screen");
-    }
-    assert_eq!(m.screen, Screen::Albums);
-    // A developer (service page) may use the player while connected.
-    m.settings.usb_developer = true;
-    ui.model_action(&mut m, Action::Back);
-    assert!(!ui.usb_overlay(&m));
-    // Copying starting brings it back; unplugging and plugging in again too.
-    m.platform.snapshot.usb = UsbTransfer::Copying;
-    ui.observe(&m);
-    assert!(ui.usb_overlay(&m));
-    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Copying Files"));
-    assert!(ui.animating(), "the ring sweeps while copying");
-    ui.model_action(&mut m, Action::Back);
+    let tracks = m.library.tracks.clone();
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
     ui.observe(&m);
+    let usb_symbol = |q: &[reborn_graphics::Quad]| q.iter().any(|q| q.src == maskdata::USB);
+    assert!(!usb_symbol(&ui.draw(&m, &tracks, false)));
     m.platform.snapshot.usb = UsbTransfer::Ready;
     ui.observe(&m);
-    assert!(ui.usb_overlay(&m));
-    m.screen_off = true;
-    assert!(!ui.usb_overlay(&m));
+    let frame = ui.draw(&m, &tracks, false);
+    assert!(drawn_text(&frame).contains("Connected to a computer"));
+    assert!(usb_symbol(&frame));
+    // Everything keeps working: the wheel moves, Back goes back.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 1);
+    let mut m2 = app(Screen::Home);
+    m2.platform.snapshot.usb = UsbTransfer::Ready;
+    ui.observe(&m2);
+    m2.navigation.focus = 1;
+    ui.model_action(&mut m2, Action::Select);
+    assert_eq!(m2.screen, Screen::Music);
+    // Copying says so; the symbol stays while the cable is in.
+    m.platform.snapshot.usb = UsbTransfer::Copying;
+    ui.observe(&m);
+    let frame = ui.draw(&m, &tracks, false);
+    assert!(drawn_text(&frame).contains("Copying files"));
+    assert!(usb_symbol(&frame));
+    m.platform.snapshot.usb = UsbTransfer::Disconnected;
+    ui.observe(&m);
+    assert!(!usb_symbol(&ui.draw(&m, &tracks, false)));
 }
 
 #[test]

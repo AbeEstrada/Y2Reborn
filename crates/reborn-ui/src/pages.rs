@@ -908,8 +908,6 @@ fn system(ui: &Ui, m: &AppModel) -> Page {
                 _ => "",
             },
         ),
-        row("Use While Connected", "usb_developer", "")
-            .with_kind(RowKind::Toggle(m.settings.usb_developer)),
         Item::new("Restart", "confirm:reboot"),
         Item::new("Power Off", "confirm:power_off"),
     ]);

@@ -355,7 +355,6 @@ pub struct Ui {
     /// The device a pair/connect request is waiting on: path, name, operation, start.
     bt_busy: Option<(String, String, String, Instant)>,
     usb_state: Option<UsbTransfer>,
-    usb_dismissed: bool,
     /// The one-step update is running (Beta 7.1): download, check and the
     /// restart to install follow each other on one screen that cannot be
     /// left; Cancel stops it while it downloads.
@@ -661,24 +660,22 @@ impl Ui {
     /// Returns whether the screen needs redrawing.
     pub fn observe(&mut self, m: &AppModel) -> bool {
         let before = (
-            self.usb_overlay(m),
+            self.usb_state,
             self.alert.clone(),
             self.bt_busy.is_some(),
             self.spinning,
         );
         let usb = m.platform.snapshot.usb;
         if self.usb_state != Some(usb) {
-            let was_attached = matches!(
-                self.usb_state,
-                Some(UsbTransfer::Ready | UsbTransfer::Copying)
-            );
-            let now_attached = matches!(usb, UsbTransfer::Ready | UsbTransfer::Copying);
-            // A new connection, or copying starting, shows the screen again.
-            if !now_attached
-                || !was_attached
-                || (usb == UsbTransfer::Copying && self.usb_state == Some(UsbTransfer::Ready))
-            {
-                self.usb_dismissed = false;
+            // Beta 7.3: a computer never covers the player; a short message
+            // says what happened and the status bar shows the cable.
+            if let Some(was) = self.usb_state {
+                let attached = |s| matches!(s, UsbTransfer::Ready | UsbTransfer::Copying);
+                if usb == UsbTransfer::Copying && was != UsbTransfer::Copying {
+                    self.flash("Copying files from the computer…");
+                } else if attached(usb) && !attached(was) {
+                    self.flash("Connected to a computer");
+                }
             }
             self.usb_state = Some(usb);
         }
@@ -717,14 +714,13 @@ impl Ui {
         self.spinning = m.library.scanning
             || m.platform.snapshot.update.phase == reborn_core::platform::UpdatePhase::Downloading
             || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
-            || self.usb_overlay(m) && usb == UsbTransfer::Copying
             || self.bt_busy.is_some();
         let clock = self.clock(m);
         let ticked = clock != self.clock_shown && !m.screen_off;
         self.clock_shown = clock;
         before
             != (
-                self.usb_overlay(m),
+                self.usb_state,
                 self.alert.clone(),
                 self.bt_busy.is_some(),
                 self.spinning,
@@ -736,20 +732,6 @@ impl Ui {
     /// The status-bar clock in the chosen zone, once the system time is set.
     pub fn clock(&self, m: &AppModel) -> Option<String> {
         time_zone::text(self, m)
-    }
-
-    /// Whether the computer-connection screen covers the UI.
-    pub fn usb_overlay(&self, m: &AppModel) -> bool {
-        // Only a state `observe` has seen counts, so a stale fixture or the
-        // first frames of a session never raise it.
-        // Only a developer may leave it (service page: Use While Connected).
-        !(self.usb_dismissed && m.settings.usb_developer)
-            && !m.screen_off
-            && self.usb_state == Some(m.platform.snapshot.usb)
-            && matches!(
-                m.platform.snapshot.usb,
-                UsbTransfer::Ready | UsbTransfer::Copying
-            )
     }
 
     /// The device a Bluetooth request is waiting on, with its operation.
@@ -810,26 +792,6 @@ impl Ui {
                 }
                 _ => Effect::None,
             });
-        }
-        if self.usb_overlay(m) {
-            return match action {
-                // While a computer has the drives the screen stays (Beta 7.1);
-                // playback, volume and Power keep working.
-                Action::Back | Action::Home | Action::Select | Action::ContextMenu
-                    if m.settings.usb_developer =>
-                {
-                    self.usb_dismissed = true;
-                    Some(Effect::None)
-                }
-                Action::Back | Action::Home | Action::Select | Action::ContextMenu => {
-                    Some(Effect::None)
-                }
-                Action::WheelClockwise(_)
-                | Action::WheelCounterClockwise(_)
-                | Action::NavigateUp
-                | Action::NavigateDown => Some(Effect::None),
-                _ => None,
-            };
         }
         None
     }
@@ -2080,7 +2042,6 @@ impl Ui {
                 Effect::Platform(PlatformTask::LdacAbr(!q.requested_abr?))
             }
             "screen_off" => Effect::ScreenSleep,
-            "usb_developer" => Effect::SetUsbDeveloper(!m.settings.usb_developer),
             "eq_enabled" => Effect::SetEqEnabled(!m.settings.eq_enabled),
             "eq_reset" => Effect::ResetEq,
             "replay_gain" => Effect::SetReplayGain(match m.settings.replay_gain {

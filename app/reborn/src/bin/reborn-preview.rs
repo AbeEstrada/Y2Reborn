@@ -594,10 +594,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     });
     case!("40-usb-connected", at(Screen::Home, ""), |ui, m| {
+        // Plugged in while the player is in use: a message, not a screen.
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Disconnected;
+        ui.observe(m);
         m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Ready;
         ui.observe(m);
     });
     case!("41-usb-copying", at(Screen::Home, ""), |ui, m| {
+        // Plugged in while the player is in use: a message, not a screen.
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Disconnected;
+        ui.observe(m);
         m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Copying;
         ui.observe(m);
     });

@@ -1714,10 +1714,6 @@ impl Runtime {
                 self.model.playback = PlaybackState::Stopped;
             }
             Effect::CancelDownload => client::abort_download(),
-            Effect::SetUsbDeveloper(on) => {
-                self.model.settings.usb_developer = on;
-                self.checkpoint();
-            }
             Effect::Radio(request) => self.radio(request)?,
             Effect::Playlist(request) => self.playlist(*request)?,
             Effect::SetCodecPreference(preference) => {
