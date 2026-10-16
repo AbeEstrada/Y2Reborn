@@ -32,6 +32,16 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   logos, Station Info, lists A to Z with each country's ten most listened stations on top, and
   Previous/Next between stations. FFmpeg
   stays built without networking: `curl` receives the stream and hands Reborn plain audio.
+- **Last.fm scrobbling** (Settings → Last.fm): connect by scanning a QR code with your phone
+  (password sign-in as a fallback). A library song counts once heard for half its length or
+  4 minutes (pauses and skipping ahead don't count; radio and untagged files never do), Now
+  Playing shows on your profile, plays are kept on the player while offline and sent in batches
+  when Wi-Fi is back, and an optional Rockbox-format `.scrobbler.log` works without an account.
+  Nothing is recorded until you opt in; Disconnect and Reset Settings forget the sign-in and its
+  waiting plays. Full guide, privacy and security:
+  [Last.fm scrobbling](https://github.com/SchulzCode/Y2Linux/blob/main/docs/LASTFM.md).
+- Sound and playback: five-band equalizer with presets, Normalize Volume (ReplayGain), gapless
+  playback, crossfade (up to 12 s), shuffle and repeat.
 - Search (Home → Search) across artists, albums and songs, with results shown live while typing:
   every typed word must begin a word of the name (case, accents and a leading "The" ignored).
 - Playlists (Home → Playlists): .m3u/.m3u8 files from Internal Storage and the SD card, made and
@@ -45,7 +55,8 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 - A status-bar clock in the player's time zone: found automatically over Wi-Fi (once per network)
   or chosen under Settings → Display → Time Zone (country first; built-in zone rules with
   daylight saving; shown once the player's clock is set).
-- A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
+- A full-screen keyboard for search, station search, Wi-Fi passwords and the Last.fm password
+  sign-in, driven by the buttons:
   Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
   when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.
 - Click-wheel UI (Product UI v4, Open Sans) with motion at 60 frames per second: gliding focus,
@@ -67,6 +78,29 @@ Known limits (details in [current state](docs/CURRENT_REBORN_STATE.md)): native
 high-rate output is gated; AAC is negotiated with AirPods Pro but not yet listened to; saved
 Bluetooth headphones are not connected on play; the player cannot tell whether wired headphones are
 plugged in (no jack detection yet), so "jack" means "not Bluetooth". Crossfade and EQ have not been checked on hardware.
+Last.fm scrobbling was checked on the computer and against Last.fm's sign-in service; the first
+scrobbles from a player follow with Beta 7.7.
+
+## How scrobbling stays safe
+
+- **Your password:** with the QR sign-in it is typed only into Last.fm's own page on your phone;
+  the fallback sends it once over HTTPS and never stores, logs or displays it.
+- **Your sign-in:** the player keeps only Last.fm's session key, in one root-only file in
+  `/data/reborn/state` (not reachable over USB, never in logs, diagnostics or update images). It
+  can scrobble but cannot read or change your password or e-mail; revoke it any time on last.fm
+  (Settings → Applications).
+- **The connection:** HTTPS with certificate checks only; every request is signed as Last.fm
+  requires; keys and data travel in the request body on curl's standard input, never on a command
+  line.
+- **The app key:** Y2Reborn's Last.fm API key and secret are not in this repository. Y2Linux's
+  release build installs them as a root-only file (`/usr/share/reborn/lastfm-api.json`); a build
+  without that file simply has no Last.fm. Like every client app, a released image necessarily
+  contains the key; it identifies the app but gives no access to any account, and it can be
+  replaced with an update if ever misused. Forks: register your own key.
+
+Code: `crates/reborn-core/src/scrobble.rs` (what counts), `crates/reborn-platform/src/scrobble.rs`
+(offline queue, log, clock), `crates/reborn-platform/src/lastfm.rs` (Last.fm API, signing),
+`app/reborn/src/scrobbling.rs` (the player's side) and `crates/reborn-ui/src/qr.rs` (QR codes).
 
 ## Development
 
@@ -101,12 +135,13 @@ display, audio and power behaviour need the device.
 | `vendor/` | Vendored, checksummed crate sources |
 | `docs/` | Documentation; start at [docs/README.md](docs/README.md) |
 
-On the device the player uses `/data/reborn` for its state, plays music from
+On the device the player uses `/data/reborn` for its state (including the Last.fm session and
+waiting plays in `state/`), plays music from
 `/media/internal/music` (or `/data/music` before the internal music partition is
 set up) and `/media/sd`.
 
 ## Licence
 
 MIT (see [LICENSE](LICENSE)). The Open Sans glyph data is under the SIL Open Font
-Licence (`assets/fonts/OpenSans-OFL.txt`). No firmware, keys, Bluetooth bonds or
-private device data belong in this repository.
+Licence (`assets/fonts/OpenSans-OFL.txt`). No firmware, keys (including the Last.fm API key),
+Bluetooth bonds or private device data belong in this repository.
