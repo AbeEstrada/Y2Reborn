@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.4 — Y2Linux 1.0 Beta 7.4 (Baseline 65), 2026-10-16 (latest): status-bar messages, cooler wave
+## 1.0.0-beta.7.5 — Y2Linux 1.0 Beta 7.5 (Baseline 66), 2026-10-16 (latest): larger status bar, Skin in Settings
+
+- Status bar layout C (owner's choice of four rendered variants): `status_bar` draws the Title Case name beside the
+  back arrow (SemiBold 15, white; call sites no longer uppercase), `status_cluster(.., roomy)` returns its left edge
+  (clock S15, % S13, icons 18 px, Wi-Fi/Bluetooth 22 px, battery 25 × 13); skins keep `roomy: false`.
+  `components::home_bar`: "Reborn" + `short_version`. Message pill 30 px, SemiBold 15.
+- Theme → **Skin**, a Settings row of its own (seven 44-px rows, `Icon::Palette` added by
+  `tools/assets/build_ui_assets.py`; font pages unchanged); Display without the scroll rail; About's Music Library row
+  removed (count on Storage → Scan for Music); `Skins` folders read besides `Themes`. 487 tests, strict Clippy.
+
+## 1.0.0-beta.7.4 — Y2Linux 1.0 Beta 7.4 (Baseline 65), 2026-10-16: status-bar messages, cooler wave
 
 - `components::toast`: a 26-px pill in the status bar with `toast_icon` (subject icon; red warning for problems); the
   StatusBar mark's quads (title and status cluster, not the back arrow) are hidden while it shows. Owner chose this
