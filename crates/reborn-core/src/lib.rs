@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod clock;
+mod countries;
 pub mod platform;
 pub mod playlist;
 pub mod sort;
@@ -747,10 +748,18 @@ pub struct Settings {
     /// The clock's tz database zone, e.g. "Europe/Berlin".
     #[serde(default = "default_time_zone")]
     pub time_zone: String,
+    /// Find the zone from the internet address when Wi-Fi connects. `None`
+    /// (settings from before Beta 7.1): automatic unless a zone was chosen.
+    #[serde(default)]
+    pub time_zone_auto: Option<bool>,
     /// Music lists also pinned to Home, by key (`HOME_PINNABLE`); Home itself
     /// is Now Playing, Music, Playlists, Radio, Search and Settings.
     #[serde(default)]
     pub home_pins: Vec<String>,
+    /// Developers (service page): the player stays usable while a computer
+    /// has its drives. Off: the computer screen stays until the cable is out.
+    #[serde(default)]
+    pub usb_developer: bool,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -814,11 +823,18 @@ impl Default for Settings {
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
+            time_zone_auto: None,
             home_pins: Vec::new(),
+            usb_developer: false,
         }
     }
 }
 impl Settings {
+    /// Whether the clock's zone is found automatically (Beta 7.1).
+    pub fn zone_auto(&self) -> bool {
+        self.time_zone_auto.unwrap_or(self.time_zone == "UTC")
+    }
+
     /// Pin or unpin a Music list on Home. Pins keep `HOME_PINNABLE`'s order,
     /// whatever order they were chosen in; unknown keys are ignored.
     pub fn pin_home(&mut self, key: &str, on: bool) {
@@ -934,10 +950,16 @@ pub enum Effect {
     SetTheme(String),
     /// Look for installed skins again (the picker opened).
     ScanThemes,
-    /// Choose the clock's zone (tz database name).
+    /// Choose the clock's zone (tz database name); turns Automatic off.
     SetTimeZone(String),
+    /// Find the clock's zone from the internet address, or stop doing so.
+    SetTimeZoneAuto(bool),
     /// Pin (true) or unpin a Music list (`HOME_PINNABLE` key) on Home.
     SetHomePin(String, bool),
+    /// Stop the update download in progress (Cancel on the update screen).
+    CancelDownload,
+    /// Developers: keep the player usable while a computer has its drives.
+    SetUsbDeveloper(bool),
     QueueRemove(usize),
     QueueMove {
         index: usize,
@@ -1490,5 +1512,24 @@ mod tests {
         }))
         .unwrap();
         assert!(old.home_pins.is_empty());
+    }
+
+    #[test]
+    fn countries_agree_with_the_zone_table_and_old_choices_stay_manual() {
+        for (code, name, zones) in clock::countries() {
+            assert!(!zones.is_empty() && code.len() == 2 && !name.is_empty());
+            for zone in *zones {
+                assert!(clock::zone(zone).is_some(), "{zone} of {name} has no rule");
+            }
+        }
+        assert_eq!(clock::country_of("Europe/Berlin").map(|c| c.0), Some("DE"));
+        assert!(clock::country_of("UTC").is_none());
+        // Never chosen: automatic. Chosen before Beta 7.1: stays as chosen.
+        let mut s = Settings::default();
+        assert!(s.zone_auto());
+        s.time_zone = "Europe/Berlin".into();
+        assert!(!s.zone_auto());
+        s.time_zone_auto = Some(true);
+        assert!(s.zone_auto());
     }
 }

@@ -44,6 +44,11 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         && ui.pairing.is_none()
         && ui.keyboard.is_none()
         && ui.alert.is_none();
+    if ui.update_run {
+        views_settings::update_overlay(&mut c, ui, m);
+        overlays(&mut c, ui, m, tracks);
+        return c.finish();
+    }
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
         overlays(&mut c, ui, m, tracks);
@@ -271,6 +276,12 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         && ui.pairing.is_none()
         && ui.keyboard.is_none()
         && ui.alert.is_none();
+    if ui.update_run {
+        views_settings::update_overlay(&mut c, ui, m);
+        skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
+        skinned_overlays(&mut c, ui, skin, m, tracks);
+        return c.finish();
+    }
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
         skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
@@ -676,7 +687,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
         Screen::Theme => "Theme".into(),
-        Screen::TimeZone => "Time Zone".into(),
+        Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),

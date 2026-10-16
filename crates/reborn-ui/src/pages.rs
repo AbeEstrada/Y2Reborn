@@ -908,6 +908,8 @@ fn system(ui: &Ui, m: &AppModel) -> Page {
                 _ => "",
             },
         ),
+        row("Use While Connected", "usb_developer", "")
+            .with_kind(RowKind::Toggle(m.settings.usb_developer)),
         Item::new("Restart", "confirm:reboot"),
         Item::new("Power Off", "confirm:power_off"),
     ]);
@@ -1249,19 +1251,24 @@ fn update_status(m: &AppModel) -> Page {
             },
         )
         .with_rows(vec![check]),
+        // One step (Beta 7.1): Update Now downloads, checks and restarts to
+        // install without a second confirmation.
         UpdatePhase::Available { version } => Page::hero(
             "Update Available",
             match u.download_bytes {
                 Some(bytes) => format!(
-                    "Version {} is ready to download ({} MB).",
+                    "Version {} ({} MB) downloads and installs in one go; the player restarts at the end.",
                     short_version(version),
                     bytes.div_ceil(1_000_000)
                 ),
-                None => format!("Version {} is ready to download.", short_version(version)),
+                None => format!(
+                    "Version {} downloads and installs in one go; the player restarts at the end.",
+                    short_version(version)
+                ),
             },
         )
         .with_rows(vec![disabled(
-            Item::new("Download Update", "task:update_stage"),
+            Item::new("Update Now", "update_now"),
             u.can_download && busy.is_none(),
         )]),
         UpdatePhase::ReadyToInstall => Page::hero(
@@ -1270,7 +1277,7 @@ fn update_status(m: &AppModel) -> Page {
         )
         .with_rows(vec![
             disabled(
-                Item::new("Restart and Install", "confirm:update_apply"),
+                Item::new("Install Now", "update_install"),
                 u.can_install && busy.is_none(),
             ),
             disabled(

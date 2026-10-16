@@ -538,12 +538,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("30-display", at(Screen::SettingsDisplay, ""));
     case!("30b-time-zone", at(Screen::TimeZone, ""), |ui, m| {
         m.settings.time_zone = "Europe/Berlin".into();
+        m.settings.time_zone_auto = Some(false);
         m.navigation.focus = ui
             .rows(m, &[])
             .iter()
-            .position(|r| r.key == "tz_set:Europe/Berlin")
+            .position(|r| r.key == "tz_country:DE")
             .unwrap_or(0);
     });
+    case!(
+        "30c-time-zone-cities",
+        at(Screen::TimeZone, "country:US"),
+        |ui, m| {
+            m.settings.time_zone = "America/Chicago".into();
+            m.settings.time_zone_auto = Some(false);
+            m.navigation.focus = ui
+                .rows(m, &[])
+                .iter()
+                .position(|r| r.key == "tz_set:America/Chicago")
+                .unwrap_or(0);
+        }
+    );
     case!("31-screen-off", at(Screen::ScreenTimeout, ""), |_, m| {
         m.navigation.focus = 1;
         m.settings.screen_timeout_seconds = 30;
@@ -620,7 +634,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!(
         "34b-update-download-progress",
         at(Screen::Update, ""),
-        |_, m| {
+        |ui, m| {
+            ui.update_run = true;
             m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
             m.platform.download = Some(reborn_core::platform::DownloadLive {
                 verifying: false,
@@ -635,7 +650,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!(
         "34c-update-download-check",
         at(Screen::Update, ""),
-        |_, m| {
+        |ui, m| {
+            ui.update_run = true;
             m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
             m.platform.download = Some(reborn_core::platform::DownloadLive {
                 verifying: true,

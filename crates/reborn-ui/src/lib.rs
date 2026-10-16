@@ -30,7 +30,7 @@ mod views_settings;
 mod views_system;
 
 use reborn_core::{
-    platform::{LowBattery, UsbTransfer, WifiProblem},
+    platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
     Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal, NavigationFrame,
     PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, Track,
 };
@@ -355,6 +355,12 @@ pub struct Ui {
     bt_busy: Option<(String, String, String, Instant)>,
     usb_state: Option<UsbTransfer>,
     usb_dismissed: bool,
+    /// The one-step update is running (Beta 7.1): download, check and the
+    /// restart to install follow each other on one screen that cannot be
+    /// left; Cancel stops it while it downloads.
+    pub update_run: bool,
+    /// The update is installed: the platform restarts the player now.
+    pub update_restarting: bool,
     battery_acked: u8,
     /// Something on screen sweeps with time (a spinner), so keep redrawing.
     spinning: bool,
@@ -668,7 +674,8 @@ impl Ui {
     pub fn usb_overlay(&self, m: &AppModel) -> bool {
         // Only a state `observe` has seen counts, so a stale fixture or the
         // first frames of a session never raise it.
-        !self.usb_dismissed
+        // Only a developer may leave it (service page: Use While Connected).
+        !(self.usb_dismissed && m.settings.usb_developer)
             && !m.screen_off
             && self.usb_state == Some(m.platform.snapshot.usb)
             && matches!(
@@ -738,8 +745,15 @@ impl Ui {
         }
         if self.usb_overlay(m) {
             return match action {
-                Action::Back | Action::Home | Action::Select | Action::ContextMenu => {
+                // While a computer has the drives the screen stays (Beta 7.1);
+                // playback, volume and Power keep working.
+                Action::Back | Action::Home | Action::Select | Action::ContextMenu
+                    if m.settings.usb_developer =>
+                {
                     self.usb_dismissed = true;
+                    Some(Effect::None)
+                }
+                Action::Back | Action::Home | Action::Select | Action::ContextMenu => {
                     Some(Effect::None)
                 }
                 Action::WheelClockwise(_)
@@ -1435,6 +1449,18 @@ impl Ui {
         if !m.screen_off {
             self.normalize(m, tracks);
         }
+        // The one-step update owns the screen until it restarts the player
+        // or ends; Select is its Cancel while the download runs.
+        if self.update_run {
+            return match action {
+                Action::ScreenWake => Effect::ScreenWake,
+                Action::ScreenSleep | Action::PowerShort => Effect::ScreenSleep,
+                Action::VolumeUp => Effect::AdjustVolume(2),
+                Action::VolumeDown => Effect::AdjustVolume(-2),
+                Action::Select if update_cancellable(m) => Effect::CancelDownload,
+                _ => Effect::None,
+            };
+        }
         // Installing/restoring the root must not compete with navigation,
         // shutdown or playback. The platform owns the resulting restart.
         if matches!(
@@ -1617,8 +1643,9 @@ impl Ui {
         if m.navigation.modal.is_none() && m.screen == Screen::NowPlaying && m.current().is_some() {
             return Effect::AdjustVolume(WHEEL_VOLUME_STEP * direction as i8);
         }
+        // The country list (≈240) scrolls as fast as a long library list.
         let accelerate = m.navigation.modal.is_none()
-            && Self::is_catalog(m.screen)
+            && (Self::is_catalog(m.screen) || m.screen == Screen::TimeZone)
             && self.row_count(m, tracks) >= ACCELERATED_LIST_MINIMUM;
         if accelerate && suggested.abs() > 1 {
             self.fast_scroll_until = Some(Instant::now() + Duration::from_millis(700));
@@ -1690,6 +1717,18 @@ impl Ui {
             Self::go(m, Screen::DiagnosticSection, id);
             return Effect::None;
         }
+        if key == "update_now" || key == "update_install" {
+            if !update_charge_ok(m) {
+                self.flash("Connect the charger or charge to half first");
+                return Effect::None;
+            }
+            self.update_run = true;
+            return Effect::Platform(if key == "update_now" {
+                PlatformTask::UpdateStage
+            } else {
+                PlatformTask::UpdateApply
+            });
+        }
         if let Some(name) = key.strip_prefix("task:") {
             return Effect::Platform(platform_task(name));
         }
@@ -1721,10 +1760,24 @@ impl Ui {
             return Effect::None;
         }
         if key == "time_zone" {
-            // Several hundred zones: open at the one in use.
-            let focus = time_zone::focus(self, m);
+            // Open at the choice in use.
             Self::go(m, Screen::TimeZone, "");
-            m.navigation.focus = focus;
+            m.navigation.focus = time_zone::focus(self, m);
+            return Effect::None;
+        }
+        if let Some(code) = key.strip_prefix("tz_country:") {
+            let Some((_, _, zones)) = reborn_core::clock::countries()
+                .iter()
+                .find(|(c, _, _)| *c == code)
+            else {
+                return Effect::None;
+            };
+            // One zone: chosen at once; several: the country's cities.
+            if let Some(zone) = time_zone::single_zone(zones) {
+                return Effect::SetTimeZone(zone.into());
+            }
+            Self::go(m, Screen::TimeZone, format!("country:{code}"));
+            m.navigation.focus = time_zone::focus(self, m);
             return Effect::None;
         }
         if key == "version" {
@@ -1959,6 +2012,7 @@ impl Ui {
                 Effect::Platform(PlatformTask::LdacAbr(!q.requested_abr?))
             }
             "screen_off" => Effect::ScreenSleep,
+            "usb_developer" => Effect::SetUsbDeveloper(!m.settings.usb_developer),
             "eq_enabled" => Effect::SetEqEnabled(!m.settings.eq_enabled),
             "eq_reset" => Effect::ResetEq,
             "replay_gain" => Effect::SetReplayGain(match m.settings.replay_gain {
@@ -1975,6 +2029,7 @@ impl Ui {
                 Effect::SetScreenTimeout(k["timeout_set:".len()..].parse().ok()?)
             }
             k if k.starts_with("tz_set:") => Effect::SetTimeZone(k["tz_set:".len()..].into()),
+            "tz_auto" => Effect::SetTimeZoneAuto(!m.settings.zone_auto()),
             k if k.starts_with("home_pin:") => {
                 let key = &k["home_pin:".len()..];
                 let pinned = m.settings.home_pins.iter().any(|p| p == key);
@@ -2649,6 +2704,20 @@ fn route(key: &str) -> Option<Screen> {
         "radio" => Screen::Radio,
         _ => return None,
     })
+}
+
+/// The platform installs with the charger connected or at least half a
+/// battery (`update.battery_gate`); asked before the download, not after it.
+pub(crate) fn update_charge_ok(m: &AppModel) -> bool {
+    let b = &m.platform.battery;
+    matches!(b.charging, ChargingState::Charging | ChargingState::Full)
+        || b.percent.is_some_and(|p| p >= 50)
+}
+
+/// The running download can still be stopped: nothing changed on the player.
+pub(crate) fn update_cancellable(m: &AppModel) -> bool {
+    m.platform.busy == Some(PlatformTask::UpdateStage)
+        && !m.platform.download.is_some_and(|l| l.verifying)
 }
 
 fn platform_task(name: &str) -> PlatformTask {

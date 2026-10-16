@@ -165,7 +165,12 @@ pub fn usb(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     c.text_center(
         240.,
         316. + Face::R11.mid_offset(),
-        "Your player keeps charging while connected.",
+        // The screen stays while a computer has the drives (Beta 7.1).
+        if m.settings.usb_developer {
+            "Your player keeps charging while connected."
+        } else {
+            "Unplug the cable to use the player. It keeps charging meanwhile."
+        },
         Face::R11,
         color::DIM,
     );

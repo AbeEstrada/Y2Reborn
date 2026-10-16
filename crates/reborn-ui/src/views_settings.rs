@@ -706,12 +706,14 @@ fn download_progress(
     ui: &Ui,
     live: Option<reborn_core::platform::DownloadLive>,
     accent: u32,
+    cancel: bool,
 ) {
     let verifying = live.is_some_and(|l| l.verifying);
+    // Step 3 is the restart to install (`views_system::installing`).
     let (step, title) = if verifying {
-        ("STEP 2 OF 2 · CHECK", "Checking the Update")
+        ("STEP 2 OF 3 · CHECK", "Checking the Update")
     } else {
-        ("STEP 1 OF 2 · DOWNLOAD", "Downloading Update")
+        ("STEP 1 OF 3 · DOWNLOAD", "Downloading Update")
     };
     c.text_center_tracked(
         240.,
@@ -810,12 +812,27 @@ fn download_progress(
             );
         }
     }
-    c.text_center(
-        240.,
-        320. + Face::R11.mid_offset(),
-        "Back to continue in the background",
-        Face::R11,
-        color::DIM,
+    if cancel {
+        // The only control while the update runs: it is always the focus.
+        components::empty_button(c, 300., "Cancel", true);
+    }
+}
+
+/// The one-step update (Beta 7.1) over every screen: download and check
+/// with live progress; the restart to install is `views_system::installing`.
+pub(crate) fn update_overlay(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    if ui.update_restarting {
+        crate::views_system::installing(c);
+        return;
+    }
+    c.rect(0., 0., WIDTH, HEIGHT, color::BG);
+    components::status_bar(c, ui, m, "SOFTWARE UPDATE", false);
+    download_progress(
+        c,
+        ui,
+        m.platform.download,
+        ui.accent(),
+        crate::update_cancellable(m),
     );
 }
 
@@ -857,7 +874,7 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
     let downloading = *phase == UpdatePhase::Downloading
         || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage);
     if downloading {
-        download_progress(c, ui, m.platform.download, accent);
+        download_progress(c, ui, m.platform.download, accent, false);
         return;
     }
     let (title, body) = page

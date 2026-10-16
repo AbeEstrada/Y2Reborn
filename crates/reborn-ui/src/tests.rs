@@ -693,19 +693,38 @@ fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
             .find(|r| r.key == "time_zone")
             .unwrap()
     };
-    assert_eq!(row(&ui, &m).secondary, "UTC");
+    // Never chosen: found over Wi-Fi (Beta 7.1).
+    assert_eq!(row(&ui, &m).secondary, "Automatic");
     let draw = ui.draw(&m, &m.library.tracks, false);
     assert!(drawn_text(&draw).contains("09:41"));
 
     m.settings.time_zone = "Asia/Tokyo".into();
+    m.settings.time_zone_auto = Some(false);
     assert_eq!(row(&ui, &m).secondary, "Tokyo");
     select_key(&mut ui, &mut m, "time_zone");
     assert_eq!(m.screen, Screen::TimeZone);
     let rows = ui.rows(&m, &m.library.tracks);
     let focused = &rows[m.navigation.focus];
-    assert_eq!(focused.key, "tz_set:Asia/Tokyo");
+    assert_eq!(focused.key, "tz_country:JP");
     assert_eq!(focused.kind, RowKind::Check(true));
-    assert_eq!(focused.secondary, "Asia · UTC+9");
+    assert_eq!(focused.secondary, "UTC+9");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "tz_auto"),
+        Effect::SetTimeZoneAuto(true)
+    );
+    // A country of one zone sets it; one of several opens its cities.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "tz_country:CH"),
+        Effect::SetTimeZone("Europe/Zurich".into())
+    );
+    // Berlin and Büsingen keep the same time: Germany needs no city.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "tz_country:DE"),
+        Effect::SetTimeZone("Europe/Berlin".into())
+    );
+    select_key(&mut ui, &mut m, "tz_country:US");
+    assert_eq!(m.screen, Screen::TimeZone);
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("UNITED STATES"));
     assert_eq!(
         select_key(&mut ui, &mut m, "tz_set:America/Chicago"),
         Effect::SetTimeZone("America/Chicago".into())
@@ -713,6 +732,9 @@ fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
     m.settings.time_zone = "America/Chicago".into();
     let draw = ui.draw(&m, &m.library.tracks, false);
     assert!(drawn_text(&draw).contains("4:41"), "12-hour, daylight time");
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::TimeZone);
+    assert!(m.navigation.filter.is_empty(), "back to the countries");
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.screen, Screen::SettingsDisplay);
 }
@@ -1032,16 +1054,59 @@ fn update_page_follows_typed_state_and_capability() {
         select_key(&mut ui, &mut m, "task:update_check"),
         Effect::Platform(PlatformTask::UpdateCheck)
     );
+    // One step (Beta 7.1): Update Now downloads, checks and installs.
+    m.platform.snapshot.update = UpdateState {
+        phase: UpdatePhase::Available {
+            version: "1.0.0-beta.8".into(),
+        },
+        can_download: true,
+        ..Default::default()
+    };
+    m.platform.battery.charging = reborn_core::platform::ChargingState::OnBattery;
+    m.platform.battery.percent = Some(30);
+    assert_eq!(select_key(&mut ui, &mut m, "update_now"), Effect::None);
+    assert!(
+        !ui.update_run,
+        "too little charge: asked before the download"
+    );
+    m.platform.battery.percent = Some(80);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "update_now"),
+        Effect::Platform(PlatformTask::UpdateStage)
+    );
+    assert!(ui.update_run);
+    // The update owns the screen; Select is Cancel while it downloads.
+    m.platform.busy = Some(PlatformTask::UpdateStage);
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!(ui.model_action(&mut m, Action::Home), Effect::None);
+    assert_eq!(m.screen, Screen::Update);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::CancelDownload
+    );
+    let shown = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        shown.contains("Downloading") && shown.contains("Cancel"),
+        "{shown}"
+    );
+    m.platform.download = Some(reborn_core::platform::DownloadLive {
+        verifying: true,
+        ..Default::default()
+    });
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert!(!drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Cancel"));
+    // Install Now, for a package downloaded earlier, needs no confirmation.
+    ui.update_run = false;
+    m.platform.busy = None;
+    m.platform.download = None;
     m.platform.snapshot.update = UpdateState {
         phase: UpdatePhase::ReadyToInstall,
         can_install: true,
         can_cancel: true,
         ..Default::default()
     };
-    select_key(&mut ui, &mut m, "confirm:update_apply");
-    ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(
-        ui.model_action(&mut m, Action::Select),
+        select_key(&mut ui, &mut m, "update_install"),
         Effect::Platform(PlatformTask::UpdateApply)
     );
     // While installing, only wake and volume are accepted.
@@ -1052,7 +1117,10 @@ fn update_page_follows_typed_state_and_capability() {
     let mut m = app(Screen::Update);
     m.platform.snapshot.enabled.clear();
     let page = pages::page(&ui, &m, &m.library.tracks);
-    assert!(!page.rows.iter().any(|r| r.key.starts_with("task:update")));
+    assert!(!page
+        .rows
+        .iter()
+        .any(|r| r.key.starts_with("task:update") || r.key.starts_with("update_")));
     assert!(page.hero.unwrap().title.contains("Computer"));
 }
 
@@ -1067,7 +1135,11 @@ fn full_system_update_wording_and_versions() {
     };
     let page = pages::page(&ui, &m, &m.library.tracks);
     assert!(page.hero.unwrap().body.contains("restarts"));
-    assert!(page.rows.iter().any(|r| r.label == "Restart and Install"));
+    // One step (Beta 7.1): no second confirmation.
+    assert!(page
+        .rows
+        .iter()
+        .any(|r| r.label == "Install Now" && r.key == "update_install"));
     m.platform.snapshot.update.phase = UpdatePhase::Failed(UpdateProblem::NotEnoughSpace);
     m.platform.snapshot.update.space_needed_mb = Some(281);
     let page = pages::page(&ui, &m, &m.library.tracks);
@@ -1735,7 +1807,7 @@ fn controls_keep_one_accent_while_the_cover_colour_follows_the_song() {
 }
 
 #[test]
-fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
+fn computer_screen_stays_while_connected_unless_a_developer_allows_use() {
     let mut ui = radios();
     let mut m = app(Screen::Albums);
     m.platform.snapshot.usb = UsbTransfer::Ready;
@@ -1747,7 +1819,9 @@ fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
     assert!(ui.usb_overlay(&m));
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(text.contains("Connected to a Computer"), "{text}");
-    // The wheel does nothing underneath; Back dismisses it; volume still works.
+    // Nothing underneath moves and nothing leaves it (Beta 7.1); volume
+    // still works.
+    assert!(text.contains("Unplug the cable"), "{text}");
     assert_eq!(
         ui.model_action(&mut m, Action::WheelClockwise(1)),
         Effect::None
@@ -1757,7 +1831,18 @@ fn computer_screen_appears_on_connection_and_back_returns_to_the_ui() {
         ui.model_action(&mut m, Action::VolumeUp),
         Effect::AdjustVolume(2)
     );
-    assert!(ui.usb_overlay(&m));
+    for action in [
+        Action::Back,
+        Action::Home,
+        Action::Select,
+        Action::ContextMenu,
+    ] {
+        ui.model_action(&mut m, action);
+        assert!(ui.usb_overlay(&m), "{action:?} left the computer screen");
+    }
+    assert_eq!(m.screen, Screen::Albums);
+    // A developer (service page) may use the player while connected.
+    m.settings.usb_developer = true;
     ui.model_action(&mut m, Action::Back);
     assert!(!ui.usb_overlay(&m));
     // Copying starting brings it back; unplugging and plugging in again too.
@@ -1888,7 +1973,7 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
         "23.4 of 58.7 MB",
         "3.2 MB/s",
         "About 10 seconds left",
-        "STEP 1 OF 2",
+        "STEP 1 OF 3",
     ] {
         assert!(text.contains(want), "{want}: {text}");
     }

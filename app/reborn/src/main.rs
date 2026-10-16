@@ -113,6 +113,8 @@ enum RadioReply {
 }
 
 struct Runtime {
+    /// Look the time zone up again (Automatic was just turned on).
+    zone_lookup_again: bool,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -1711,6 +1713,11 @@ impl Runtime {
                 self.pause();
                 self.model.playback = PlaybackState::Stopped;
             }
+            Effect::CancelDownload => client::abort_download(),
+            Effect::SetUsbDeveloper(on) => {
+                self.model.settings.usb_developer = on;
+                self.checkpoint();
+            }
             Effect::Radio(request) => self.radio(request)?,
             Effect::Playlist(request) => self.playlist(*request)?,
             Effect::SetCodecPreference(preference) => {
@@ -2274,7 +2281,14 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::SetTimeZone(zone) => {
+                // A zone chosen by hand ends Automatic (Beta 7.1).
                 self.model.settings.time_zone = zone;
+                self.model.settings.time_zone_auto = Some(false);
+                self.checkpoint();
+            }
+            Effect::SetTimeZoneAuto(on) => {
+                self.model.settings.time_zone_auto = Some(on);
+                self.zone_lookup_again = on;
                 self.checkpoint();
             }
             Effect::SetHomePin(key, on) => {
@@ -2365,6 +2379,8 @@ impl Runtime {
         };
         let mut refresh = false;
         let mut blank_screen = false;
+        // The one-step update installs right after its download (Beta 7.1).
+        let mut install_next = false;
         let p = &mut self.model.platform;
         match reply {
             client::Reply::Sleep(result) => {
@@ -2403,6 +2419,11 @@ impl Runtime {
                 let health_section = p.snapshot.section("health").cloned();
                 let firmware_before = p.snapshot.radio_firmware;
                 p.snapshot = *snapshot;
+                // The status call took ≈1.6 s: the live cable state is newer.
+                let usb = client::usb_now();
+                if usb != reborn_core::platform::UsbTransfer::Unknown {
+                    p.snapshot.usb = usb;
+                }
                 p.snapshot.health = health;
                 {
                     use reborn_core::platform::RadioFirmware::*;
@@ -2461,9 +2482,39 @@ impl Runtime {
                                 u.can_install = true;
                                 u.can_cancel = true;
                                 u.can_download = false;
-                                self.ui.flash("Update downloaded. Ready to install.");
+                                if self.ui.update_run {
+                                    install_next = true;
+                                } else {
+                                    self.ui.flash("Update downloaded. Ready to install.");
+                                }
                             }
-                            UpdateCheck | UpdateCancel => {}
+                            UpdateApply if self.ui.update_run => {
+                                // The platform restarts into the installer.
+                                self.ui.update_restarting = true;
+                            }
+                            UpdateCheck => {
+                                // The check's own answer, at once: no wait for
+                                // the status refresh behind it (Beta 7.1).
+                                use reborn_core::platform::UpdatePhase;
+                                let fact = |label: &str| {
+                                    p.result.as_ref().and_then(|r| {
+                                        r.facts
+                                            .iter()
+                                            .find(|f| f.label == label)
+                                            .map(|f| f.value.clone())
+                                    })
+                                };
+                                let (state, release) = (fact("State"), fact("Release"));
+                                let u = &mut p.snapshot.update;
+                                if state.as_deref() == Some("UpToDate") {
+                                    u.phase = UpdatePhase::UpToDate;
+                                    u.can_download = false;
+                                } else if let Some(version) = release {
+                                    u.phase = UpdatePhase::Available { version };
+                                    u.can_download = true;
+                                }
+                            }
+                            UpdateCancel => {}
                             Export => self.ui.flash("Player data exported"),
                             LdacQuality(_) | LdacAbr(_) | SbcQuality(_) | AacQuality(_)
                             | AacAbr(_) => {
@@ -2478,8 +2529,15 @@ impl Runtime {
                     }
                     Err(error) => {
                         // The update page presents its own journaled reason.
+                        if matches!(task, UpdateStage | UpdateApply) {
+                            self.ui.update_run = false;
+                            self.ui.update_restarting = false;
+                        }
                         if matches!(task, UpdateApply | UpdateRollback) {
                             self.ui.flash(install_refusal(&error));
+                        } else if task == UpdateStage && error.contains("download_cancelled") {
+                            p.download = None;
+                            self.ui.flash("Update cancelled. Nothing was changed.");
                         } else if task == UpdateStage {
                             p.download = None;
                             self.ui
@@ -2513,6 +2571,16 @@ impl Runtime {
             if let Err(error) = self.effect(Effect::ScreenSleep) {
                 self.ui.flash(error);
             }
+        }
+        if install_next {
+            if let Err(error) =
+                self.effect(Effect::Platform(reborn_core::PlatformTask::UpdateApply))
+            {
+                self.ui.update_run = false;
+                self.ui.flash(error);
+            }
+            self.dirty.mark_render();
+            return;
         }
         // Operations change platform state; observe it again.
         if refresh {
@@ -3346,6 +3414,7 @@ fn run() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let background = background::Gate::new(&model.settings.music_directory, &model.sources);
     let mut rt = Runtime {
+        zone_lookup_again: false,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -3531,6 +3600,13 @@ fn run() -> Result<(), String> {
     };
     let mut player_publish = Instant::now() - Duration::from_secs(1);
     let mut platform_refresh = Instant::now() - Duration::from_secs(30);
+    let mut usb_poll = Instant::now();
+    // Automatic time zone (Beta 7.1): one lookup per Wi-Fi network, in the
+    // background; a failed one is tried again after ten minutes.
+    let (zone_tx, zone_rx) = std::sync::mpsc::channel::<(String, Result<String, String>)>();
+    let mut zone_found_on: Option<String> = None;
+    let mut zone_tried: Option<Instant> = None;
+    let mut zone_in_flight = false;
     let mut download_poll = Instant::now();
     let mut last_platform_screen = rt.model.screen;
     let mut codec_reconnect = CodecReconnect::default();
@@ -3702,6 +3778,75 @@ fn run() -> Result<(), String> {
                         });
                     }
                 }
+            }
+        }
+        // The cable and the transfer receipt, twice a second on every screen
+        // (once a second with the screen off): the computer screen appears
+        // within half a second instead of with the next Settings refresh.
+        let usb_every = Duration::from_millis(if rt.model.screen_off { 1000 } else { 500 });
+        if usb_poll.elapsed() >= usb_every {
+            usb_poll = Instant::now();
+            let usb = client::usb_now();
+            let was = rt.model.platform.snapshot.usb;
+            if usb != was && usb != reborn_core::platform::UsbTransfer::Unknown {
+                rt.model.platform.snapshot.usb = usb;
+                use reborn_core::platform::UsbTransfer::{Copying, Ready};
+                // A computer opening the drives lights the screen to say so.
+                if rt.model.screen_off && usb == Ready && !matches!(was, Ready | Copying) {
+                    if let Err(error) = rt.effect(Effect::ScreenWake) {
+                        rt.ui.flash(error);
+                    }
+                }
+                rt.dirty.mark_render();
+            }
+        }
+        if std::mem::take(&mut rt.zone_lookup_again) {
+            zone_found_on = None;
+            zone_tried = None;
+        }
+        if let WifiStatus::Connected(network) = &rt.ui.wifi.status {
+            if rt.model.settings.zone_auto()
+                && !zone_in_flight
+                && zone_found_on.as_ref() != Some(network)
+                && zone_tried.is_none_or(|t| t.elapsed() >= Duration::from_secs(600))
+            {
+                zone_in_flight = true;
+                zone_tried = Some(Instant::now());
+                let (tx, network) = (zone_tx.clone(), network.clone());
+                let _ = thread::Builder::new()
+                    .name("time-zone".into())
+                    .spawn(move || {
+                        let _ = tx.send((network, reborn_platform::geo::zone()));
+                    });
+            }
+        }
+        if let Ok((network, result)) = zone_rx.try_recv() {
+            zone_in_flight = false;
+            match result {
+                Ok(zone) => {
+                    zone_found_on = Some(network);
+                    if rt.model.settings.zone_auto() && zone != rt.model.settings.time_zone {
+                        log.emit(
+                            Level::Info,
+                            "clock",
+                            "zone_found",
+                            "Time zone set automatically",
+                            None,
+                            json!({"zone": zone}),
+                        );
+                        rt.model.settings.time_zone = zone;
+                        rt.checkpoint();
+                        rt.dirty.mark_render();
+                    }
+                }
+                Err(error) => log.emit(
+                    Level::Warn,
+                    "clock",
+                    "zone_lookup_failed",
+                    "Automatic time zone lookup failed",
+                    None,
+                    json!({"error": error}),
+                ),
             }
         }
         rt.poll_platform();

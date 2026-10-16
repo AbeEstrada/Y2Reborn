@@ -46,6 +46,21 @@ pub fn zone(name: &str) -> Option<Rule> {
         .and_then(|(_, rule)| parse(rule))
 }
 
+/// A country of the tz database: ISO code, English name and its zones.
+pub type Country = (&'static str, &'static str, &'static [&'static str]);
+
+/// Every country with at least one zone, A to Z by name.
+pub fn countries() -> &'static [Country] {
+    crate::countries::COUNTRIES
+}
+
+/// The country a zone belongs to (none for UTC).
+pub fn country_of(zone: &str) -> Option<&'static Country> {
+    countries()
+        .iter()
+        .find(|(_, _, zones)| zones.contains(&zone))
+}
+
 /// Every zone name with its rule.
 pub fn zones() -> impl Iterator<Item = (&'static str, Rule)> {
     crate::zones::ZONES

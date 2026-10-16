@@ -19,8 +19,12 @@ use serde_json::{json, Value};
 use std::{
     fs,
     io::Read,
+    path::Path,
     process::{Command, Stdio},
-    sync::mpsc::{sync_channel, Receiver, SyncSender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{sync_channel, Receiver, SyncSender},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -64,11 +68,20 @@ impl Client {
     }
 }
 
-fn call(args: &[&str], seconds: u64) -> Result<Value, String> {
-    run(PROGRAM, args, Duration::from_secs(seconds))
+/// Set from the UI thread to stop the running download (`update stage`): the
+/// worker sends it SIGTERM and the platform removes the partial package.
+static ABORT_DOWNLOAD: AtomicBool = AtomicBool::new(false);
+
+/// Stop the update download in progress, if any (Cancel on the update screen).
+pub fn abort_download() {
+    ABORT_DOWNLOAD.store(true, Ordering::SeqCst);
 }
 
-fn run(program: &str, args: &[&str], deadline: Duration) -> Result<Value, String> {
+fn call(args: &[&str], seconds: u64) -> Result<Value, String> {
+    run(PROGRAM, args, Duration::from_secs(seconds), false)
+}
+
+fn run(program: &str, args: &[&str], deadline: Duration, abortable: bool) -> Result<Value, String> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -129,6 +142,16 @@ fn run(program: &str, args: &[&str], deadline: Duration) -> Result<Value, String
             let _ = child.wait();
             return Err("timeout".into());
         }
+        if abortable && ABORT_DOWNLOAD.swap(false, Ordering::SeqCst) {
+            if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+                // SAFETY: `pid` is our own unreaped child, so it cannot be a
+                // recycled process; SIGTERM only asks it to stop, and its
+                // handler cleans up before it exits and answers.
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
+            }
+        }
         thread::sleep(Duration::from_millis(20));
     }
 }
@@ -166,7 +189,16 @@ fn execute(task: PlatformTask) -> Reply {
             }
         }
         UpdateCheck => call(&["update", "check"], 100),
-        UpdateStage => call(&["update", "stage"], 950),
+        UpdateStage => {
+            // A Cancel left over from an earlier download must not stop this one.
+            ABORT_DOWNLOAD.store(false, Ordering::SeqCst);
+            run(
+                PROGRAM,
+                &["update", "stage"],
+                Duration::from_secs(950),
+                true,
+            )
+        }
         UpdateApply => call(&["update", "apply"], 30),
         UpdateCancel => call(&["update", "cancel"], 30),
         UpdateRollback => call(&["update", "rollback"], 30),
@@ -405,6 +437,39 @@ pub fn usb(status: &Value) -> UsbTransfer {
         Some("Failed") => UsbTransfer::Error,
         _ => UsbTransfer::Starting,
     }
+}
+
+/// The USB state from the cable's kernel state and the platform's transfer
+/// receipt in RAM, without the status call (≈1.6 s): read twice a second, so
+/// the computer screen follows the cable on every screen (Beta 7.1).
+pub fn usb_now() -> UsbTransfer {
+    usb_from(
+        Path::new("/sys/class/udc"),
+        Path::new(USB_RECEIPT),
+        Path::new(BOOT_ID),
+    )
+}
+
+const USB_RECEIPT: &str = "/run/y2/usb-transfer.json";
+const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
+
+fn usb_from(udc: &Path, receipt: &Path, boot_id: &Path) -> UsbTransfer {
+    let udcs: Vec<Value> = fs::read_dir(udc)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|e| fs::read_to_string(e.path().join("state")).ok())
+        .map(|state| json!({"state": state.trim()}))
+        .collect();
+    let transfer = fs::read(receipt)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
+    let boot = fs::read_to_string(boot_id).unwrap_or_default();
+    usb(&json!({
+        "record": {"boot_id": boot.trim()},
+        "system": {"usb": {"udcs": udcs, "file_transfer": transfer}},
+    }))
 }
 
 const DOWNLOAD_PROGRESS: &str = "/run/y2/update-progress.json";
@@ -1400,11 +1465,18 @@ mod tests {
     #[test]
     fn malformed_future_and_oversize_records_fail_closed() {
         assert!(schema(json!({"schema":"v2"}), STATUS_SCHEMA).is_err());
-        assert!(run("/bin/sh", &["-c", "printf '[]'"], Duration::from_secs(1)).is_err());
+        assert!(run(
+            "/bin/sh",
+            &["-c", "printf '[]'"],
+            Duration::from_secs(1),
+            false
+        )
+        .is_err());
         assert!(run(
             "/bin/sh",
             &["-c", "head -c 1048577 /dev/zero"],
-            Duration::from_secs(1)
+            Duration::from_secs(1),
+            false
         )
         .is_err());
     }
@@ -1418,10 +1490,64 @@ mod tests {
                 "printf '{\"schema\":\"org.y2linux.health/v1\",\"state\":\"FAILED\"}'; exit 1",
             ],
             Duration::from_secs(1),
+            false,
         )
         .unwrap();
         assert_eq!(health(&value).0, HealthLevel::Failed);
-        assert!(run("/bin/sleep", &["2"], Duration::from_millis(40)).is_err());
+        assert!(run("/bin/sleep", &["2"], Duration::from_millis(40), false).is_err());
+    }
+
+    #[test]
+    fn usb_now_follows_the_cable_and_the_receipt_without_a_status_call() {
+        let root = std::env::temp_dir().join(format!("reborn-usb-now-{}", std::process::id()));
+        let udc = root.join("udc/musb-hdrc.4.auto");
+        fs::create_dir_all(&udc).unwrap();
+        let (receipt, boot) = (root.join("usb-transfer.json"), root.join("boot_id"));
+        fs::write(&boot, "this-boot\n").unwrap();
+        let state = |s: &str| fs::write(udc.join("state"), s).unwrap();
+        let ready = |b: &str| {
+            fs::write(
+                &receipt,
+                json!({"schema":"org.y2linux.usb-transfer/v1","boot_id":b,"mode":"mtp","state":"Ready"})
+                    .to_string(),
+            )
+            .unwrap()
+        };
+        let now = || usb_from(&root.join("udc"), &receipt, &boot);
+        state("configured\n");
+        ready("this-boot");
+        assert_eq!(now(), UsbTransfer::Ready);
+        state("not attached\n");
+        assert_eq!(now(), UsbTransfer::Disconnected);
+        // A receipt of an earlier boot is not this connection.
+        state("configured\n");
+        ready("earlier-boot");
+        assert_eq!(now(), UsbTransfer::Starting);
+        fs::write(
+            &receipt,
+            json!({"schema":"org.y2linux.usb-transfer/v1","boot_id":"this-boot","mode":"mtp","state":"Copying"})
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(now(), UsbTransfer::Copying);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cancel_stops_an_abortable_download_and_reports_its_answer() {
+        // Stands in for `update stage`: SIGTERM makes it answer and exit.
+        let script = "trap 'printf \"{\\\"state\\\":\\\"Failed\\\",\\\"failure\\\":\\\"download_cancelled\\\"}\"; exit 1' TERM; \
+                      sleep 5 >/dev/null & wait";
+        let started = Instant::now();
+        let abort = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(150));
+            abort_download();
+        });
+        let result = run("/bin/sh", &["-c", script], Duration::from_secs(10), true);
+        abort.join().unwrap();
+        assert_eq!(result.unwrap_err(), "download_cancelled");
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(!ABORT_DOWNLOAD.load(Ordering::SeqCst));
     }
 
     #[test]
