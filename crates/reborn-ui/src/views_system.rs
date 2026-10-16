@@ -14,6 +14,7 @@ use reborn_core::{AppModel, Screen, Track};
 
 /// Shown while an update is installed: the wordmark and one calm line.
 pub fn installing(c: &mut Canvas) {
+    crate::views_settings::steps(c, 2, color::ACCENT);
     crate::boot::mark(c, 1.);
     c.text_center_tracked(
         240.,

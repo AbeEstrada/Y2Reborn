@@ -1961,7 +1961,10 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
         "23.4 of 58.7 MB",
         "3.2 MB/s",
         "About 10 seconds left",
-        "STEP 1 OF 3",
+        // Beta 7.6: the step tracker instead of "STEP 1 OF 3".
+        "Download",
+        "Check",
+        "Install",
     ] {
         assert!(text.contains(want), "{want}: {text}");
     }
@@ -3085,4 +3088,56 @@ fn a_long_wheel_jump_glides_only_its_last_row() {
     // The focused (last) row is on screen at once, not a long slide away.
     let focus = frame.iter().find(|q| q.focus_target).unwrap();
     assert!(focus.y > 0. && focus.y < 360., "{}", focus.y);
+}
+
+#[test]
+fn the_update_download_draws_at_the_full_frame_rate_without_the_cpu_boost() {
+    // Beta 7.6: the download drew at the spinners' calm rate (≤ 29 fps).
+    let mut ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::Settings);
+    m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+    ui.observe(&m);
+    assert!(!ui.gliding(), "a download behind another screen stays calm");
+    m.screen = Screen::Update;
+    ui.observe(&m);
+    assert!(ui.gliding(), "the visible download runs at the full rate");
+    assert!(!ui.responding(), "and leaves the CPU clock to the download");
+    m.screen_off = true;
+    ui.observe(&m);
+    assert!(!ui.gliding(), "nothing draws with the screen off");
+    m.screen_off = false;
+    m.platform.busy = None;
+    ui.observe(&m);
+    assert!(!ui.gliding(), "done: back to rest");
+}
+
+#[test]
+fn the_download_percentage_counts_with_the_bar() {
+    let ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::Update);
+    m.platform.busy = Some(reborn_core::PlatformTask::UpdateStage);
+    let live = |done| reborn_core::platform::DownloadLive {
+        verifying: false,
+        bytes_done: done,
+        bytes_total: 100_000_000,
+        speed_bytes_per_s: Some(3_000_000),
+        seconds_left: Some(20),
+        check_percent: None,
+    };
+    m.platform.download = Some(live(10_000_000));
+    // The bar starts empty and glides; the number follows it, not the report.
+    let first = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(!first.contains("10%"), "{first}");
+    for _ in 0..80 {
+        ui.draw(&m, &m.library.tracks, false);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    let caught_up = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(caught_up.contains("10%"), "{caught_up}");
 }

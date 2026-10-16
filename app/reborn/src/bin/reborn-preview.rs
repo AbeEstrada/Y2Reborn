@@ -669,6 +669,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
     );
+    case!("34d-update-installing", at(Screen::Update, ""), |ui, _| {
+        ui.update_run = true;
+        ui.update_restarting = true;
+    });
     case!(
         "14c-now-playing-crossfade",
         at(Screen::NowPlaying, ""),

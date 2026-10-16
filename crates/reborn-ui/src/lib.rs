@@ -379,6 +379,9 @@ pub struct Ui {
     battery_acked: u8,
     /// Something on screen sweeps with time (a spinner), so keep redrawing.
     spinning: bool,
+    /// The update's download or check is on screen (Beta 7.6): its bar,
+    /// sweep and count run at the panel's full frame rate, like motion.
+    download_shown: bool,
     /// Freeze spinners at this phase (previews and tests).
     pub spin_fixed: Option<f32>,
     /// The update download bar as drawn: fill, step (check), last frame.
@@ -513,7 +516,8 @@ impl Ui {
     pub fn gliding(&self) -> bool {
         self.flow.borrow().moving()
             || self.transition_progress().is_some()
-            || (self.ui_motion && (self.motion.moving() || self.slide.borrow().is_some()))
+            || (self.ui_motion
+                && (self.motion.moving() || self.slide.borrow().is_some() || self.download_shown))
     }
 
     /// Motion a button started (a glide, a slide, Cover Flow): it earns the
@@ -720,10 +724,14 @@ impl Ui {
                 self.alert_focus = 1;
             }
         }
-        self.spinning = m.library.scanning
-            || m.platform.snapshot.update.phase == reborn_core::platform::UpdatePhase::Downloading
-            || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
-            || self.bt_busy.is_some();
+        let downloading = m.platform.snapshot.update.phase
+            == reborn_core::platform::UpdatePhase::Downloading
+            || m.platform.busy == Some(reborn_core::PlatformTask::UpdateStage);
+        self.spinning = m.library.scanning || downloading || self.bt_busy.is_some();
+        // Before Beta 7.6 the download drew at the spinners' calm rate
+        // (≤ 29 fps): its sweep stepped ≈8 px a frame.
+        self.download_shown =
+            downloading && !m.screen_off && (self.update_run || m.screen == Screen::Update);
         let clock = self.clock(m);
         let ticked = clock != self.clock_shown && !m.screen_off;
         self.clock_shown = clock;

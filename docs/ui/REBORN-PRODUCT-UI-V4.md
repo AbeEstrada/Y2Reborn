@@ -248,6 +248,19 @@ previews, spelling (3).
 * **About & Updates:** the Music Library row (it opened Storage) is gone; the song count is
   the secondary text of Storage's Scan for Music.
 
+## Beta 7.6 update screens (owner: "low fps", 2026-10-16)
+
+* **Cause:** the download and check counted only as a spinner, which redraws at the calm rate
+  (34-ms frame gap, ≤ 29 fps); the bar's highlight stepped ≈8 px a frame and jumped back to the
+  start, and the percentage jumped with each platform report (4 a second) while the bar glided.
+* **Now:** `Ui::download_shown` (download or check visible, screen on) joins `gliding()`, so
+  these screens run at the panel's full rate; not `responding()`, so the niced download keeps the
+  CPU clock decisions (no Interactive lease). The number counts with the gliding bar; the
+  highlight fades in and out at the ends; the Connecting segment eases at each end.
+* **Look:** a step tracker (Download · Check · Install; done steps carry a check, the current one
+  the accent) replaces "STEP 1 OF 3 · DOWNLOAD", also on the restart screen; the bar is 10 px
+  with a bright head where it grows. Preview `34d-update-installing` added.
+
 ## Not verified
 
 Nothing here is built. Hold-menu discoverability without hints and the fixed accent's

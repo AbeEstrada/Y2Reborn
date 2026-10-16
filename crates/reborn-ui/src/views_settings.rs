@@ -6,7 +6,7 @@ use crate::{
     pages::{self, Page},
     screens::{screen_title, wrap_lines},
     text::{self, Face},
-    theme::{alpha, color, HEIGHT, WIDTH},
+    theme::{alpha, color, mix, HEIGHT, WIDTH},
     Item, RowKind, Ui, WifiStatus,
 };
 use reborn_core::{
@@ -703,6 +703,36 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
     let _ = HEIGHT;
 }
 
+/// Where the update is: Download, Check, Install (the restart). Steps done
+/// carry a check, the current one the accent, the rest wait dimmed.
+pub(crate) fn steps(c: &mut Canvas, current: usize, accent: u32) {
+    const NAMES: [&str; 3] = ["Download", "Check", "Install"];
+    let (y, gap) = (64., 120.);
+    let x0 = 240. - gap;
+    for i in 0..2 {
+        let tint = if i < current {
+            color::TEXT
+        } else {
+            color::RULE
+        };
+        c.rect(x0 + i as f32 * gap + 12., y - 1., gap - 24., 2., tint);
+    }
+    for (i, name) in NAMES.iter().enumerate() {
+        let x = x0 + i as f32 * gap;
+        let (dot, label) = match i.cmp(&current) {
+            std::cmp::Ordering::Less => (color::TEXT, color::MUTED),
+            std::cmp::Ordering::Equal => (accent, color::TEXT),
+            std::cmp::Ordering::Greater => (color::GLASS_STRONG, color::DIM),
+        };
+        c.disc(x, y, 7., dot);
+        if i < current {
+            c.icon(Icon::Check, x, y, 11., color::INK);
+        }
+        let face = if i == current { Face::S13 } else { Face::R13 };
+        c.text_center(x, y + 22. + face.mid_offset(), name, face, label);
+    }
+}
+
 /// The running download (OTA-48): which step, a bar that glides between the
 /// platform's reports, how much, how fast and how long. Before the first
 /// report a short segment sweeps the track.
@@ -715,35 +745,35 @@ fn download_progress(
 ) {
     let verifying = live.is_some_and(|l| l.verifying);
     // Step 3 is the restart to install (`views_system::installing`).
-    let (step, title) = if verifying {
-        ("STEP 2 OF 3 · CHECK", "Checking the Update")
+    let title = if verifying {
+        "Checking the Update"
     } else {
-        ("STEP 1 OF 3 · DOWNLOAD", "Downloading Update")
+        "Downloading Update"
     };
-    c.text_center_tracked(
-        240.,
-        66. + Face::S10.mid_offset(),
-        step,
-        Face::S10,
-        color::MUTED,
-        1.6,
-    );
+    steps(c, usize::from(verifying), accent);
     c.text_center(
         240.,
-        94. + Face::S20.mid_offset(),
+        128. + Face::S20.mid_offset(),
         title,
         Face::S20,
         color::TEXT,
     );
-    let (x, y, w, h) = (60., 190., 360., 8.);
+    let (x, y, w, h) = (60., 208., 360., 10.);
     c.rrect(x, y, w, h, h / 2., color::TRACK);
     match live {
         Some(l) => {
             let fill = ui.download_fill(l.fraction(), verifying);
-            let percent = (l.fraction() * 100.).floor() as u32;
+            // The number counts with the bar instead of jumping with each
+            // report; it reads the report once the bar has caught up.
+            let shown = if l.fraction() - fill < 0.004 {
+                l.fraction()
+            } else {
+                fill
+            };
+            let percent = (shown * 100.).floor() as u32;
             c.text_center(
                 240.,
-                148. + Face::S36.mid_offset(),
+                172. + Face::S36.mid_offset(),
                 &format!("{percent}%"),
                 Face::S36,
                 color::TEXT,
@@ -751,10 +781,21 @@ fn download_progress(
             let lit = (w * fill).round();
             if lit >= h {
                 c.rrect(x, y, lit, h, h / 2., accent);
+                // A bright head where the bar grows.
+                c.glow(x + lit - h / 2., y + h / 2., 14., 9., alpha(accent, 150));
+                c.disc(
+                    x + lit - h / 2.,
+                    y + h / 2.,
+                    h / 2. - 1.,
+                    mix(accent, color::TEXT, 0.55),
+                );
                 // A soft highlight runs along the filled part: it is alive.
+                // It fades in and out at the ends instead of jumping back.
                 if lit > 48. {
-                    let sx = x + 20. + (lit - 40.) * ui.spin_phase();
-                    c.glow(sx, y + h / 2., 22., 5., alpha(0xFFFFFFFF, 90));
+                    let t = ui.spin_phase();
+                    let sx = x + 20. + (lit - 40.) * t;
+                    let a = (std::f32::consts::PI * t).sin();
+                    c.glow(sx, y + h / 2., 22., 5., alpha(0xFFFFFFFF, (110. * a) as u8));
                 }
             }
             let (detail, hint) = if verifying {
@@ -782,14 +823,14 @@ fn download_progress(
             };
             c.text_center(
                 240.,
-                226. + Face::R13.mid_offset(),
+                242. + Face::R13.mid_offset(),
                 &detail,
                 Face::R13,
                 color::MUTED,
             );
             c.text_center(
                 240.,
-                248. + Face::R13.mid_offset(),
+                261. + Face::R13.mid_offset(),
                 &hint,
                 Face::R13,
                 color::DIM,
@@ -798,19 +839,20 @@ fn download_progress(
         None => {
             // Connecting: no size yet.
             let seg = 72.;
+            // Back and forth, easing at each end.
             let t = ui.spin_phase();
-            let tri = if t < 0.5 { t * 2. } else { 2. - t * 2. };
-            c.rrect(x + (w - seg) * tri, y, seg, h, h / 2., accent);
+            let swing = 0.5 - 0.5 * (std::f32::consts::TAU * t).cos();
+            c.rrect(x + (w - seg) * swing, y, seg, h, h / 2., accent);
             c.text_center(
                 240.,
-                148. + Face::S20.mid_offset(),
+                172. + Face::S20.mid_offset(),
                 "Connecting…",
                 Face::S20,
                 color::MUTED,
             );
             c.text_center(
                 240.,
-                226. + Face::R13.mid_offset(),
+                242. + Face::R13.mid_offset(),
                 "Keep Wi-Fi on.",
                 Face::R13,
                 color::MUTED,
