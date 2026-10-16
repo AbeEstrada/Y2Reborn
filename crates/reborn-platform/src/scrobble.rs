@@ -10,6 +10,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// At most this many plays wait; the oldest go first beyond it.
 pub const QUEUE_MAX: usize = 10_000;
@@ -17,25 +18,43 @@ pub const QUEUE_MAX: usize = 10_000;
 pub const MAX_AGE_S: i64 = 14 * 24 * 3600;
 pub const LOG_NAME: &str = ".scrobbler.log";
 
+/// One lock for every queue operation in the process: the sender thread
+/// rewrites the file while the player may append a play that just counted.
+static LOCK: Mutex<()> = Mutex::new(());
+
+fn parse(bytes: &[u8]) -> Vec<Scrobble> {
+    bytes
+        .split(|&b| b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Scrobble>(line).ok())
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct Queue {
     path: PathBuf,
+    max: usize,
 }
 impl Queue {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            max: QUEUE_MAX,
+        }
     }
-    pub fn default_path() -> Self {
-        Self::new("/data/reborn/state/scrobbles.jsonl")
+    /// A queue with another cap (tests).
+    pub fn with_max(path: impl Into<PathBuf>, max: usize) -> Self {
+        Self {
+            path: path.into(),
+            max: max.max(1),
+        }
+    }
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
     /// Every complete entry, oldest first.
     pub fn load(&self) -> Vec<Scrobble> {
-        let Ok(text) = fs::read_to_string(&self.path) else {
-            return vec![];
-        };
-        text.lines()
-            .filter_map(|line| serde_json::from_str::<Scrobble>(line).ok())
-            .collect()
+        let _guard = Self::lock();
+        parse(&fs::read(&self.path).unwrap_or_default())
     }
     pub fn len(&self) -> usize {
         self.load().len()
@@ -43,37 +62,41 @@ impl Queue {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Add one play durably.
+    /// Add one play durably (one read, one append; a rewrite only at the cap).
     pub fn push(&self, s: &Scrobble) -> io::Result<()> {
+        let _guard = Self::lock();
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir)?;
         }
+        let existing = fs::read(&self.path).unwrap_or_default();
+        if existing.iter().filter(|&&b| b == b'\n').count() >= self.max {
+            let mut all = parse(&existing);
+            all.push(s.clone());
+            let keep = all.len().saturating_sub(self.max);
+            return self.rewrite(&all[keep..]);
+        }
         // A torn previous line would glue onto this one: start on a fresh line.
-        let torn = fs::read(&self.path).is_ok_and(|b| !b.is_empty() && b.last() != Some(&b'\n'));
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(&self.path)?;
+        let torn = existing.last().is_some_and(|&b| b != b'\n');
         let mut line = serde_json::to_string(s).map_err(io::Error::other)?;
         line.push('\n');
         if torn {
             line.insert(0, '\n');
         }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&self.path)?;
         file.write_all(line.as_bytes())?;
-        file.sync_data()?;
-        drop(file);
-        if self.load().len() > QUEUE_MAX {
-            let keep = self.load();
-            self.rewrite(&keep[keep.len() - QUEUE_MAX..])?;
-        }
-        Ok(())
+        file.sync_data()
     }
     /// Remove the first `n` entries (they were sent or refused for good).
     pub fn drop_first(&self, n: usize) -> io::Result<()> {
-        let all = self.load();
+        let _guard = Self::lock();
+        let all = parse(&fs::read(&self.path).unwrap_or_default());
         self.rewrite(&all[n.min(all.len())..])
     }
+    /// Called with the lock held.
     fn rewrite(&self, entries: &[Scrobble]) -> io::Result<()> {
         let tmp = self.path.with_extension("jsonl.tmp");
         {
@@ -83,11 +106,12 @@ impl Queue {
                 .truncate(true)
                 .mode(0o600)
                 .open(&tmp)?;
+            let mut text = String::new();
             for s in entries {
-                let mut line = serde_json::to_string(s).map_err(io::Error::other)?;
-                line.push('\n');
-                file.write_all(line.as_bytes())?;
+                text.push_str(&serde_json::to_string(s).map_err(io::Error::other)?);
+                text.push('\n');
             }
+            file.write_all(text.as_bytes())?;
             file.sync_all()?;
         }
         fs::rename(&tmp, &self.path)?;
@@ -190,6 +214,38 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_appends_survive_a_rewrite_and_the_cap_holds() {
+        let root = dir("race");
+        let q = Queue::new(root.join("q.jsonl"));
+        for i in 0..200 {
+            q.push(&s(i)).unwrap();
+        }
+        let writer = {
+            let q = q.clone();
+            std::thread::spawn(move || {
+                for i in 200..400 {
+                    q.push(&s(i)).unwrap();
+                }
+            })
+        };
+        for _ in 0..20 {
+            q.drop_first(5).unwrap();
+        }
+        writer.join().unwrap();
+        // 400 written, 100 dropped from the front: nothing appended was lost.
+        let left = q.load();
+        assert_eq!(left.len(), 300);
+        assert_eq!(left.last().unwrap(), &s(399));
+        // At the cap the oldest go first.
+        let small = Queue::with_max(root.join("small.jsonl"), 3);
+        for i in 0..5 {
+            small.push(&s(i)).unwrap();
+        }
+        assert_eq!(small.load(), vec![s(2), s(3), s(4)]);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -82,6 +82,15 @@ impl Runtime {
     /// What Settings > Last.fm shows.
     pub(crate) fn lastfm_view(&mut self) {
         let l = &self.lastfm;
+        let approval = l.token.as_ref().map(|(_, url, _)| url.clone());
+        // The QR code is encoded once per sign-in, not on every render.
+        let code = if approval == self.ui.lastfm.approval {
+            self.ui.lastfm.code.clone()
+        } else {
+            approval
+                .as_deref()
+                .and_then(|url| reborn_ui::qr::encode(url.as_bytes()))
+        };
         let view = reborn_ui::LastFmView {
             available: l.client.is_some(),
             user: l
@@ -90,7 +99,8 @@ impl Runtime {
                 .filter(|_| l.client.is_some())
                 .map(|s| s.name.clone()),
             waiting: l.waiting,
-            approval: l.token.as_ref().map(|(_, url, _)| url.clone()),
+            approval,
+            code,
             busy: l.busy || l.flushing,
         };
         if view != self.ui.lastfm {
@@ -141,15 +151,18 @@ impl Runtime {
         let now_ms = disk::boottime_ms();
         let unix = self.trusted_unix();
         let playing = self.model.playback == PlaybackState::Playing;
-        let position_ms = self.model.position_ms;
-        let current = self.current_entry().map(|(id, t)| (id, t.clone()));
-        if let Some(counted) = self.scrobbles.observe(
-            current.as_ref().map(|(id, t)| (*id, t)),
-            playing,
-            position_ms,
-            now_ms,
-            unix,
-        ) {
+        // Borrow the queue entry in place: this runs every frame.
+        let position = self.model.queue_position;
+        let current = self
+            .model
+            .queue_entry_ids
+            .get(position)
+            .map(|e| e.0)
+            .zip(self.model.queue.get(position));
+        if let Some(counted) =
+            self.scrobbles
+                .observe(current, playing, self.model.position_ms, now_ms, unix)
+        {
             self.scrobbles_unstamped.push(counted);
         }
         if self.scrobbles_unstamped.is_empty() || unix.is_none() {
@@ -380,6 +393,13 @@ impl Runtime {
                 }
                 match result {
                     Ok(session) => {
+                        // Another account than the one the waiting plays
+                        // belong to: they are not this listener's to send.
+                        let owner = lastfm::account_of(&self.lastfm.session_path);
+                        if owner.is_some_and(|o| o != session.name) {
+                            let _ = self.scrobble_queue.drop_first(usize::MAX);
+                            self.lastfm.waiting = 0;
+                        }
                         if let Err(e) = lastfm::save_session(&self.lastfm.session_path, &session) {
                             self.ui
                                 .flash(format!("Couldn't save the Last.fm sign-in: {e}"));
@@ -430,8 +450,9 @@ impl Runtime {
                         );
                     }
                     Err(lastfm::Error::InvalidSession) => {
-                        // Revoked on last.fm: stop sending, keep the plays.
-                        let _ = lastfm::forget_session(&self.lastfm.session_path);
+                        // Revoked on last.fm: stop sending, keep the plays
+                        // for this account's next sign-in.
+                        let _ = lastfm::invalidate_session(&self.lastfm.session_path);
                         self.lastfm.session = None;
                         self.ui.flash("Sign in to Last.fm again");
                         self.log.emit(
@@ -460,7 +481,7 @@ impl Runtime {
             }
             Reply::NowPlaying(result) => {
                 if let Err(lastfm::Error::InvalidSession) = result {
-                    let _ = lastfm::forget_session(&self.lastfm.session_path);
+                    let _ = lastfm::invalidate_session(&self.lastfm.session_path);
                     self.lastfm.session = None;
                     self.ui.flash("Sign in to Last.fm again");
                 }

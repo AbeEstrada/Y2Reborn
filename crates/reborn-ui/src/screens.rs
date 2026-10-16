@@ -250,6 +250,11 @@ pub(crate) fn skin_layout<'s>(
     m: &AppModel,
     tracks: &[Track],
 ) -> Option<(&'static str, &'s [skin::Node], Option<Page>)> {
+    // The Last.fm sign-in code is Reborn's own drawing in every skin: a
+    // generic page layout would show its text without the code.
+    if m.screen == Screen::LastFm && ui.lastfm.approval.is_some() {
+        return None;
+    }
     let page = skin_page(ui, m, tracks);
     let empty = m.screen == Screen::Albums && ui.row_count(m, tracks) == 0;
     layout_keys(m, page.as_ref(), empty)

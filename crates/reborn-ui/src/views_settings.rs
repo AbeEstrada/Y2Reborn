@@ -41,17 +41,27 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
 
 // --------------------------------------------------------------- last.fm
 
+const QR_DARK: u32 = 0x010101FF;
+const QR_LIGHT: u32 = 0xFEFEFEFF;
+
 /// The Last.fm sign-in: the approval address as a QR code beside the steps,
 /// Cancel below.
 fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
     let Some(url) = &ui.lastfm.approval else {
         return;
     };
-    if let Some(code) = crate::qr::encode(url.as_bytes()) {
+    let code = ui
+        .lastfm
+        .code
+        .clone()
+        .or_else(|| crate::qr::encode(url.as_bytes()));
+    if let Some(code) = code {
         let module = (236. / (code.size as f32 + 8.)).floor().max(2.);
         let side = module * (code.size as f32 + 8.);
         let (x0, y0) = (24., 46.);
-        c.rrect(x0, y0, side, side, 10., 0xFFFFFFFF);
+        // Near-black and near-white: a skin's palette remap changes pure
+        // black and white, and a phone needs the contrast.
+        c.rrect(x0, y0, side, side, 10., QR_LIGHT);
         let inner = x0 + module * 4.;
         let top = y0 + module * 4.;
         for y in 0..code.size {
@@ -70,7 +80,7 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
                     top + y as f32 * module,
                     (x - start) as f32 * module,
                     module,
-                    0x000000FF,
+                    QR_DARK,
                 );
             }
         }

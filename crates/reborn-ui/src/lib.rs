@@ -227,8 +227,9 @@ pub struct LastFmView {
     pub user: Option<String>,
     /// Plays waiting to be sent.
     pub waiting: usize,
-    /// A sign-in in progress: the address its QR code holds.
+    /// A sign-in in progress: the address its QR code holds, and the code.
     pub approval: Option<String>,
+    pub code: Option<qr::Code>,
     /// A request is running (sign-in step or sending).
     pub busy: bool,
 }
