@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.7.7, part of Y2Linux 1.0 Beta 7.7 (Baseline 70, 2026-10-16), public beta,**
-> with Last.fm scrobbling (Settings → Last.fm). Git tag `baseline-70` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.7.10, part of Y2Linux 1.0 Beta 7.10 (Baseline 73, 2026-10-17), public beta.**
+> Git tag `baseline-73` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -14,7 +14,8 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
 ## What it does
 
-- Library of artists, albums and songs from the internal music storage and the SD card,
+- Library of artists, albums and songs from Internal Storage and the SD card ([how storage
+  works](https://github.com/SchulzCode/Y2Linux/blob/main/docs/STORAGE.md)),
   with cover art from the album folder first and the embedded picture otherwise (thumbnails
   cached in `/data/reborn/cache`); Albums as Cover Flow or a grid, and Genres.
 - Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
@@ -44,6 +45,10 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   playback, crossfade (up to 12 s), shuffle and repeat.
 - Search (Home → Search) across artists, albums and songs, with results shown live while typing:
   every typed word must begin a word of the name (case, accents and a leading "The" ignored).
+- Storage (Settings → Storage): free space of Internal Storage and the SD card, Scan for Music, and
+  the setup of Internal Storage when Y2Linux found a large old Innioasis library (it asks once
+  and keeps the old files readable until you choose *Set Up Internal Storage*). A damaged SD card
+  says *Needs repair · Check it on a computer*.
 - Playlists (Home → Playlists): .m3u/.m3u8 files from Internal Storage and the SD card, made and
   changed on the player (add from any song, album or Now Playing; remove; move with the wheel;
   rename, duplicate, delete), a Favorites playlist with a heart, and playlists exported by a
@@ -78,8 +83,8 @@ Known limits (details in [current state](docs/CURRENT_REBORN_STATE.md)): native
 high-rate output is gated; AAC is negotiated with AirPods Pro but not yet listened to; saved
 Bluetooth headphones are not connected on play; the player cannot tell whether wired headphones are
 plugged in (no jack detection yet), so "jack" means "not Bluetooth". Crossfade and EQ have not been checked on hardware.
-Last.fm scrobbling was checked on the computer and against Last.fm's sign-in service; the first
-scrobbles from a player follow with Beta 7.7.
+Last.fm scrobbling works on the player (QR sign-in and real scrobbles confirmed); sending plays
+that waited offline across sleep is still to be checked.
 
 ## How scrobbling stays safe
 

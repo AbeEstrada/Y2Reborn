@@ -1,13 +1,38 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.7 — Y2Linux 1.0 Beta 7.7 (Baseline 70), 2026-10-16 (latest): Last.fm scrobbling
+## 1.0.0-beta.7.10 — Y2Linux 1.0 Beta 7.10 (Baseline 73), 2026-10-17 (latest): USB file operations
+
+- No Reborn code change; the release carries Y2Linux's musb fix for the zero-length-packet crash and MoveObject/CopyObject
+  in the MTP responder. Reborn's library follows moves and copies through the existing durable-change generations.
+  514 tests.
+
+## 1.0.0-beta.7.9 — Y2Linux 1.0 Beta 7.9 (Baseline 72), 2026-10-17: Internal Storage setup, #39, #44
+
+- `platform::InternalSetup` (Unknown · NotNeeded · Pending · Waiting{files, bytes} · Running · Done{kept} · Failed) from
+  `storage.internal_setup`; `PlatformTask::InternalStorageSetup` → `y2-platform internal-media setup --confirm-shown`.
+- One-time question (`Settings::internal_setup_asked`) for a large old library; Settings → Storage row *Set Up Internal
+  Storage* (red, enabled only while Waiting, refused while a computer is connected, restarts the player after); Storage
+  card *Not set up · Your old files are kept* / *Restart to finish setting up*; message *Internal Storage is ready ·
+  Kept N files in Old Player Files*; boot phases `media_setup*` (word stages, no numbers on the boot screen).
+- Radio firmware page names the Firmware folder on Internal Storage or the Firmware drive and *Not Enough Space for That
+  File* (#39); `SdCard::NeedsRepair` *Needs repair · Check it on a computer* (#44). Previews 32-storage-setup-*,
+  32-firmware-no-space, 32-storage-sd-repair. Device: the automatic setup passed on the owner's player.
+
+## 1.0.0-beta.7.8 — Y2Linux 1.0 Beta 7.8 (Baseline 71), 2026-10-16: Last.fm fixes
+
+- Now Playing re-announced after a pause, a repeat or a failed attempt (`announce_due`, ≤ every 30 s per play); a play
+  refused with Last.fm error 6 no longer blocks the queue; sign-in and Now Playing wait for a trusted clock; one sign-in
+  request at a time; radio/clock/platform/lastfm/scrobble log events reach the log (allowlist guard test).
+  Device: QR sign-in and real scrobbles confirmed on 7.7.
+
+## 1.0.0-beta.7.7 — Y2Linux 1.0 Beta 7.7 (Baseline 70), 2026-10-16: Last.fm scrobbling
 
 - `reborn_core::scrobble` (half or 4 min heard, seeks/pauses add nothing, radio/untagged never), `reborn_platform::scrobble`
   (fsynced locked JSONL queue, `drop_sent`, Rockbox log, clock trust, CLOCK_BOOTTIME), `reborn_platform::lastfm` (own MD5,
   curl form on stdin, QR token flow + mobile-session fallback, batches of 50, back-off with random spread),
   `app/reborn/src/scrobbling.rs`, Settings → Last.fm with an own QR encoder (native in every skin). App key from
   `/usr/share/reborn/lastfm-api.json` (release image); session 0600 on Y2DATA. Previews 96–96d. 509 tests, strict Clippy.
-- Device checks owed: QR sign-in, first real scrobble, offline play sent after sleep.
+- Device: QR sign-in and the first real scrobble confirmed (2026-10-16); offline play sent after sleep still owed.
 
 ## 1.0.0-beta.7.6 — Y2Linux 1.0 Beta 7.6 (Baseline 67), 2026-10-16: smooth update screens
 
