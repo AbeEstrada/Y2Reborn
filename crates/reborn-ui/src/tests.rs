@@ -277,6 +277,82 @@ const ENGINEERING: [&str; 30] = [
 ];
 
 #[test]
+fn music_holds_the_library_lists_and_back_returns_through_it() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    let tracks = m.library.tracks.clone();
+    m.navigation.focus = 1;
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Music);
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys, ["artists", "albums", "tracks", "genres", "folders"]);
+    assert!(rows[0].secondary.ends_with("artists") || rows[0].secondary.ends_with("artist"));
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Artists);
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!(m.screen, Screen::Music);
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!(m.navigation.focus, 1);
+}
+
+#[test]
+fn pinned_music_lists_stand_after_music_on_home() {
+    let ui = radios();
+    let mut m = app(Screen::Home);
+    m.settings.pin_home("genres", true);
+    m.settings.pin_home("albums", true);
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Now Playing",
+            "Music",
+            "Albums",
+            "Genres",
+            "Playlists",
+            "Radio",
+            "Search",
+            "Settings"
+        ]
+    );
+    // Every state of Home draws with one focus target, eleven rows included.
+    for key in ["artists", "tracks", "folders"] {
+        m.settings.pin_home(key, true);
+    }
+    m.navigation.focus = 10;
+    let quads = ui.draw(&m, &m.library.tracks, false);
+    assert_eq!(crate::focus_target_count(&quads), 1);
+}
+
+#[test]
+fn home_menu_switches_pin_and_unpin_from_display() {
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsDisplay);
+    let tracks = m.library.tracks.clone();
+    let rows = ui.rows(&m, &tracks);
+    m.navigation.focus = rows.iter().position(|r| r.key == "home_menu").unwrap();
+    assert_eq!(rows[m.navigation.focus].secondary, "Standard");
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::HomeMenu);
+    assert_eq!(
+        ui.action(&mut m, &tracks, Action::Select),
+        Effect::SetHomePin("artists".into(), true)
+    );
+    m.settings.pin_home("artists", true);
+    assert_eq!(ui.rows(&m, &tracks)[0].kind, crate::RowKind::Toggle(true));
+    assert_eq!(
+        ui.action(&mut m, &tracks, Action::Select),
+        Effect::SetHomePin("artists".into(), false)
+    );
+}
+
+#[test]
 fn root_is_a_small_music_player_menu() {
     let ui = radios();
     let m = app(Screen::Home);
@@ -289,14 +365,10 @@ fn root_is_a_small_music_player_menu() {
         labels,
         [
             "Now Playing",
-            "Artists",
-            "Albums",
-            "Genres",
-            "Songs",
-            "Folders",
+            "Music",
             "Playlists",
-            "Search",
             "Radio",
+            "Search",
             "Settings"
         ]
     );
@@ -417,6 +489,22 @@ fn diagnostics_is_the_only_technical_subtree_and_lives_under_system() {
 }
 
 #[test]
+fn storage_offers_the_computer_page_only_while_a_cable_is_in() {
+    let ui = radios();
+    let mut m = app(Screen::Storage);
+    m.platform.snapshot.observed = true;
+    let has = |m: &AppModel| {
+        ui.rows(m, &m.library.tracks)
+            .iter()
+            .any(|r| r.key == "pc_transfer")
+    };
+    m.platform.snapshot.usb = UsbTransfer::Disconnected;
+    assert!(!has(&m));
+    m.platform.snapshot.usb = UsbTransfer::Ready;
+    assert!(has(&m));
+}
+
+#[test]
 fn every_normal_route_is_reachable_and_back_restores_parent_focus() {
     let mut ui = radios();
     let mut seen = std::collections::BTreeSet::new();
@@ -466,7 +554,6 @@ fn every_normal_route_is_reachable_and_back_restores_parent_focus() {
         Screen::SettingsDisplay,
         Screen::ScreenTimeout,
         Screen::Storage,
-        Screen::PcTransfer,
         Screen::Update,
     ] {
         assert!(
@@ -905,7 +992,8 @@ fn bluetooth_device_states_and_select_actions() {
     let mut m = app(Screen::Bluetooth);
     m.output = AudioOutput::Bluetooth("AA".into());
     let rows = ui.rows(&m, &m.library.tracks);
-    assert_eq!(rows[1].secondary, "Playing audio · SBC");
+    // State only; the codec is on Sound > Output (UI v4).
+    assert_eq!(rows[1].secondary, "Connected");
     assert_eq!(rows[2].secondary, "Not paired");
     assert_eq!(
         select_key(&mut ui, &mut m, "bt_device:/bt/new"),
@@ -1036,10 +1124,11 @@ fn full_system_update_wording_and_versions() {
         pages::short_version("1.0.0-platform-v1-power-final-candidate.35"),
         "1.0.0 (35)"
     );
-    assert_eq!(pages::short_version("1.0.0-beta.1"), "1.0.0 Beta 1");
-    assert_eq!(pages::short_version("1.0.0-beta.2"), "1.0.0 Beta 2");
-    assert_eq!(pages::short_version("1.0.0-beta.3"), "1.0.0 Beta 3");
-    assert_eq!(pages::short_version("1.0.0-beta.4"), "1.0.0 Beta 4");
+    assert_eq!(pages::short_version("1.0.0-beta.1"), "1.0 Beta 1");
+    assert_eq!(pages::short_version("1.0.0-beta.4"), "1.0 Beta 4");
+    assert_eq!(pages::short_version("1.0.0-beta.6.3"), "1.0 Beta 6.3");
+    assert_eq!(pages::short_version("1.0.0"), "1.0");
+    assert_eq!(pages::short_version("1.2.1"), "1.2.1");
     assert_eq!(pages::short_version("1.2"), "1.2");
 }
 
@@ -1519,7 +1608,8 @@ fn power_short_sleeps_when_paused_and_blanks_during_playback() {
 }
 
 #[test]
-fn now_playing_shows_icons_only_for_options_that_are_on_and_never_a_volume_number() {
+fn now_playing_shows_icons_only_for_options_that_differ_from_the_default_and_never_a_volume_number()
+{
     use reborn_graphics::Tex;
     let ui = radios();
     let mut m = app(Screen::NowPlaying);
@@ -1546,10 +1636,11 @@ fn now_playing_shows_icons_only_for_options_that_are_on_and_never_a_volume_numbe
     m.settings.shuffle = true;
     m.settings.repeat = RepeatMode::Track;
     assert_eq!(icons(&m), 2);
+    // Gapless is on by default: no icon for it.
     m.settings.gapless_enabled = true;
     m.settings.eq_enabled = true;
     m.settings.replay_gain = reborn_core::ReplayGainMode::Track;
-    assert_eq!(icons(&m), 5);
+    assert_eq!(icons(&m), 4);
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(
         !text.contains("77") && !text.to_lowercase().contains("vol"),
@@ -1634,11 +1725,13 @@ fn album_page_plays_and_shuffles_and_artist_page_lists_albums() {
 }
 
 #[test]
-fn accent_follows_the_cover_and_defaults_before_one_is_known() {
+fn controls_keep_one_accent_while_the_cover_colour_follows_the_song() {
     let mut ui = radios();
     assert_eq!(ui.accent(), theme::color::ACCENT);
+    assert_eq!(ui.cover_accent(), theme::color::ACCENT);
     ui.accent = 0xFF965AFF;
-    assert_eq!(ui.accent(), 0xFF965AFF);
+    assert_eq!(ui.accent(), theme::color::ACCENT);
+    assert_eq!(ui.cover_accent(), 0xFF965AFF);
 }
 
 #[test]
@@ -2294,11 +2387,9 @@ fn radio_stations_play_mark_favorites_and_offer_options() {
     ui.radio.stations = vec![station("Jazz One", "a-1"), station("Rock Two", "b-2")];
     ui.radio.favorites = vec!["b-2".into()];
     let rows = ui.rows(&m, &m.library.tracks);
-    assert_eq!(rows[0].secondary, "Germany · MP3 128 kbps · jazz");
-    assert_eq!(
-        rows[1].secondary,
-        "Favorite · Germany · MP3 128 kbps · jazz"
-    );
+    // Country and genre only; codec and bitrate are on Station Info.
+    assert_eq!(rows[0].secondary, "Germany · Jazz");
+    assert_eq!(rows[1].secondary, "Favorite · Germany · Jazz");
     // Hold: options for that station.
     m.navigation.focus = 1;
     ui.model_action(&mut m, Action::ContextMenu);

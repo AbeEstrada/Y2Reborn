@@ -8,7 +8,7 @@ use crate::{
     playlists_ui::{is_favorites, summary},
     screens::screen_title,
     text::{self, Face},
-    theme::{alpha, color, mix, WIDTH},
+    theme::{color, WIDTH},
     views_library::pill_row,
     Ui,
 };
@@ -28,7 +28,6 @@ pub fn screen(
     interactive: bool,
 ) {
     let _ = has_art;
-    c.glow(70., 10., 260., 150., alpha(TINT, 0x18));
     match m.screen {
         Screen::Playlists => home(c, ui, m, tracks, interactive),
         _ => page(c, ui, m, tracks, interactive),
@@ -90,7 +89,7 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
         let y = 38. + (i - first) as f32 * ROW_H;
         let selected = interactive && i == focus;
         if selected {
-            components::accent_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3., accent);
+            components::focus_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3.);
         }
         let (tx, ty, tile) = (20., y + 7., 38.);
         let playlist = row
@@ -121,14 +120,7 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
                 detail.push_str(" · View only");
             }
         }
-        c.text_mid(
-            72.,
-            y + 36.,
-            330.,
-            &detail,
-            Face::R11,
-            if selected { accent } else { color::MUTED },
-        );
+        c.text_mid(72., y + 36., 330., &detail, Face::R11, color::MUTED);
         c.icon(Icon::Chevron, WIDTH - 36., y + ROW_H / 2., 16., color::DIM);
     }
     if count > ROWS {
@@ -220,7 +212,6 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
         if lead == 2 {
             pill_row(
                 c,
-                ui,
                 144.,
                 134.,
                 &[("Play", focus == 0), ("Shuffle", focus == 1)],
@@ -260,17 +251,11 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
         let song = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
         let available = song.is_some_and(|(_, t)| t.online);
         if lifted {
-            c.rrect(
-                8.,
-                y - 1.,
-                WIDTH - 16.,
-                ROW_H + 1.,
-                12.,
-                mix(color::BG, TINT, 0.28),
-            );
-            c.rrect_outline(8., y - 1., WIDTH - 16., ROW_H + 1., 12., 2., TINT);
+            // Being moved is a state: the focus row, ringed in the accent.
+            components::focus_row(c, 8., y - 1., WIDTH - 16., ROW_H + 1.);
+            c.rrect_outline(8., y - 1., WIDTH - 16., ROW_H + 1., 12., 2., accent);
         } else if selected {
-            components::accent_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3., accent);
+            components::focus_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3.);
         }
         match song {
             Some(s) => cover(c, ui, Some(s), 20., y + 7., 38.),
@@ -287,7 +272,7 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
         };
         let tint = if !available {
             color::DIM
-        } else if playing && !selected {
+        } else if playing {
             accent
         } else {
             color::TEXT
@@ -302,13 +287,7 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             340. - tail,
             &row.secondary,
             Face::R11,
-            if lifted {
-                TINT
-            } else if selected {
-                accent
-            } else {
-                color::MUTED
-            },
+            if lifted { accent } else { color::MUTED },
         );
         if let Some((_, t)) = song {
             c.text_mid_right(

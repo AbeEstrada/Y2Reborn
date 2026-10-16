@@ -3,12 +3,12 @@
 use crate::{
     canvas::{Canvas, Icon},
     components::{self, cover, cover_rounded, cover_shadow},
-    screens::{count_label, is_current, row_track, screen_title, visible_rows_for},
+    screens::{is_current, row_track, screen_title, visible_rows_for},
     text::{self, Face},
-    theme::{alpha, color, mix, HEIGHT, WIDTH},
+    theme::{alpha, color, WIDTH},
     Item, Ui,
 };
-use reborn_core::{platform::SdCard, AppModel, MediaSource, Screen, Track};
+use reborn_core::{AppModel, MediaSource, Screen, Track};
 use reborn_graphics::{Quad, Tex};
 
 fn art_quad(c: &mut Canvas, x: f32, y: f32, size: f32, has_art: bool) {
@@ -33,9 +33,12 @@ pub fn home(
     interactive: bool,
 ) {
     let accent = ui.accent();
+    // The cover card is the one place outside Now Playing that wears the
+    // cover's colour.
+    let cover = ui.cover_accent();
     let current = m.current();
     if let Some(t) = current {
-        c.glow(360., 172., 150., 160., alpha(accent, 0x46));
+        c.glow(360., 172., 150., 160., alpha(cover, 0x46));
         art_quad(c, 266., 58., 180., has_art);
         c.text_center(
             356.,
@@ -64,7 +67,7 @@ pub fn home(
             313.,
             168.,
             components::progress(m.position_ms, t.duration_ms),
-            accent,
+            cover,
             false,
         );
     } else {
@@ -73,8 +76,8 @@ pub fn home(
     components::status_bar(c, ui, m, "", false);
     let rows = ui.rows(m, tracks);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
-    let counts = ui.library_counts(tracks);
-    // Seven rows (with Genres) must still end above the screen's bottom edge.
+    // Six rows by default, up to eleven with every Music list pinned; all end
+    // above the screen's bottom edge.
     let step = (296. / rows.len().max(1) as f32).min(44.).floor();
     let mut y = 50.;
     for (i, row) in rows.iter().enumerate() {
@@ -102,17 +105,29 @@ pub fn home(
                 color::DIM,
             );
         }
-        let count = match row.key.as_str() {
-            "artists" => Some(counts[0]),
-            "albums" => Some(counts[1]),
-            "tracks" => Some(counts[2]),
-            "genres" => Some(counts[3]),
-            _ => None,
-        };
-        if let Some(n) = count.filter(|n| *n > 0) {
-            c.text_mid_right(222., cy + 2., &count_label(n), Face::R11, color::DIM);
-        }
         y += if selected { step + 6. } else { step };
+    }
+}
+
+// ---------------------------------------------------------------------- music
+
+const MUSIC_H: f32 = 56.;
+
+/// Music: the library's lists as menu entries, each with what it holds.
+pub fn music(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
+    components::status_bar(c, ui, m, "MUSIC", true);
+    let rows = ui.rows(m, tracks);
+    let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
+    for (i, row) in rows.iter().enumerate() {
+        let (tint, icon) = match row.key.as_str() {
+            "artists" => (0x6EA0FFFF, Icon::Person),
+            "albums" => (0xFF7A59FF, Icon::Vinyl),
+            "tracks" => (0x38C9B4FF, Icon::Headphones),
+            "genres" => (0xA07BFFFF, Icon::Note),
+            _ => (0x5CCB7AFF, Icon::Folder),
+        };
+        let y = 42. + i as f32 * MUSIC_H;
+        components::menu_entry(c, row, y, MUSIC_H, tint, icon, interactive && i == focus);
     }
 }
 
@@ -177,7 +192,6 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
     let artists = m.screen == Screen::Artists;
     let queue = m.screen == Screen::Queue;
-    let bg_selected = mix(color::BG, accent, 0.18);
     for (i, row) in ui
         .visible_rows(m, tracks, scroll, visible)
         .iter()
@@ -194,11 +208,13 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
             song.is_some_and(|t| is_current(m, t))
         };
         if selected {
-            components::accent_row(c, 10., y + 1., WIDTH - 24., 50., accent);
-        } else if queue && playing {
-            c.rrect_outline(10., y + 1., WIDTH - 24., 50., 12., 1., alpha(accent, 110));
+            components::focus_row(c, 10., y + 1., WIDTH - 24., 50.);
         }
-        let bg = if selected { bg_selected } else { color::BG };
+        let bg = if selected {
+            components::FOCUS_OVER_BG
+        } else {
+            color::BG
+        };
         let art_track = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
         let queue_art = queue_track.and_then(|q| {
             tracks
@@ -217,11 +233,7 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
             cover(c, ui, art_track.or(queue_art), 20., y + 7., 38.);
         }
         let title_face = if selected { Face::S15 } else { Face::R15 };
-        let title_color = if playing && !selected {
-            accent
-        } else {
-            color::TEXT
-        };
+        let title_color = if playing { accent } else { color::TEXT };
         let tail_w = song.map_or(0., |t| {
             text::width(Face::R11, &components::time(t.duration_ms)) + 16.
         });
@@ -238,11 +250,7 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
         } else {
             row.secondary.clone()
         };
-        let sub_color = if selected || playing {
-            accent
-        } else {
-            color::MUTED
-        };
+        let sub_color = if playing { accent } else { color::MUTED };
         c.text_mid(70., y + 36., 340. - tail_w, &sub, Face::R11, sub_color);
         if let Some(t) = song {
             c.text_mid_right(
@@ -259,9 +267,6 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     }
     if m.screen == Screen::Tracks || m.screen == Screen::Artists {
         letter_bubble(c, ui, m, tracks, focus);
-    }
-    if queue {
-        c.text_center(240., 340., "Hold Select to remove", Face::R11, color::DIM);
     }
 }
 
@@ -292,7 +297,6 @@ fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus:
 // ---------------------------------------------------------------- album grid
 
 fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    let accent = ui.accent();
     components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
@@ -341,7 +345,7 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             338. + Face::R11.mid_offset(),
             &detail,
             Face::R11,
-            accent,
+            color::DIM,
         );
     }
 }
@@ -367,25 +371,11 @@ pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String 
 
 // ------------------------------------------------------------ album / artist
 
-pub(crate) fn pill_row(
-    c: &mut Canvas,
-    ui: &Ui,
-    x: f32,
-    y: f32,
-    labels: &[(&str, bool)],
-    interactive: bool,
-) {
-    let accent = ui.accent();
+pub(crate) fn pill_row(c: &mut Canvas, x: f32, y: f32, labels: &[(&str, bool)], interactive: bool) {
     let mut x = x;
     for (label, focused) in labels {
         let w = text::width(Face::S13, label) + 44.;
-        let at = c.draw.len();
-        if interactive && *focused {
-            components::pill(c, x, y, w, 34., label, Face::S13, accent, color::INK);
-            c.mark_focus(at);
-        } else {
-            components::pill(c, x, y, w, 34., label, Face::S13, color::GLASS, color::TEXT);
-        }
+        components::button(c, x, y, w, 34., label, Face::S13, interactive && *focused);
         x += w + 12.;
     }
 }
@@ -456,7 +446,6 @@ fn album_page(
         }
         pill_row(
             c,
-            ui,
             144.,
             134.,
             &[("Play", focus == 0), ("Shuffle", focus == 1)],
@@ -474,7 +463,7 @@ fn album_page(
         let song = row_track(row, tracks).map(|(_, t)| t);
         let selected = interactive && index == focus;
         if selected {
-            components::accent_row(c, 10., y + 1., WIDTH - 20., 50., accent);
+            components::focus_row(c, 10., y + 1., WIDTH - 20., 50.);
         }
         let number = song.map_or(index.saturating_sub(1), |t| {
             if t.track > 0 {
@@ -488,15 +477,11 @@ fn album_page(
             y + 26.,
             &number.to_string(),
             Face::R11,
-            if selected { accent } else { color::DIM },
+            if selected { color::TEXT } else { color::DIM },
         );
         let playing = song.is_some_and(|t| is_current(m, t));
         let face = if selected { Face::S15 } else { Face::R15 };
-        let tint = if playing && !selected {
-            accent
-        } else {
-            color::TEXT
-        };
+        let tint = if playing { accent } else { color::TEXT };
         let tail = song.map_or(0., |t| {
             text::width(Face::R11, &components::time(t.duration_ms)) + 20.
         });
@@ -593,7 +578,7 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
         );
         c.text_mid(108., 96., 350., &sub, Face::R13, color::MUTED);
     }
-    pill_row(c, ui, 108., 112., &[("Play All", focus == 0)], interactive);
+    pill_row(c, 108., 112., &[("Play All", focus == 0)], interactive);
     components::section_label(c, 28., 172., "Albums");
     // Three covers at a time, the focused one lifted.
     let albums = all.len().saturating_sub(1);
@@ -650,7 +635,7 @@ fn folder_roots(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interac
             .find(|s| row.key.ends_with(&*s.root.to_string_lossy()));
         let internal = source.is_none_or(|s| matches!(s.kind, MediaSource::Internal));
         if interactive && i == focus {
-            components::glass_row(c, 10., y, WIDTH - 20., 64.);
+            components::focus_row(c, 10., y, WIDTH - 20., 64.);
         } else {
             components::card(c, 10., y, WIDTH - 20., 64.);
         }
@@ -663,24 +648,21 @@ fn folder_roots(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interac
             tint,
         );
         c.text_mid(66., y + 24., 300., &row.label, Face::S17, color::TEXT);
-        let free = if internal {
-            pages_free(&m.platform.snapshot.storage.internal)
+        // What a listener finds there (UI v4); free space is on Storage.
+        let songs = source.map_or(0, |s| {
+            tracks
+                .iter()
+                .filter(|t| t.online && t.source_id == s.id)
+                .count()
+        });
+        let detail = if songs > 0 {
+            components::count(songs, "song", "songs")
         } else {
-            match &m.platform.snapshot.storage.sd {
-                SdCard::Ready(space) => pages_free(space),
-                _ => String::new(),
-            }
+            String::new()
         };
-        c.text_mid(66., y + 44., 300., &free, Face::R11, color::MUTED);
+        c.text_mid(66., y + 44., 300., &detail, Face::R11, color::MUTED);
         components::chevron(c, WIDTH - 24., y + 32.);
     }
-}
-
-fn pages_free(space: &reborn_core::platform::VolumeSpace) -> String {
-    space
-        .free_bytes
-        .map(|f| format!("{} free", reborn_core::platform::human_bytes(f)))
-        .unwrap_or_default()
 }
 
 fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
@@ -698,7 +680,7 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
         let y = 40. + i as f32 * 54.;
         let song = row_track(row, tracks).map(|(_, t)| t);
         if interactive && scroll + i == focus {
-            components::glass_row(c, 10., y, WIDTH - 24., 50.);
+            components::focus_row(c, 10., y, WIDTH - 24., 50.);
         }
         match song {
             Some(t) => {
@@ -749,57 +731,16 @@ fn songs_under(tracks: &[Track], key: &str) -> usize {
 // --------------------------------------------------------------- empty states
 
 fn empty(c: &mut Canvas, ui: &Ui, m: &AppModel, interactive: bool) {
-    let accent = ui.accent();
     let (title, body, action) = empty_copy(m);
-    if m.library.scanning {
-        c.spinner(240., 128., 44., accent, color::RING_TRACK, ui.spin_phase());
+    let mark = if m.library.scanning {
+        components::Mark::Busy(ui.spin_phase())
     } else {
-        c.ring(240., 128., 44., 1.5, color::GLASS);
-        c.ring(240., 128., 13., 1.5, color::GLASS_STRONG);
-    }
-    c.text_center(
-        240.,
-        206. + Face::S20.mid_offset(),
-        title,
-        Face::S20,
-        color::TEXT,
-    );
-    let mut y = 234.;
-    for line in text::wrap(Face::R13, body, 360., 3) {
-        c.text_center(
-            240.,
-            y + Face::R13.mid_offset(),
-            &line,
-            Face::R13,
-            color::MUTED,
-        );
-        y += 20.;
-    }
+        components::Mark::Empty
+    };
+    let y = components::empty_state(c, 128., mark, title, body);
     if let Some(label) = action {
-        let w = text::width(Face::S13, label) + 44.;
-        let x = (WIDTH - w) / 2.;
-        let at = c.draw.len();
-        c.rrect_outline(
-            x,
-            292.,
-            w,
-            32.,
-            16.,
-            1.,
-            alpha(accent, if interactive { 230 } else { 120 }),
-        );
-        c.text_center(
-            240.,
-            308. + Face::S13.mid_offset(),
-            label,
-            Face::S13,
-            accent,
-        );
-        if interactive {
-            c.mark_focus(at);
-        }
+        components::empty_button(c, (y + 16.).max(292.), label, interactive);
     }
-    let _ = HEIGHT;
 }
 
 pub(crate) fn empty_copy(m: &AppModel) -> (&'static str, &'static str, Option<&'static str>) {

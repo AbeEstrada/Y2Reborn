@@ -21,7 +21,8 @@ pub fn now_playing(
     let Some(t) = m.current() else {
         return;
     };
-    let accent = ui.accent();
+    // Now Playing is the one screen that wears the cover's colour (UI v4).
+    let accent = ui.cover_accent();
     // The cover's colour washes the top of the screen; the bottom stays dark.
     c.glow(150., 90., 300., 210., alpha(accent, 0x3C));
     c.glow(420., 60., 160., 120., alpha(accent, 0x1E));
@@ -29,7 +30,6 @@ pub fn now_playing(
     components::status_bar(c, ui, m, "", true);
 
     let radio = t.is_radio();
-    let station = ui.radio.now.as_ref().filter(|_| radio);
     cover_shadow(c, 26., 46., 176.);
     if has_art {
         c.draw.push(Quad {
@@ -53,20 +53,13 @@ pub fn now_playing(
             accent,
             1.4,
         );
-    } else {
-        c.text_tracked(
-            222.,
-            61. + Face::S10.mid_offset(),
-            "NOW PLAYING",
-            Face::S10,
-            accent,
-            1.8,
-        );
     }
     let song = ui.radio.song.as_ref().filter(|_| radio);
     let (title, second, third) = lines(ui, t);
     let lines = text::wrap(Face::S25, &title, 236., 2);
-    let mut baseline = 107.;
+    // A song needs no label saying it plays: its title takes the label's place.
+    // A station keeps the LIVE line above its title.
+    let mut baseline = if radio { 107. } else { 84. };
     for line in &lines {
         c.text(222., baseline, line, Face::S25, color::TEXT);
         baseline += 28.;
@@ -110,16 +103,9 @@ pub fn now_playing(
     } else if radio && song.is_none() && !t.artist.is_empty() && t.artist != "Live" {
         // Connecting… / Reconnecting… (try n): how the connection is doing.
         c.text_mid(222., info_cy, 236., &t.artist, Face::S13, color::WARNING);
-    } else if let Some(s) = station {
-        let mut x = 222.;
-        let format = s.format().to_uppercase();
-        if !format.is_empty() {
-            x += components::tag(c, x, info_cy, &format, accent) + 6.;
-        }
-        if !s.countrycode.is_empty() && x < 400. {
-            components::tag(c, x, info_cy, &s.countrycode.to_uppercase(), color::MUTED);
-        }
-    } else {
+    } else if !radio {
+        // A song's quality tag; a station's format and country are on
+        // Station Info.
         let mut x = 222.;
         if let Some(label) = quality_label(t) {
             x += components::tag(c, x, info_cy, &label, accent) + 8.;
@@ -162,8 +148,9 @@ pub fn now_playing(
         Face::R11,
         color::MUTED,
     );
+    // A broadcast has no end; its LIVE pill says so above.
     let remaining = if radio {
-        "ON AIR".to_owned()
+        String::new()
     } else {
         format!(
             "-{}",
@@ -220,7 +207,8 @@ pub(crate) fn quality_label(t: &Track) -> Option<String> {
     })
 }
 
-/// Icons for the playback options that are on; nothing for the ones that are off.
+/// Icons for the playback options that differ from the default; gapless is
+/// on by default and has none.
 fn status_icons(c: &mut Canvas, m: &AppModel, x: f32, cy: f32, accent: u32) {
     let s = &m.settings;
     let mut icons = vec![];
@@ -231,9 +219,6 @@ fn status_icons(c: &mut Canvas, m: &AppModel, x: f32, cy: f32, accent: u32) {
         RepeatMode::All => icons.push(Icon::Repeat),
         RepeatMode::Track => icons.push(Icon::RepeatOne),
         RepeatMode::Off => {}
-    }
-    if s.gapless_enabled {
-        icons.push(Icon::Gapless);
     }
     if s.crossfade_ms > 0 {
         icons.push(Icon::Crossfade);

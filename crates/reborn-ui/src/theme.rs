@@ -1,7 +1,9 @@
-//! The single source of truth for the Reborn visual system (UI v3).
+//! The single source of truth for the Reborn visual system (UI v4).
 //!
-//! A near-black canvas, white type in three tiers, one accent colour taken from
-//! the cover that is playing, and translucent white "glass" for raised areas.
+//! A near-black canvas, white type in three tiers, one fixed accent for every
+//! control and state (`ACCENT`; the playing cover's colour only washes Now
+//! Playing and the Home cover card), and translucent white "glass" for raised
+//! areas and the focused row.
 //! Screen code consumes these named tokens; nothing invents colours, sizes or
 //! spacing locally. Type uses the exact-size Open Sans sets in `text::Face`.
 
@@ -17,7 +19,8 @@ pub mod color {
     /// Quiet labels and hints; at least 4.5:1 on `BG`.
     pub const DIM: u32 = 0x848894FF;
     pub const INK: u32 = 0x06070AFF;
-    /// Accent used before any cover has been seen, or when a cover is too dull.
+    /// The accent of controls and state; also Now Playing's colour before a
+    /// cover is known, or when a cover is too dull.
     pub const ACCENT: u32 = 0x6EA0FFFF;
     pub const DANGER: u32 = 0xFF7864FF;
     pub const SUCCESS: u32 = 0x3CC878FF;

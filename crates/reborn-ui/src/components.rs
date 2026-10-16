@@ -1,5 +1,6 @@
-//! Shared widgets of the UI v3 visual system: status bar, list highlights,
-//! grouped cards, switches, pills, covers, sheets and toasts.
+//! Shared widgets of the UI v4 visual system: status bar, the focus row,
+//! grouped cards, switches, buttons, empty states, covers, sheets and toasts.
+//! One component per idea; screens do not draw their own variants.
 use crate::{
     canvas::{Canvas, Icon},
     text::{self, Face},
@@ -163,20 +164,19 @@ pub(crate) fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
 
 // --------------------------------------------------------- highlights, cards
 
-/// The focused row of a list: accent-tinted glass with a hairline.
-pub fn accent_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, accent: u32) {
+/// The focused row of every list, settings page and sheet (UI v4): neutral
+/// glass. Focus never uses the accent; the accent marks state (playing,
+/// checked, on).
+pub fn focus_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
     let start = c.draw.len();
-    c.rrect(x, y, w, h, 12., alpha(accent, 46));
+    c.rrect(x, y, w, h, 12., FOCUS_FILL);
     c.mark_focus(start);
-    c.rrect_outline(x, y, w, h, 12., 1., alpha(accent, 120));
 }
 
-/// The focused row of a settings-style list: neutral glass.
-pub fn glass_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
-    let start = c.draw.len();
-    c.rrect(x, y, w, h, 12., color::GLASS);
-    c.mark_focus(start);
-}
+/// The focus row's fill, and the opaque colour it gives over `BG` (for
+/// masking the corners of round artwork drawn on it).
+pub const FOCUS_FILL: u32 = color::GLASS;
+pub const FOCUS_OVER_BG: u32 = 0x292A2DFF; // GLASS (0x24 white) over BG
 
 /// A grouped card behind a run of settings rows.
 pub fn card(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
@@ -205,7 +205,7 @@ pub fn toggle(c: &mut Canvas, right: f32, cy: f32, on: bool) {
         h,
         13.,
         if on {
-            color::SUCCESS
+            color::ACCENT
         } else {
             color::GLASS_STRONG
         },
@@ -254,6 +254,65 @@ pub fn pill(
     c.rrect(x, y, w, h, h / 2., fill);
     c.text_center(x + w / 2., y + h / 2. + face.mid_offset(), label, face, ink);
 }
+
+/// A menu entry (Music, Radio): a coloured icon tile, the name, what it holds
+/// and a chevron, `h` tall from `y`.
+pub fn menu_entry(
+    c: &mut Canvas,
+    row: &crate::Item,
+    y: f32,
+    h: f32,
+    tint: u32,
+    icon: Icon,
+    selected: bool,
+) {
+    if selected {
+        focus_row(c, 12., y + 2., WIDTH - 24., h - 4.);
+    }
+    let tile = 34.;
+    icon_tile(c, 22., y + (h - tile) / 2., tile, 10., tint, icon, 20.);
+    let x = 70.;
+    let face = if selected { Face::S15 } else { Face::R15 };
+    if row.secondary.is_empty() {
+        c.text_mid(x, y + h / 2., 300., &row.label, face, color::TEXT);
+    } else {
+        c.text_mid(x, y + h / 2. - 7., 300., &row.label, face, color::TEXT);
+        c.text_mid(
+            x,
+            y + h / 2. + 10.,
+            330.,
+            &row.secondary,
+            Face::R11,
+            color::MUTED,
+        );
+    }
+    c.icon(Icon::Chevron, WIDTH - 36., y + h / 2., 16., color::DIM);
+}
+
+/// The one button of the UI (UI v4): glass when idle, white with dark text
+/// when focused, in page rows, dialogs and empty states alike.
+#[allow(clippy::too_many_arguments)]
+pub fn button(
+    c: &mut Canvas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    label: &str,
+    face: Face,
+    focused: bool,
+) {
+    let at = c.draw.len();
+    if focused {
+        pill(c, x, y, w, h, label, face, BUTTON_FOCUS, color::INK);
+        c.mark_focus(at);
+    } else {
+        pill(c, x, y, w, h, label, face, color::GLASS, color::TEXT);
+    }
+}
+
+/// A focused button's fill.
+pub const BUTTON_FOCUS: u32 = 0xF2F3F5FF;
 
 /// A thin outlined tag such as `LOSSLESS 24/96`.
 pub fn tag(c: &mut Canvas, x: f32, cy: f32, label: &str, tint: u32) -> f32 {
@@ -378,8 +437,8 @@ pub struct SheetRow<'a> {
     pub enabled: bool,
 }
 
-/// A bottom sheet of actions, as used for song options. The focused row is a
-/// white pill with dark text, so focus never depends on colour.
+/// A bottom sheet of actions, as used for song options. Its focused row is
+/// the focus row of every list.
 pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRow], focus: usize) {
     scrim(c, false);
     let row_h = 31.;
@@ -399,23 +458,15 @@ pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRo
         let ry = y + head + (i - start) as f32 * row_h;
         let selected = i == focus && row.enabled;
         if selected {
-            let at = c.draw.len();
-            c.rrect(x + 8., ry, w - 16., row_h - 3., 10., 0xF2F3F5FF);
-            c.mark_focus(at);
+            focus_row(c, x + 8., ry, w - 16., row_h - 3.);
         }
-        let ink = if selected {
-            color::INK
-        } else if row.enabled {
-            color::TEXT
-        } else {
-            color::DIM
-        };
+        let ink = if row.enabled { color::TEXT } else { color::DIM };
         c.text_mid(
             x + 22.,
             ry + (row_h - 3.) / 2.,
             w - 150.,
             row.label,
-            Face::R15,
+            if selected { Face::S15 } else { Face::R15 },
             ink,
         );
         if !row.detail.is_empty() {
@@ -424,7 +475,7 @@ pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRo
                 ry + (row_h - 3.) / 2.,
                 row.detail,
                 Face::R11,
-                if selected { 0x4A4E58FF } else { color::MUTED },
+                color::MUTED,
             );
         }
     }
@@ -455,34 +506,95 @@ pub fn dialog(
     let mut ry = ty + 10.;
     for (i, row) in rows.iter().enumerate() {
         let selected = i == focus && row.enabled;
-        if selected {
+        if selected && danger && i > 0 {
+            // A destructive choice keeps its warning colour when focused.
             let at = c.draw.len();
-            let fill = if danger && i > 0 {
-                color::DANGER
-            } else {
-                0xF2F3F5FF
-            };
-            c.rrect(x + 24., ry, w - 48., 32., 16., fill);
+            pill(
+                c,
+                x + 24.,
+                ry,
+                w - 48.,
+                32.,
+                row.label,
+                Face::S13,
+                color::DANGER,
+                color::INK,
+            );
             c.mark_focus(at);
-        } else {
-            c.rrect(x + 24., ry, w - 48., 32., 16., color::GLASS_FAINT);
-        }
-        let ink = if selected {
-            color::INK
         } else if row.enabled {
-            color::TEXT
+            button(c, x + 24., ry, w - 48., 32., row.label, Face::S13, selected);
         } else {
-            color::DIM
-        };
-        c.text_center(
-            WIDTH / 2.,
-            ry + 16. + Face::S13.mid_offset(),
-            row.label,
-            Face::S13,
-            ink,
-        );
+            pill(
+                c,
+                x + 24.,
+                ry,
+                w - 48.,
+                32.,
+                row.label,
+                Face::S13,
+                color::GLASS_FAINT,
+                color::DIM,
+            );
+        }
         ry += 38.;
     }
+}
+
+/// What stands above an empty, info or error state's title.
+#[derive(Clone, Copy)]
+pub enum Mark {
+    /// An icon in a quiet ring.
+    Icon(Icon),
+    /// A ring with a dot: nothing here yet.
+    Empty,
+    /// Work in progress: the accent spinner at `phase`.
+    Busy(f32),
+}
+
+/// The one empty, info and error state (UI v4): the mark centred at `cy`, a
+/// title and up to three lines below it. Returns the y under the text, where
+/// a page puts its rows or `empty_button` its button.
+pub fn empty_state(c: &mut Canvas, cy: f32, mark: Mark, title: &str, body: &str) -> f32 {
+    match mark {
+        Mark::Icon(icon) => {
+            c.ring(240., cy, 30., 1.5, color::GLASS_STRONG);
+            c.icon(icon, 240., cy, 26., color::DIM);
+        }
+        Mark::Empty => {
+            c.ring(240., cy, 30., 1.5, color::GLASS_STRONG);
+            c.ring(240., cy, 9., 1.5, color::GLASS_STRONG);
+        }
+        Mark::Busy(phase) => c.spinner(240., cy, 30., color::ACCENT, color::RING_TRACK, phase),
+    }
+    let mut y = cy + 50.;
+    for line in text::wrap(Face::S20, title, 420., 2) {
+        c.text_center(
+            240.,
+            y + Face::S20.mid_offset(),
+            &line,
+            Face::S20,
+            color::TEXT,
+        );
+        y += 26.;
+    }
+    y += 2.;
+    for line in text::wrap(Face::R13, body, 380., 3) {
+        c.text_center(
+            240.,
+            y + Face::R13.mid_offset(),
+            &line,
+            Face::R13,
+            color::MUTED,
+        );
+        y += 19.;
+    }
+    y
+}
+
+/// The single button under an empty state, centred at `y`.
+pub fn empty_button(c: &mut Canvas, y: f32, label: &str, focused: bool) {
+    let w = text::width(Face::S13, label) + 44.;
+    button(c, (WIDTH - w) / 2., y, w, 32., label, Face::S13, focused);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -527,7 +639,7 @@ pub fn scroll_rail(
     c.rrect(WIDTH - 14., y.round(), 2., thumb.round(), 1., accent);
 }
 
-/// The red of a live broadcast (LIVE and ON AIR badges).
+/// The red of a live broadcast (the LIVE badge).
 pub const LIVE_RED: u32 = 0xFF4B5CFF;
 
 /// A station's logo, or a tile with its initials until (or unless) a logo

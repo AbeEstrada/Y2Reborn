@@ -58,6 +58,9 @@ pub struct SkinInfo {
     pub dir: PathBuf,
     /// Why the skin cannot be used, when its header already says so.
     pub problem: Option<String>,
+    /// The palette's background and accent, shown as the skin's swatch in
+    /// the picker (UI v4); `None` when the manifest does not give a background.
+    pub swatch: Option<(u32, u32)>,
 }
 
 #[derive(Deserialize, Default)]
@@ -72,6 +75,18 @@ struct Header {
     version: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    palette: HeaderPalette,
+}
+
+/// The two palette colours the picker's swatch needs; the rest is compiled
+/// with the skin.
+#[derive(Deserialize, Default)]
+struct HeaderPalette {
+    #[serde(default)]
+    bg: Option<String>,
+    #[serde(default)]
+    accent: Option<String>,
 }
 
 /// A folder name that can identify a skin (it is stored in the settings).
@@ -103,6 +118,13 @@ pub fn describe(id: &str, dir: PathBuf, manifest: Result<&str, String>) -> SkinI
             info.author = clip(h.author.trim(), 40);
             info.version = clip(h.version.trim(), 20);
             info.description = clip(h.description.trim(), 200);
+            let colour = |c: &Option<String>| c.as_deref().and_then(compile::hex);
+            info.swatch = colour(&h.palette.bg).map(|bg| {
+                (
+                    bg,
+                    colour(&h.palette.accent).unwrap_or(theme::color::ACCENT),
+                )
+            });
             if h.format != FORMAT {
                 info.problem = Some(format!(
                     "Made for skin format {}; this Reborn reads {FORMAT}",
@@ -540,6 +562,7 @@ pub const LAYOUTS: &[&str] = &[
     "screen_off",
     "theme",
     "time_zone",
+    "home_menu",
     "library",
     "display",
     "service",

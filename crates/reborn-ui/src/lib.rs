@@ -184,12 +184,9 @@ impl BluetoothDeviceView {
             "connect"
         }
     }
-    fn description(&self, output: &AudioOutput) -> String {
-        let codec = self
-            .codec
-            .as_deref()
-            .map(|c| format!(" · {c}"))
-            .unwrap_or_default();
+    /// The device's state in the list: Connected, Paired or Not paired (UI
+    /// v4); its codec is on Sound > Output.
+    fn description(&self) -> String {
         if !self.saved_pairing() {
             if self.connected {
                 "Finishing pairing…".into()
@@ -197,12 +194,7 @@ impl BluetoothDeviceView {
                 "Not paired".into()
             }
         } else if self.usable_audio() {
-            if matches!(output, AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&self.address))
-            {
-                format!("Playing audio{codec}")
-            } else {
-                format!("Connected{codec}")
-            }
+            "Connected".into()
         } else if self.connected {
             "Connecting audio…".into()
         } else {
@@ -804,8 +796,19 @@ impl Ui {
         counts
     }
 
-    /// The accent in use: the cover's, or the default before one is known.
+    /// The accent of every control and state (UI v4): a skin's fixed accent,
+    /// otherwise the one theme accent. It never follows the cover, so lists,
+    /// Settings and sheets look the same with every song.
     pub fn accent(&self) -> u32 {
+        self.skin
+            .as_deref()
+            .and_then(skin::Skin::accent)
+            .unwrap_or(theme::color::ACCENT)
+    }
+
+    /// The playing cover's colour: Now Playing's backdrop and the Home cover
+    /// card only, and the accent skins without a fixed one are remapped to.
+    pub fn cover_accent(&self) -> u32 {
         if let Some(fixed) = self.skin.as_deref().and_then(skin::Skin::accent) {
             return fixed;
         }
@@ -1972,6 +1975,11 @@ impl Ui {
                 Effect::SetScreenTimeout(k["timeout_set:".len()..].parse().ok()?)
             }
             k if k.starts_with("tz_set:") => Effect::SetTimeZone(k["tz_set:".len()..].into()),
+            k if k.starts_with("home_pin:") => {
+                let key = &k["home_pin:".len()..];
+                let pinned = m.settings.home_pins.iter().any(|p| p == key);
+                Effect::SetHomePin(key.into(), !pinned)
+            }
             k if k.starts_with("eq_preset:") => {
                 let name = &k["eq_preset:".len()..];
                 let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;
@@ -2629,6 +2637,7 @@ fn route(key: &str) -> Option<Screen> {
         "theme" => Screen::Theme,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
+        "home_menu" => Screen::HomeMenu,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,
         "sleep" => Screen::Sleep,

@@ -421,8 +421,9 @@ const ROOMY: Layout = Layout {
     field_y: 70.,
     field_h: 42.,
     key_top: 124.,
-    key_h: 44.,
-    row_step: 50.,
+    // No hint line under the keys (UI v4): Cancel and the done key say it.
+    key_h: 48.,
+    row_step: 54.,
 };
 const COMPACT: Layout = Layout {
     field_y: 42.,
@@ -547,15 +548,6 @@ fn draw_with(
             draw_key(c, k, *key, x, y, w, at.key_h, focused, accent);
         }
     }
-    if !live {
-        c.text_center(
-            240.,
-            HINT_Y + Face::R11.mid_offset(),
-            "Buttons move  ·  Select types  ·  Hold Select: done  ·  Hold Back: cancel",
-            Face::R11,
-            color::DIM,
-        );
-    }
 }
 
 /// The live results: three rows above the keys, or a hint while empty.
@@ -568,32 +560,22 @@ fn draw_results(
 ) {
     let area = LIVE_ROWS as f32 * RESULT_H;
     if k.results.is_empty() {
-        let (first, second) = if k.text.trim().is_empty() {
-            (
-                "Results appear as you type",
-                "Back on the top row picks one  ·  Hold Select: all  ·  Hold Back: cancel",
-            )
+        let line = if k.text.trim().is_empty() {
+            "Results appear as you type"
         } else {
-            ("No matches", "Hold Back to cancel")
+            "No matches"
         };
         let mid = RESULTS_TOP + area / 2.;
         c.text_center(
             240.,
-            mid - 9. + Face::S15.mid_offset(),
-            first,
+            mid + Face::S15.mid_offset(),
+            line,
             Face::S15,
             color::MUTED,
         );
-        c.text_center(
-            240.,
-            mid + 12. + Face::R11.mid_offset(),
-            second,
-            Face::R11,
-            color::DIM,
-        );
         return;
     }
-    let bg_selected = crate::theme::mix(color::BG, accent, 0.18);
+    let bg_selected = components::FOCUS_OVER_BG;
     for (i, item) in k
         .results
         .iter()
@@ -604,7 +586,7 @@ fn draw_results(
         let y = RESULTS_TOP + (i - k.result_scroll) as f32 * RESULT_H;
         let selected = k.result_focus == Some(i);
         if selected {
-            components::accent_row(c, LEFT, y + 1., 10. * UNIT, RESULT_H - 2., accent);
+            components::focus_row(c, LEFT, y + 1., 10. * UNIT, RESULT_H - 2.);
         }
         let art = item.art.and_then(|a| tracks.get(a).map(|t| (a, t)));
         let size = RESULT_H - 9.;
@@ -634,7 +616,7 @@ fn draw_results(
             y + RESULT_H / 2.,
             &text::fit(Face::R11, &item.secondary, sub_w + 1.),
             Face::R11,
-            if selected { accent } else { color::MUTED },
+            color::MUTED,
         );
     }
     if k.results.len() > LIVE_ROWS {
@@ -649,8 +631,6 @@ fn draw_results(
         );
     }
 }
-
-const HINT_Y: f32 = 340.;
 
 #[allow(clippy::too_many_arguments)]
 fn draw_key(
@@ -688,7 +668,6 @@ fn draw_key(
         // The focused key is lifted a little, as in the rest of Reborn.
         c.rrect(x - 3., y - 4., w + 6., key_h + 6., 11., fill);
         c.mark_focus(at);
-        c.rrect_outline(x - 3., y - 4., w + 6., key_h + 6., 11., 2., accent);
     } else {
         c.rrect(x, y, w, key_h, 9., fill);
     }

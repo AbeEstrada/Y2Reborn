@@ -2277,6 +2277,10 @@ impl Runtime {
                 self.model.settings.time_zone = zone;
                 self.checkpoint();
             }
+            Effect::SetHomePin(key, on) => {
+                self.model.settings.pin_home(&key, on);
+                self.checkpoint();
+            }
             Effect::QueueRemove(index) => {
                 if index == self.model.queue_position {
                     self.ui.flash("The current track stays in the queue");

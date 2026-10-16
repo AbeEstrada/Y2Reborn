@@ -336,7 +336,7 @@ impl Ui {
                             .with_secondary("Not on the player"),
                     };
                     if self.playlists.moving.is_some_and(|(from, _)| from == i) {
-                        item.secondary = "Moving · turn the wheel, Select to drop".into();
+                        item.secondary = "Moving".into();
                     }
                     rows.push(item);
                 }

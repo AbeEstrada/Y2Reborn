@@ -3,19 +3,14 @@
 //! Loading, error and empty states are ordinary pages (`views_system`).
 use crate::{
     canvas::{Canvas, Icon},
-    components::{self, initials_tile, live_pill, station_logo, LIVE_RED},
+    components::{self, initials_tile, live_pill, station_logo},
     pages,
     screens::{count_label, screen_title},
     text::{self, Face},
-    theme::{alpha, color, mix, HEIGHT, WIDTH},
+    theme::{alpha, color, HEIGHT, WIDTH},
     views_system, Item, Ui,
 };
 use reborn_core::{AppModel, RadioStation, Screen, Track};
-
-/// Radio's own light: a faint red glow in the top corner, "on air".
-fn ambience(c: &mut Canvas) {
-    c.glow(70., 10., 260., 150., alpha(LIVE_RED, 0x1C));
-}
 
 pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let page = pages::page(ui, m, tracks);
@@ -25,7 +20,6 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         views_system::page(c, ui, m, tracks, interactive);
         return;
     }
-    ambience(c);
     match m.screen {
         Screen::Radio => home(c, ui, m, &page.rows, interactive),
         Screen::RadioStations => stations(c, ui, m, &page.rows, interactive),
@@ -80,9 +74,10 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
         }
         let selected = interactive && i == focus;
         if row.key == "radio_now" {
-            on_air(c, ui, row, y, selected, accent);
+            on_air(c, ui, row, y, selected);
         } else {
-            entry(c, row, y, selected, accent);
+            let (tint, icon) = entry_style(&row.key);
+            components::menu_entry(c, row, y, ENTRY_H, tint, icon, selected);
         }
         y += h;
     }
@@ -92,8 +87,8 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
     }
 }
 
-/// The station playing now: its logo, ON AIR and the song it announces.
-fn on_air(c: &mut Canvas, ui: &Ui, row: &Item, y: f32, selected: bool, accent: u32) {
+/// The station playing now: its logo, LIVE and the song it announces.
+fn on_air(c: &mut Canvas, ui: &Ui, row: &Item, y: f32, selected: bool) {
     let (x, w, h) = (12., WIDTH - 24., ON_AIR_H - 8.);
     let at = c.draw.len();
     c.rrect(
@@ -103,20 +98,19 @@ fn on_air(c: &mut Canvas, ui: &Ui, row: &Item, y: f32, selected: bool, accent: u
         h,
         16.,
         if selected {
-            mix(color::BG, accent, 0.22)
+            components::FOCUS_FILL
         } else {
-            0xFFFFFF14
+            color::GLASS_FAINT
         },
     );
     if selected {
         c.mark_focus(at);
-        c.rrect_outline(x, y + 2., w, h, 16., 1., alpha(accent, 150));
     }
     if let Some(now) = &ui.radio.now {
         station_logo(c, ui, now, x + 10., y + 10., 54.);
     }
     let tx = x + 78.;
-    let pill = live_pill(c, tx, y + 20., "ON AIR");
+    let pill = live_pill(c, tx, y + 20., "LIVE");
     c.text_mid(
         tx + pill + 8.,
         y + 20.,
@@ -139,50 +133,7 @@ fn on_air(c: &mut Canvas, ui: &Ui, row: &Item, y: f32, selected: bool, accent: u
     c.text_mid(tx, y + 61., w - 92., &line, Face::R13, color::MUTED);
 }
 
-/// A menu entry: a coloured icon tile, the name and what it holds.
-fn entry(c: &mut Canvas, row: &Item, y: f32, selected: bool, accent: u32) {
-    let (tint, icon) = entry_style(&row.key);
-    if selected {
-        components::accent_row(c, 12., y + 2., WIDTH - 24., ENTRY_H - 4., accent);
-    }
-    let tile = 34.;
-    components::icon_tile(
-        c,
-        22.,
-        y + (ENTRY_H - tile) / 2.,
-        tile,
-        10.,
-        tint,
-        icon,
-        20.,
-    );
-    let x = 70.;
-    c.text_mid(
-        x,
-        y + 17.,
-        300.,
-        &row.label,
-        if selected { Face::S15 } else { Face::R15 },
-        color::TEXT,
-    );
-    c.text_mid(
-        x,
-        y + 34.,
-        330.,
-        &row.secondary,
-        Face::R11,
-        if selected { accent } else { color::MUTED },
-    );
-    c.icon(
-        Icon::Chevron,
-        WIDTH - 36.,
-        y + ENTRY_H / 2.,
-        16.,
-        color::DIM,
-    );
-}
-
-/// "Switzerland · Jazz · MP3 · 128 kbps".
+/// "Switzerland · Jazz".
 pub fn station_detail(s: &RadioStation) -> String {
     let mut parts = vec![];
     if !s.country.is_empty() {
@@ -191,10 +142,7 @@ pub fn station_detail(s: &RadioStation) -> String {
     if let Some(genre) = s.genres(1).pop() {
         parts.push(genre);
     }
-    let format = s.format();
-    if !format.is_empty() {
-        parts.push(format);
-    }
+    // Codec and bitrate are on Station Info, not in lists (UI v4).
     parts.join(" · ")
 }
 
@@ -207,7 +155,6 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
     components::status_bar(c, ui, m, &title, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let first = components::list_window(m, focus, STATION_ROWS);
-    let bg_selected = mix(color::BG, accent, 0.18);
     for (i, row) in rows.iter().enumerate().skip(first).take(STATION_ROWS) {
         let y = 38. + (i - first) as f32 * STATION_H;
         let selected = interactive && i == focus;
@@ -220,23 +167,9 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
             continue;
         };
         if selected {
-            components::accent_row(c, 10., y + 1., WIDTH - 24., STATION_H - 3., accent);
+            components::focus_row(c, 10., y + 1., WIDTH - 24., STATION_H - 3.);
         }
         station_logo(c, ui, station, 20., y + 7., 38.);
-        // The most listened stations carry their rank on the logo.
-        if i < ui.radio.ranked {
-            let rank = (i + 1).to_string();
-            let w = text::width(Face::S10, &rank) + 10.;
-            c.rrect(14., y + 3., w.max(17.), 17., 8.5, accent);
-            c.text_mid_center(
-                14. + w.max(17.) / 2.,
-                y + 11.5,
-                &rank,
-                Face::S10,
-                color::INK,
-            );
-        }
-        let _ = bg_selected;
         let playing = ui
             .radio
             .now
@@ -267,24 +200,15 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
             room,
             &station.name,
             if selected { Face::S15 } else { Face::R15 },
-            if playing && !selected {
-                accent
-            } else {
-                color::TEXT
-            },
+            if playing { accent } else { color::TEXT },
         );
-        let detail = if i < ui.radio.ranked {
-            format!("Top {} · {}", ui.radio.ranked, station_detail(station))
-        } else {
-            station_detail(station)
-        };
         c.text_mid(
             72.,
             y + 36.,
             room,
-            &detail,
+            &station_detail(station),
             Face::R11,
-            if selected { accent } else { color::MUTED },
+            color::MUTED,
         );
     }
     if rows.len() > STATION_ROWS {
@@ -305,7 +229,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
         let y = 42. + (i - first) as f32 * CATEGORY_H;
         let selected = interactive && i == focus;
         if selected {
-            components::accent_row(c, 12., y + 2., WIDTH - 24., CATEGORY_H - 4., accent);
+            components::focus_row(c, 12., y + 2., WIDTH - 24., CATEGORY_H - 4.);
         }
         let category = row
             .key
@@ -343,14 +267,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
         );
         let count = category.map_or(0, |c| c.stations as usize);
         let detail = components::count(count, "station", "stations");
-        c.text_mid(
-            70.,
-            y + 34.,
-            300.,
-            &detail,
-            Face::R11,
-            if selected { accent } else { color::MUTED },
-        );
+        c.text_mid(70., y + 34., 300., &detail, Face::R11, color::MUTED);
         c.icon(
             Icon::Chevron,
             WIDTH - 36.,
@@ -385,7 +302,7 @@ fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
     let playing = ui.radio.now.as_ref().is_some_and(|n| n.key() == s.key());
     let mut y = 62.;
     if playing {
-        live_pill(c, x, y, "ON AIR");
+        live_pill(c, x, y, "LIVE");
         y += 22.;
     }
     for line in text::wrap(Face::S20, &s.name, room, 2) {
@@ -428,20 +345,7 @@ fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool)
     for (i, row) in rows.iter().enumerate().take(2) {
         let bx = 24. + i as f32 * (bw + 8.);
         let selected = interactive && i == focus;
-        let at = c.draw.len();
-        if selected {
-            c.rrect(bx, by, bw, bh, 17., color::TEXT);
-            c.mark_focus(at);
-        } else {
-            c.rrect(bx, by, bw, bh, 17., color::GLASS);
-        }
-        c.text_mid_center(
-            bx + bw / 2.,
-            by + bh / 2.,
-            &row.label,
-            Face::S13,
-            if selected { color::INK } else { color::TEXT },
-        );
+        components::button(c, bx, by, bw, bh, &row.label, Face::S13, selected);
     }
 }
 

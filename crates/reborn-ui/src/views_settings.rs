@@ -26,12 +26,13 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::Equalizer if m.navigation.filter.is_empty() => {
             equalizer(c, ui, m, &page, focus, interactive)
         }
-        Screen::Equalizer => group_page(c, ui, &page, focus, interactive, 38.),
+        Screen::Equalizer => group_page(c, ui, m, &page, focus, interactive, 38.),
         Screen::Crossfade | Screen::ScreenTimeout => picker(c, ui, &page, focus, interactive),
+        Screen::Theme => themes(c, ui, m, &page, focus, interactive),
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
-        Screen::Storage => storage(c, ui, m, &page, focus, interactive),
+        Screen::Storage => storage(c, m, &page, focus, interactive),
         Screen::Update => update(c, ui, m, &page, focus, interactive),
-        _ => group_page(c, ui, &page, focus, interactive, 38.),
+        _ => group_page(c, ui, m, &page, focus, interactive, 38.),
     }
 }
 
@@ -52,7 +53,7 @@ fn root(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
         let y = 40. + i as f32 * 52.;
         let selected = interactive && i == focus;
         if selected {
-            components::glass_row(c, 14., y + 3., WIDTH - 28., 46.);
+            components::focus_row(c, 14., y + 3., WIDTH - 28., 46.);
         } else if i > 0 && !(interactive && i - 1 == focus) {
             c.rect(68., y + 1., WIDTH - 92., 1., color::RULE);
         }
@@ -92,7 +93,7 @@ fn group(
         let y = top + 2. + i as f32 * h;
         let selected = interactive && first + i == focus && row.enabled;
         if selected {
-            components::glass_row(c, 14., y + 2., WIDTH - 28., h - 4.);
+            components::focus_row(c, 14., y + 2., WIDTH - 28., h - 4.);
         } else if i + 1 < rows.len() && !(interactive && first + i + 1 == focus) {
             c.rect(28., y + h - 1., WIDTH - 52., 1., color::RULE);
         }
@@ -153,10 +154,11 @@ fn hint(c: &mut Canvas, page: &Page) {
     }
 }
 
-/// A plain page: optional message, then grouped rows.
+/// A plain page: optional empty or info state, then grouped rows.
 pub(crate) fn group_page(
     c: &mut Canvas,
     ui: &Ui,
+    m: &AppModel,
     page: &Page,
     focus: usize,
     interactive: bool,
@@ -164,7 +166,7 @@ pub(crate) fn group_page(
 ) {
     let mut y = top;
     if let Some(h) = &page.hero {
-        y = message(c, &h.title, &h.body, y + 6.) + 10.;
+        y = components::empty_state(c, y + 58., hero_mark(m), &h.title, &h.body) + 10.;
     }
     for (label, value) in &page.facts {
         c.text_mid(28., y + 12., 150., label, Face::R13, color::MUTED);
@@ -186,6 +188,24 @@ pub(crate) fn group_page(
         group(c, ui, &page.rows[start..end], start, focus, interactive, y);
     }
     hint(c, page);
+}
+
+/// The mark of a page's empty or info state: the screen's own icon.
+pub(crate) fn hero_mark(m: &AppModel) -> components::Mark {
+    use components::Mark;
+    match m.screen {
+        Screen::Wifi => Mark::Icon(Icon::Wifi),
+        Screen::Bluetooth => Mark::Icon(Icon::Bluetooth),
+        Screen::PcTransfer => Mark::Icon(Icon::Usb),
+        Screen::NowPlaying => Mark::Icon(Icon::Note),
+        Screen::Battery => Mark::Icon(Icon::Bolt),
+        Screen::Update | Screen::About => Mark::Icon(Icon::Download),
+        Screen::Storage | Screen::SettingsLibrary => Mark::Icon(Icon::Drive),
+        Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
+            Mark::Icon(Icon::Broadcast)
+        }
+        _ => Mark::Icon(Icon::Info),
+    }
 }
 
 /// A headline and explanation, left-aligned; returns the y below them.
@@ -241,7 +261,7 @@ fn radio(
         .filter(|r| matches!(r.kind, RowKind::Toggle(_)))
     else {
         // Not available yet: a message only.
-        group_page(c, ui, page, focus, interactive, 38.);
+        group_page(c, ui, m, page, focus, interactive, 38.);
         return;
     };
     group(
@@ -260,24 +280,7 @@ fn radio(
         } else {
             Icon::Bluetooth
         };
-        c.ring(240., 170., 30., 1.5, color::GLASS_STRONG);
-        c.icon(icon, 240., 170., 26., color::DIM);
-        c.text_center(
-            240.,
-            226. + Face::S20.mid_offset(),
-            &h.title,
-            Face::S20,
-            color::TEXT,
-        );
-        for (i, line) in text::wrap(Face::R13, &h.body, 330., 2).iter().enumerate() {
-            c.text_center(
-                240.,
-                254. + i as f32 * 19. + Face::R13.mid_offset(),
-                line,
-                Face::R13,
-                color::MUTED,
-            );
-        }
+        components::empty_state(c, 160., components::Mark::Icon(icon), &h.title, &h.body);
         return;
     }
     let busy = ui.bluetooth_busy().filter(|_| kind == Radio::Bluetooth);
@@ -313,11 +316,18 @@ fn radio(
     let start = focus
         .saturating_sub(visible)
         .min(rest.len().saturating_sub(visible));
+    // Devices and networks are a settings list: one grouped card.
+    let shown = rest.len().saturating_sub(start).min(visible);
+    if shown > 0 {
+        components::card(c, 10., top - 2., WIDTH - 20., shown as f32 * 56.);
+    }
     for (slot, (index, row)) in rest.iter().skip(start).take(visible).enumerate() {
         let y = top + slot as f32 * 56.;
         let selected = interactive && *index == focus && row.enabled;
         if selected {
-            components::glass_row(c, 10., y, WIDTH - 20., 52.);
+            components::focus_row(c, 14., y + 1., WIDTH - 28., 50.);
+        } else if slot > 0 && !(interactive && *index == focus + 1) {
+            c.rect(28., y - 2., WIDTH - 56., 1., color::RULE);
         }
         let connected = row.secondary.starts_with("Connected");
         let is_action = row.key == "wifi_scan" || row.key == "bt_scan";
@@ -345,11 +355,7 @@ fn radio(
             face,
             if row.enabled { color::TEXT } else { color::DIM },
         );
-        let sub_color = if connected {
-            color::SUCCESS
-        } else {
-            color::MUTED
-        };
+        let sub_color = if connected { accent } else { color::MUTED };
         c.text_mid(28., y + 38., 330., &row.secondary, Face::R11, sub_color);
         if kind == Radio::Wifi {
             if let Some(n) = ui.wifi.networks.iter().find(|n| n.ssid == row.label) {
@@ -374,14 +380,6 @@ fn radio(
                 color::DIM,
             );
         }
-    } else if kind == Radio::Bluetooth {
-        c.text_center(
-            240.,
-            340. + Face::R11.mid_offset(),
-            "Select to connect  ·  Hold to forget",
-            Face::R11,
-            color::DIM,
-        );
     }
 }
 
@@ -401,7 +399,7 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
     if let Some(row) = page.rows.get(4) {
         let y = bottom + 38.;
         if interactive && focus == 4 {
-            components::glass_row(c, 10., y, WIDTH - 20., 56.);
+            components::focus_row(c, 10., y, WIDTH - 20., 56.);
         } else {
             components::card(c, 10., y, WIDTH - 20., 56.);
         }
@@ -422,6 +420,71 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
     }
 }
 
+const THEME_H: f32 = 50.;
+const THEME_ROWS: usize = 6;
+
+/// The theme picker: each look's colours as a swatch, its name and a check;
+/// how to add skins follows the last one.
+fn themes(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
+    let accent = ui.accent();
+    let first = components::list_window(m, focus, THEME_ROWS);
+    for (slot, row) in page.rows.iter().skip(first).take(THEME_ROWS).enumerate() {
+        let i = first + slot;
+        let y = 40. + slot as f32 * THEME_H;
+        let cy = y + THEME_H / 2.;
+        if interactive && i == focus && row.enabled {
+            components::focus_row(c, 10., y + 1., WIDTH - 24., THEME_H - 2.);
+        }
+        let id = row.key.strip_prefix("theme_set:").unwrap_or("");
+        let (bg, tint) = if id.is_empty() {
+            (color::BG, color::ACCENT)
+        } else {
+            ui.themes
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| s.swatch)
+                .unwrap_or((color::GLASS_STRONG, color::MUTED))
+        };
+        // The look's background with its accent: a small picture of it.
+        c.rrect(22., cy - 15., 30., 30., 8., bg);
+        c.rrect_outline(22., cy - 15., 30., 30., 8., 1., color::GLASS);
+        c.rrect(28., cy + 3., 18., 5., 2.5, tint);
+        let face = if interactive && i == focus {
+            Face::S15
+        } else {
+            Face::R15
+        };
+        let ink = if row.enabled { color::TEXT } else { color::DIM };
+        if row.secondary.is_empty() {
+            c.text_mid(66., cy, 340., &row.label, face, ink);
+        } else {
+            c.text_mid(66., cy - 8., 340., &row.label, face, ink);
+            c.text_mid(66., cy + 10., 340., &row.secondary, Face::R11, color::MUTED);
+        }
+        if row.kind == RowKind::Check(true) {
+            components::check(c, WIDTH - 40., cy, accent);
+        }
+    }
+    let shown = page.rows.len().saturating_sub(first).min(THEME_ROWS);
+    let below = 40. + shown as f32 * THEME_H;
+    if first + shown == page.rows.len() && below < HEIGHT - 30. {
+        if let Some(status) = &page.status {
+            for (n, line) in wrap_lines(status, 400., Face::R11, 2).iter().enumerate() {
+                c.text_center(
+                    240.,
+                    below + 20. + n as f32 * 15.,
+                    line,
+                    Face::R11,
+                    color::DIM,
+                );
+            }
+        }
+    }
+    if page.rows.len() > THEME_ROWS {
+        components::scroll_rail(c, 44., 286., first, page.rows.len(), THEME_ROWS, accent);
+    }
+}
+
 fn picker(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
     let accent = ui.accent();
     let pitch = if page.rows.len() > 5 { 43. } else { 47. };
@@ -429,7 +492,7 @@ fn picker(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool)
         let y = 38. + i as f32 * pitch;
         let selected = interactive && i == focus;
         if selected {
-            components::glass_row(c, 10., y, WIDTH - 20., pitch - 4.);
+            components::focus_row(c, 10., y, WIDTH - 20., pitch - 4.);
         }
         let face = if selected { Face::S15 } else { Face::R15 };
         c.text_mid(
@@ -453,7 +516,7 @@ fn equalizer(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, i
         let y = 38. + i as f32 * 44.;
         let selected = interactive && i == focus;
         if selected {
-            components::glass_row(c, 10., y, WIDTH - 20., 40.);
+            components::focus_row(c, 10., y, WIDTH - 20., 40.);
         }
         let face = if selected { Face::S15 } else { Face::R15 };
         c.text_mid(26., y + 20., 330., &row.label, face, color::TEXT);
@@ -499,10 +562,16 @@ fn line(c: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, tint: u32) {
 fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
     let mut index = 0;
     let mut y = 38.;
-    if m.platform.brightness_available {
+    // Brightness and five rows do not fit: once the focus passes the rows
+    // shown under the brightness card, the page scrolls the card away.
+    let under_card = ((HEIGHT - 8. - (y + 92.)) / 50.).floor() as usize;
+    let scrolled = m.platform.brightness_available && focus > under_card;
+    if scrolled {
+        index = 1;
+    } else if m.platform.brightness_available {
         components::card(c, 10., y, WIDTH - 20., 78.);
         if interactive && focus == 0 {
-            components::glass_row(c, 14., y + 4., WIDTH - 28., 70.);
+            components::focus_row(c, 14., y + 4., WIDTH - 28., 70.);
         }
         c.text_mid(28., y + 24., 250., "Brightness", Face::S15, color::TEXT);
         c.text_mid_right(
@@ -524,12 +593,21 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
         index = 1;
         y += 92.;
     }
-    if page.rows.len() > index {
-        group(c, ui, &page.rows[index..], index, focus, interactive, y);
+    let end = if scrolled || !m.platform.brightness_available {
+        page.rows.len()
+    } else {
+        page.rows.len().min(index + under_card)
+    };
+    if end > index {
+        group(c, ui, &page.rows[index..end], index, focus, interactive, y);
+    }
+    if m.platform.brightness_available && page.rows.len() > 1 + under_card {
+        // Two positions: with the brightness card, or scrolled past it.
+        components::scroll_rail(c, 44., 286., usize::from(scrolled), 3, 2, ui.accent());
     }
 }
 
-fn storage(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
+fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
     let snapshot = &m.platform.snapshot;
     let volumes = [
         (
@@ -593,34 +671,12 @@ fn storage(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
             }
         }
     }
-    let songs = ui.library_counts(&m.library.tracks)[2];
     let top = 40. + 2. * 84.;
-    components::card(
-        c,
-        10.,
-        top,
-        WIDTH - 20.,
-        44. * (page.rows.len() as f32 + 1.) + 4.,
-    );
-    c.text_mid(
-        28.,
-        top + 24.,
-        250.,
-        "Songs in Library",
-        Face::R15,
-        color::TEXT,
-    );
-    c.text_mid_right(
-        WIDTH - 28.,
-        top + 24.,
-        &crate::screens::count_label(songs),
-        Face::R11,
-        color::MUTED,
-    );
+    components::card(c, 10., top, WIDTH - 20., 44. * page.rows.len() as f32 + 4.);
     for (i, row) in page.rows.iter().enumerate() {
-        let y = top + 2. + 44. + i as f32 * 44.;
+        let y = top + 2. + i as f32 * 44.;
         if interactive && i == focus && row.enabled {
-            components::glass_row(c, 14., y + 1., WIDTH - 28., 42.);
+            components::focus_row(c, 14., y + 1., WIDTH - 28., 42.);
         }
         let face = if interactive && i == focus {
             Face::S15

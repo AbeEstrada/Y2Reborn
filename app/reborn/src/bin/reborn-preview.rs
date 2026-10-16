@@ -207,6 +207,15 @@ fn ui() -> Ui {
 /// Adjusts one preview state before it is drawn.
 type Setup = Box<dyn Fn(&mut Ui, &mut AppModel)>;
 
+/// Focus a Home item by its key, so fixtures follow the menu as it changes.
+fn home_focus(ui: &Ui, m: &mut AppModel, key: &str) {
+    m.navigation.focus = reborn_ui::pages::page(ui, m, &[])
+        .rows
+        .iter()
+        .position(|row| row.key == key)
+        .unwrap_or_else(|| panic!("Home has no {key}"));
+}
+
 fn at(screen: Screen, filter: &str) -> AppModel {
     let mut m = model();
     m.screen = screen;
@@ -441,7 +450,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     // Keyboard and library search (Beta 5)
     case!("70-search-keyboard", at(Screen::Home, ""), |ui, m| {
-        m.navigation.focus = 6;
+        home_focus(ui, m, "search");
         ui.model_action(m, Action::Select);
         if let Some(k) = ui.keyboard.as_mut() {
             k.text = "nort".into();
@@ -457,7 +466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "70b-search-live-result-focus",
         at(Screen::Home, ""),
         |ui, m| {
-            m.navigation.focus = 6;
+            home_focus(ui, m, "search");
             ui.model_action(m, Action::Select);
             if let Some(k) = ui.keyboard.as_mut() {
                 k.text = "nort".into();
@@ -474,7 +483,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     );
     case!("70c-search-live-no-match", at(Screen::Home, ""), |ui, m| {
-        m.navigation.focus = 6;
+        home_focus(ui, m, "search");
         ui.model_action(m, Action::Select);
         if let Some(k) = ui.keyboard.as_mut() {
             k.text = "zz".into();
@@ -486,7 +495,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .focus =
         1);
     case!("72-search-keyboard-shift", at(Screen::Home, ""), |ui, m| {
-        m.navigation.focus = 6;
+        home_focus(ui, m, "search");
         ui.model_action(m, Action::Select);
         if let Some(k) = ui.keyboard.as_mut() {
             k.text.clear();
@@ -506,10 +515,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             k.col = 2;
         }
     });
-    case!("74-home-search", at(Screen::Home, ""), |_, m| m
-        .navigation
-        .focus =
-        6);
+    case!("74-home-search", at(Screen::Home, ""), |ui, m| home_focus(
+        ui, m, "search"
+    ));
     case!("27-sound", at(Screen::SettingsAudio, ""), |_, m| {
         m.output = AudioOutput::Bluetooth("AA".into());
         m.settings.eq_enabled = true;
@@ -979,7 +987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     case!("85-home-playlists", at(Screen::Home, ""), move |ui, m| {
         playlists_setup(ui, m);
-        m.navigation.focus = 6;
+        home_focus(ui, m, "playlists");
     });
     case!(
         "87-now-playing-favorite",
@@ -1023,6 +1031,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("50-song-info", at(Screen::TrackInfo, "0"));
     case!("51-display", at(Screen::SettingsDisplay, ""), |_, m| {
         m.navigation.focus = 3;
+    });
+    case!(
+        "51b-display-scrolled",
+        at(Screen::SettingsDisplay, ""),
+        |_, m| {
+            m.navigation.focus = 5;
+        }
+    );
+    // Home and Music (UI v4 phase 2)
+    case!("53-home-menu", at(Screen::HomeMenu, ""), |_, m| {
+        m.settings.pin_home("albums", true);
+        m.navigation.focus = 1;
+    });
+    case!("75-music", at(Screen::Music, ""), |_, m| m
+        .navigation
+        .focus = 1);
+    case!("76-home-pinned", at(Screen::Home, ""), |ui, m| {
+        m.settings.pin_home("albums", true);
+        m.settings.pin_home("tracks", true);
+        home_focus(ui, m, "albums");
     });
     {
         let themes = themes.clone();

@@ -224,7 +224,7 @@ fn fields(kind: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Parse `#RRGGBB` / `#RRGGBBAA`.
-fn hex(s: &str) -> Option<u32> {
+pub(crate) fn hex(s: &str) -> Option<u32> {
     let h = s.strip_prefix('#')?;
     if !h.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;

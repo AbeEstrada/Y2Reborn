@@ -426,7 +426,8 @@ fn the_picker_lists_skins_and_selecting_one_asks_for_it() {
     let rows: Vec<Item> = ui.rows(&m, &tracks);
     assert_eq!(rows[0].key, "theme_set:");
     assert_eq!(rows[0].kind, crate::RowKind::Check(true));
-    assert_eq!(rows[1].secondary, "by Reborn");
+    // No author line (UI v4): the picker shows each look's swatch instead.
+    assert_eq!(rows[1].secondary, "");
     assert!(!rows[2].enabled && rows[2].secondary.contains("format 9"));
     m.navigation.focus = 1;
     match ui.action(&mut m, &tracks, reborn_core::Action::Select) {

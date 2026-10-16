@@ -134,7 +134,6 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         }
     }
     if let Some(row) = ui.row_at(m, tracks, focus) {
-        let accent = ui.accent();
         c.text_center(
             240.,
             266. + Face::S20.mid_offset(),
@@ -155,7 +154,7 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
                 312. + Face::R11.mid_offset(),
                 &ui.album_detail(m, tracks, &row.key),
                 Face::R11,
-                accent,
+                color::DIM,
             );
         }
         c.text_center(

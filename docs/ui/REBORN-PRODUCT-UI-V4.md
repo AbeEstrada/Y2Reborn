@@ -1,0 +1,236 @@
+# Reborn Product UI v4 — one strict system
+
+Plan and design contract, 2026-10-16. **Phases 0–3 implemented (unreleased, host
+previews only); phase 4 (qualification) open.** The owner builds once all UI phases are done. Successor to
+[Product UI v3](REBORN-PRODUCT-UI-V3.md); applies to Reborn's own look. Skins keep
+drawing their own layouts (see *Skins*).
+
+## Why
+
+Owner, after Beta 6.3: since playlists, search and radio were added "the UI looks
+kind of full"; the default look is liked but "still a little rough"; it should be
+"tailored to actual users, not a developer", "consistent everywhere and follow a
+strict design choice"; removing things users would not need is welcome.
+
+Review basis: a device capture of Beta 6.3 (Settings; matches the host render) and
+all 92 interactive states of `reborn-preview` (boot and shutdown frames excluded).
+The roughness is mostly inconsistency: the same idea is drawn three or four ways
+depending on when its screen was written.
+
+## Findings (Beta 6.3)
+
+1. **Focus and colour.** Library lists focus with a cover-tinted, outlined row
+   (`components::accent_row`); Settings with neutral glass (`glass_row`) and a fixed
+   blue for checks, sliders and progress; action sheets with a white filled row and
+   dark text; Folders with glass inside a content list. Toggles are iOS green. The
+   playing song in Songs is accent text in the same colour as the focus, so
+   "playing" and "selected" look alike. The accent changes with every cover, so
+   the same list is orange, teal or blue from one song to the next.
+2. **Four button styles:** accent pill (Artist Play All), glass pills (Album and
+   Playlist Play/Shuffle), outlined pill (empty library Scan for Music), white and
+   dark pills (dialogs, Station Info).
+3. **Permanent hint lines:** keyboard ("Buttons move · Select types · Hold Select:
+   done · Hold Back: cancel", although Cancel and Join/Create/Search are keys),
+   Bluetooth ("Select to connect · Hold to forget"), Up Next ("Hold Select to
+   remove"), Radio Favorites ("Hold Select on a station to add it"), playlist move
+   ("turn the wheel, Select to drop"), theme picker ("Add skins by copying…").
+4. **Information users do not need:** "NOW PLAYING" over Now Playing; the gapless
+   icon (on by default, so always shown); radio `MP3 · 128 KBPS` and country-code
+   tags; "ON AIR", "LIVE" and "ON AIR" for one fact; Popular rank badges plus "Top 2"
+   plus codec/bitrate in one subtitle; Home counts; Wi-Fi "Good signal" beside the
+   bars; Bluetooth codec in the device list; "by Reborn" on every theme; free space
+   in Folders; "Songs in Library" and "From a Computer: Ready" in Storage.
+5. **Layout rules differ:** Settings groups rows in cards, but the Bluetooth and
+   Wi-Fi device lists sit loose under a carded switch; Radio and Playlists use
+   coloured icon tiles with outlined focus, the library round art with filled focus;
+   empty and info states are drawn four ways (Wi-Fi off centred with icon, firmware
+   left-aligned text, Playlists one plain line, scanning a ring); Display → Album
+   View has no chevron beside rows that have one; spelling mixes "Normalise" and
+   "Favorites".
+6. **Home has ten items** (Now Playing, Artists, Albums, Genres, Songs, Folders,
+   Playlists, Search, Radio, Settings) with counts and fills the screen.
+
+Also: preview fixtures `70-search-keyboard`, `70b`, `70c` are titled "New Playlist"
+(fixture labelling, not product); fix before the before/after comparison.
+
+## Owner decisions (2026-10-16)
+
+| Question | Decision |
+| --- | --- |
+| Cover colour | **Now Playing only**: its background glow and the Home cover card. Everything else uses one fixed accent. |
+| Home | **Music submenu + pinning**: Now Playing, Music, Playlists, Radio, Search, Settings; Music holds Artists, Albums, Songs, Genres, Folders; a Home Menu setting pins any of them back. |
+| Quality on Now Playing | **One quiet tag**: "Lossless · 96 kHz" for files; radio shows no codec or bitrate (Station Info keeps them). |
+| Hint lines | **Removed**; holding Select opens a menu that names the actions (Forget, Remove, Add to Favorites). |
+
+## Rules (the contract)
+
+One component per idea; screen code must not draw its own variant.
+
+| Idea | Rule |
+| --- | --- |
+| Accent | One fixed accent (`theme::color::ACCENT`, today's blue) for every control and state. The cover colour is used only by Now Playing's backdrop and the Home cover card. A skin's fixed accent still overrides. |
+| Focus | Neutral glass row, bright text, same radius and inset everywhere: lists, settings, sheets, radio, playlists, search. Never colour alone. |
+| State | Accent marks state only: playing item, check, switch on, progress, the Home marker. Focus and state never share a treatment. |
+| Switches | Accent when on (no separate green). |
+| Buttons | One shape. Glass when idle, white fill with dark text when focused. At most one primary per screen; destructive actions only in dialogs. |
+| Live radio | One red `LIVE` pill. No "ON AIR". |
+| Empty, info and error states | One component: centred icon, title, one sentence, optional button. Firmware messages use it with numbered steps (keeping `system.img`; the owner must copy that file). |
+| Lists | Content (artists, albums, songs, stations, playlists, results) is flat and full width. Settings-type lists, including Bluetooth and Wi-Fi devices, are grouped cards. A chevron only on rows that open a page; a row that changes a value in place shows the value and no chevron. |
+| Hints | No permanent hint lines. Hold-Select actions are listed in the item's menu. The keyboard's Cancel and Done keys are the only instructions it needs. |
+| Rows | Title plus at most one secondary line of facts a listener uses (artist, album count, country · genre). No codec, bitrate, rank, free space or internal state in lists. |
+| Words | American English, Title Case for titles and labels, sentence case for secondary lines. |
+
+## Screen changes
+
+* **Home:** Now Playing, Music, Playlists, Radio, Search, Settings; no counts. Right
+  side unchanged (playing cover with progress, or Recently Added). **Music** opens
+  Artists, Albums, Songs, Genres, Folders. **Settings → Display → Home Menu** pins any
+  of those five onto Home (stored with the other display settings; Reset Settings
+  restores the default).
+* **Now Playing:** no "NOW PLAYING" eyebrow; mode icons only when they differ from
+  the default (shuffle, repeat, crossfade, equalizer on, normalise on), so gapless
+  disappears; one quality tag. Radio: station and country line, `LIVE` pill, no
+  codec/bitrate/country-code tags, no "ON AIR" under the bar.
+* **Radio lists:** "Switzerland · Jazz"; no rank badges, codec or bitrate (Station
+  Info keeps the facts). Favorites' empty line becomes the empty-state component.
+* **Bluetooth:** "Connected", "Paired" or "Not paired"; codec on Sound → Output.
+  Device list in a card; Forget in the device's hold menu.
+* **Wi-Fi:** "Connected", "Saved", "Open" plus bars; no signal words.
+* **Up Next and playlists:** Remove and Move in the hold menu; the moving row keeps
+  the focus style plus a grip mark, without an instruction line.
+* **Keyboard:** no hint line; keys gain the height.
+* **Theme picker:** a small preview per theme instead of "by Reborn"; the
+  how-to-add-skins sentence moves to the empty part of the list only when no
+  external skin is installed.
+* **Storage:** Internal Storage and SD Card bars, Scan for Music. Song count moves to
+  About. "From a Computer" stays on the USB page only.
+* **About:** "Version 1.0 Beta 6.3" (the full build string stays on the hidden
+  service pages).
+* **Folders:** song counts, no free space.
+* **Display:** Album View gets the in-place-value treatment consistently.
+
+Unchanged: the Home typography and layout, Cover Flow, the Now Playing composition,
+the status bar, dialogs' structure, the boot and shutdown sequences, the service and
+diagnostics pages (hidden; developer-facing by design).
+
+## Skins
+
+Skins draw layouts by name. The Music submenu needs a layout name (`music`), and
+the Home Menu setting changes Home's item list, which skins read through the engine.
+Both go into `tools/assets/build_skins.py` finishing steps (never hand-edited
+`skin.json`; Classic's hand-written json gets the layout by hand). Every shipped skin
+must load without warnings and render the new screens.
+
+## Phases
+
+0. **Spec and audit (this document).** Milestone-boundary audit row in Y2Linux
+   `docs/planning/roadmap-gap-audit.md`. Fix the preview fixture titles; keep a
+   "before" preview set.
+1. **Components and tokens** (`theme.rs`, `components.rs`): fixed accent outside
+   Now Playing, one focus row, one button, `LIVE` pill, empty-state component,
+   accent switches; then remove every screen-local variant. Most of the "rough"
+   feeling goes here.
+2. **Home and Music:** submenu, Home Menu setting with persistence and reset,
+   navigation and back stack, skins' `music` layout.
+3. **Content trims** per *Screen changes*, hold menus that replace hints.
+4. **Qualification:** host previews before/after for Reborn's look and every skin;
+   tests and strict Clippy; device walk-through with screen capture while the owner
+   presses the buttons (input cannot be injected over SSH).
+
+Each phase is reviewable and releasable on its own.
+
+## Phase 1 as implemented (2026-10-16)
+
+* `Ui::accent()` is the fixed accent (a skin's own, else `theme::color::ACCENT`);
+  `Ui::cover_accent()` is the cover's colour. Now Playing keeps the cover colour for its
+  whole composition (backdrop, tags, mode icons, bar), as one picture; the Home cover card
+  uses it for its glow and progress. Skins are drawn and remapped with the cover accent, so
+  a skin looks as before.
+* `components::focus_row` (neutral glass, `FOCUS_FILL`; `FOCUS_OVER_BG` masks round
+  artwork on it) replaces `accent_row` and `glass_row` in every list, page, sheet, radio
+  list, playlist, search result and the radio's playing card. Focused secondary lines stay
+  `MUTED`; the playing item keeps its accent title whether focused or not; Up Next lost the
+  outline that looked like a second focus.
+* `components::button` (glass idle, white with dark text focused): album/playlist
+  Play/Shuffle, artist Play All, Station Info, dialogs (a focused destructive choice keeps
+  `DANGER`), the value page's Back, the empty-state button. The keyboard's focused key is
+  white without the accent ring.
+* `components::empty_state` + `Mark` (icon in a ring, empty ring, spinner) + `empty_button`:
+  the library's empty and scanning states, Wi-Fi/Bluetooth off, every page hero (firmware,
+  radio loading/errors, USB transfer, battery, Nothing Playing); the icon comes from the
+  screen (`views_settings::hero_mark`).
+* Switches use the accent; Wi-Fi/Bluetooth "Connected" is accent state (was green); the
+  device and network lists sit in one grouped card with inset focus and rules.
+* One `LIVE` pill: the radio's playing card and Station Info said ON AIR; Now Playing no
+  longer writes ON AIR under the bar.
+* Information, not state, leaves the accent: the album count/length line in the grid and
+  Cover Flow is `DIM`. The Playlists and Radio section washes (pink and red glows) are gone;
+  the moving playlist row is the focus row ringed in the accent.
+* Preview fixtures select Home items by key (`home_focus`); `70`–`74` show search again.
+* Evidence: 50 of 110 Reborn previews change (before/after compared by eye); skins: the
+  same 9 fallback screens in each of the 16 (Cover Flow detail colour, keyboard ring),
+  everything a skin lays out itself is pixel-identical. 474 tests, strict Clippy.
+
+Left for later phases as planned: hint lines, ranks, codec/bitrate, signal words, theme
+previews, spelling (3).
+
+## Phase 2 as implemented (2026-10-16)
+
+* Home is Now Playing, Music, Playlists, Radio, Search, Settings, without counts
+  (`pages::home`). Pinned Music lists stand after Music in `HOME_PINNABLE` order
+  (Artists, Albums, Songs, Genres, Folders); Home lays out up to eleven rows.
+* Music (`Screen::Music`, `views_library::music`) lists Artists, Albums, Songs, Genres and
+  Folders as menu entries with counts ("7 artists"); Playlists and Search left it (they are
+  on Home). `components::menu_entry` is shared with Radio's menu, so both menus look alike.
+  Back goes Artists → Music → Home (navigation history).
+* Settings → Display → Home Menu (`Screen::HomeMenu`): a switch per Music list;
+  `Effect::SetHomePin(key, on)`, stored as `Settings::home_pins` (`#[serde(default)]`, so
+  older saved settings load with none; Reset Settings clears them; `Settings::pin_home`
+  keeps Home's order). Display shows "Standard", the pinned names or "N lists added".
+* Display has one row more than fits under the brightness card: the four rows that fit
+  are drawn, and focusing further scrolls the card away (with a scroll rail).
+* Skins: no new layout was needed. Home rows come from the page, so every skin's `home`
+  layout shows the new menu (skins still add counts to pinned rows), and Music and Home
+  Menu use each skin's `list`/`page` layout; all 16 checked by eye. `home_menu` is a known
+  layout name for skins that want their own.
+* Previews: `53-home-menu`, `75-music`, `76-home-pinned`, `51b-display-scrolled`
+  (114 states). Tests: Home's six rows, pin order and an eleven-row Home with one focus
+  target, Music rows and Back through Music, Display → Home Menu pin/unpin effects,
+  old settings without pins. 478 tests, strict Clippy.
+
+## Phase 3 as implemented (2026-10-16)
+
+* **Hints gone, menus teach.** Removed: the keyboard's "Buttons move · Select types · Hold
+  Select: done · Hold Back: cancel" (its keys grow from 44 to 48 px), the live search's
+  second lines ("Back on the top row picks one…", "Hold Back to cancel"), Bluetooth's "Select
+  to connect · Hold to forget", Up Next's "Hold Select to remove", the radio Favorites row's
+  "Hold Select on a station to add it" (now "No stations yet"), the moving row's "turn the
+  wheel, Select to drop" (now "Moving"). Every one of those actions was already named in the
+  item's hold-Select menu (Remove from Queue, Move Up/Down, Forget Device, Move, Remove from
+  Playlist, Add to Favorites). Empty states that say how to fill a list stay (No Favorites
+  Yet, an empty playlist): they are not permanent hints.
+* **Now Playing:** no "NOW PLAYING" label (the title moves up into its place; a station
+  keeps its LIVE line); no gapless icon (on by default); radio has no MP3/kbps or
+  country-code tags (Station Info has them).
+* **Lists:** stations read "Switzerland · Jazz" (`views_radio::station_detail`, also the
+  skins' row text); no rank badges or "Top N". Bluetooth devices read Connected, Paired or
+  Not paired (codec on Sound > Output). Networks read Saved, Secured or Open beside the bars.
+  The Folders roots show song counts instead of free space.
+* **Theme picker:** a swatch per look (its background with an accent bar, read from the
+  skin's palette into `SkinInfo::swatch`) instead of "by Reborn"; the how-to-add sentence
+  follows the last theme instead of standing under the list.
+* **Storage:** two bars and Scan for Music. "Songs in Library" moved to About & Updates as
+  **Music Library** (the count; opens Storage). "From a Computer" appears only while a cable
+  is connected, so a dismissed computer screen can be reached again.
+* **About & Updates:** Version reads "1.0 Beta 6.3" (`short_version` also fixes "1.0.0 (3)"
+  for dotted betas and "1.0.0" → "1.0"; development candidates keep "1.0.0 (35)").
+* **Words:** "Normalize Volume" (American English throughout; the skin format's `normalise`
+  icon name is unchanged for existing skins).
+* Evidence: 38 of 114 Reborn previews change (compared by eye with phase 2); skins change
+  only where they show Reborn's keyboard, texts or rows (all 16 checked, keyboards fit
+  under every skin's title bar). 479 tests, strict Clippy.
+
+## Not verified
+
+Nothing here is built. Hold-menu discoverability without hints and the fixed accent's
+look on the panel need the device walk-through in phase 4.

@@ -566,6 +566,8 @@ pub enum Screen {
     Theme,
     /// Time zone picker (Settings > Display).
     TimeZone,
+    /// Which Music lists also stand on Home (Settings > Display).
+    HomeMenu,
     SettingsLibrary,
     SettingsDisplay,
     SettingsSystem,
@@ -745,7 +747,20 @@ pub struct Settings {
     /// The clock's tz database zone, e.g. "Europe/Berlin".
     #[serde(default = "default_time_zone")]
     pub time_zone: String,
+    /// Music lists also pinned to Home, by key (`HOME_PINNABLE`); Home itself
+    /// is Now Playing, Music, Playlists, Radio, Search and Settings.
+    #[serde(default)]
+    pub home_pins: Vec<String>,
 }
+
+/// The Music lists that can be pinned to Home, in Home's order: (key, label).
+pub const HOME_PINNABLE: [(&str, &str); 5] = [
+    ("artists", "Artists"),
+    ("albums", "Albums"),
+    ("tracks", "Songs"),
+    ("genres", "Genres"),
+    ("folders", "Folders"),
+];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AlbumView {
@@ -799,7 +814,27 @@ impl Default for Settings {
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
+            home_pins: Vec::new(),
         }
+    }
+}
+impl Settings {
+    /// Pin or unpin a Music list on Home. Pins keep `HOME_PINNABLE`'s order,
+    /// whatever order they were chosen in; unknown keys are ignored.
+    pub fn pin_home(&mut self, key: &str, on: bool) {
+        let mut pins: Vec<String> = HOME_PINNABLE
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| {
+                if *k == key {
+                    on
+                } else {
+                    self.home_pins.iter().any(|p| p == k)
+                }
+            })
+            .map(str::to_owned)
+            .collect();
+        std::mem::swap(&mut self.home_pins, &mut pins);
     }
 }
 /// See `Settings::codec_revision`.
@@ -901,6 +936,8 @@ pub enum Effect {
     ScanThemes,
     /// Choose the clock's zone (tz database name).
     SetTimeZone(String),
+    /// Pin (true) or unpin a Music list (`HOME_PINNABLE` key) on Home.
+    SetHomePin(String, bool),
     QueueRemove(usize),
     QueueMove {
         index: usize,
@@ -1437,5 +1474,21 @@ mod tests {
         let track = m.current().unwrap();
         assert!(track.is_radio() && track.id < 0);
         assert_eq!(track.path, PathBuf::from("http://jazz.example/"));
+    }
+
+    #[test]
+    fn home_pins_keep_home_order_and_old_settings_have_none() {
+        let mut s = Settings::default();
+        s.pin_home("genres", true);
+        s.pin_home("artists", true);
+        s.pin_home("nonsense", true);
+        assert_eq!(s.home_pins, ["artists", "genres"]);
+        s.pin_home("artists", false);
+        assert_eq!(s.home_pins, ["genres"]);
+        let old: Settings = serde_json::from_value(serde_json::json!({
+            "volume": 35, "screen_timeout_seconds": 60, "music_directory": "/data/music"
+        }))
+        .unwrap();
+        assert!(old.home_pins.is_empty());
     }
 }

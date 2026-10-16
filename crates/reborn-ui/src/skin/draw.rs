@@ -58,7 +58,7 @@ impl Scene<'_> {
     fn paint(&self, p: Paint) -> u32 {
         let c = match p {
             Paint::Fixed(c) => c,
-            Paint::Accent(a) => (self.ui.accent() & 0xFFFF_FF00) | u32::from(a),
+            Paint::Accent(a) => (self.ui.cover_accent() & 0xFFFF_FF00) | u32::from(a),
         };
         if self.opacity >= 1. {
             c
@@ -851,7 +851,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                 }
             }
             if *recolor {
-                remap(c, start, &s.skin.palette, s.ui.accent());
+                remap(c, start, &s.skin.palette, s.ui.cover_accent());
             }
             for q in &mut c.draw[start..] {
                 q.x += ox + dx;
@@ -915,7 +915,9 @@ pub(crate) fn remap(c: &mut Canvas, start: usize, p: &Palette, accent: u32) {
         }
         let rgb = q.color >> 8;
         let a = q.color & 0xFF;
-        let to = if rgb == default_accent && p.accent.is_some() {
+        // Reborn draws controls in its fixed accent; a skin keeps its own
+        // (or, without one, the cover's) as before UI v4.
+        let to = if rgb == default_accent {
             Some(accent)
         } else {
             table

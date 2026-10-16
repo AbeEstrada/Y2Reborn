@@ -44,7 +44,7 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
     let focus = m.navigation.focus.min(page.rows.len().saturating_sub(1));
     match m.screen {
         Screen::ValueDetail => value_detail(c, m, interactive),
-        _ => group_page(c, ui, &page, focus, interactive, 38.),
+        _ => group_page(c, ui, m, &page, focus, interactive, 38.),
     }
 }
 
@@ -66,8 +66,7 @@ fn value_detail(c: &mut Canvas, m: &AppModel, interactive: bool) {
         );
         cy += 22.;
     }
-    let at = c.draw.len();
-    components::pill(
+    components::button(
         c,
         24.,
         HEIGHT - 56.,
@@ -75,16 +74,8 @@ fn value_detail(c: &mut Canvas, m: &AppModel, interactive: bool) {
         34.,
         "Back",
         Face::S13,
-        if interactive {
-            0xF2F3F5FF
-        } else {
-            color::GLASS
-        },
-        color::INK,
+        interactive,
     );
-    if interactive {
-        c.mark_focus(at);
-    }
 }
 
 /// The computer connection: what to do when it is ready, and a calm

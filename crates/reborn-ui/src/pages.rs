@@ -11,7 +11,7 @@ use reborn_core::{
         human_bytes, ChargingState, HealthLevel, LowBattery, SdCard, SleepPhase, SleepProblem,
         UpdatePhase, UpdateProblem, UsbTransfer, VolumeSpace, VolumeState, WakeReason, WifiProblem,
     },
-    AppModel, MediaSource, PlatformTask, Screen, Track,
+    AppModel, MediaSource, PlatformTask, Screen, Track, HOME_PINNABLE,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -54,6 +54,61 @@ impl Page {
     }
 }
 
+/// Home (UI v4): the six places a listener starts from, with any Music lists
+/// the owner pinned after Music.
+fn home(m: &AppModel) -> Vec<Item> {
+    let mut rows = vec![
+        row("Now Playing", "now_playing", ""),
+        row("Music", "music", ""),
+    ];
+    rows.extend(
+        HOME_PINNABLE
+            .iter()
+            .filter(|(key, _)| m.settings.home_pins.iter().any(|p| p == key))
+            .map(|(key, label)| row(label, key, "")),
+    );
+    rows.extend([
+        row("Playlists", "playlists", ""),
+        row("Radio", "radio", ""),
+        row("Search", "search", ""),
+        row("Settings", "settings", ""),
+    ]);
+    rows
+}
+
+/// Music: the library's lists, each with how much it holds.
+fn music(ui: &Ui, tracks: &[Track]) -> Vec<Item> {
+    let [artists, albums, songs, genres] = ui.library_counts(tracks);
+    let counted = |n: usize, one: &str, many: &str| {
+        if n == 0 {
+            String::new()
+        } else {
+            crate::components::count(n, one, many)
+        }
+    };
+    vec![
+        row("Artists", "artists", counted(artists, "artist", "artists")),
+        row("Albums", "albums", counted(albums, "album", "albums")),
+        row("Songs", "tracks", counted(songs, "song", "songs")),
+        row("Genres", "genres", counted(genres, "genre", "genres")),
+        row("Folders", "folders", ""),
+    ]
+}
+
+/// Display's Home Menu value: "Standard", or the pinned lists.
+fn home_summary(m: &AppModel) -> String {
+    let pinned: Vec<&str> = HOME_PINNABLE
+        .iter()
+        .filter(|(key, _)| m.settings.home_pins.iter().any(|p| p == key))
+        .map(|(_, label)| *label)
+        .collect();
+    match pinned.len() {
+        0 => "Standard".into(),
+        1 | 2 => pinned.join(", "),
+        n => format!("{n} lists added"),
+    }
+}
+
 fn row(label: &str, key: &str, secondary: impl Into<String>) -> Item {
     Item::new(label, key).with_secondary(secondary)
 }
@@ -71,27 +126,17 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
-        Screen::Home => Page::rows(vec![
-            row("Now Playing", "now_playing", ""),
-            row("Artists", "artists", ""),
-            row("Albums", "albums", ""),
-            row("Genres", "genres", ""),
-            row("Songs", "tracks", ""),
-            row("Folders", "folders", ""),
-            row("Playlists", "playlists", ""),
-            row("Search", "search", ""),
-            row("Radio", "radio", ""),
-            row("Settings", "settings", ""),
-        ]),
-        Screen::Music => Page::rows(vec![
-            Item::new("Albums", "albums"),
-            Item::new("Artists", "artists"),
-            Item::new("Genres", "genres"),
-            Item::new("Songs", "tracks"),
-            Item::new("Folders", "folders"),
-            Item::new("Playlists", "playlists"),
-            Item::new("Search", "search"),
-        ]),
+        Screen::Home => Page::rows(home(m)),
+        Screen::Music => Page::rows(music(ui, tracks)),
+        Screen::HomeMenu => Page::rows(
+            HOME_PINNABLE
+                .iter()
+                .map(|(key, label)| {
+                    let on = m.settings.home_pins.iter().any(|p| p == key);
+                    row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
+                })
+                .collect(),
+        ),
         Screen::NowPlaying if m.current().is_none() => Page::hero(
             "Nothing Playing",
             "Choose an album, artist or song to start listening.",
@@ -137,6 +182,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 .with_kind(RowKind::Chevron),
             );
             rows.push(row("Album View", "album_view", m.settings.album_view.label()));
+            rows.push(row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron));
             rows.push(
                 row(
                     "Theme",
@@ -156,7 +202,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Battery => battery(m),
         Screen::Sleep => sleep(m),
         Screen::Storage => storage(m),
-        Screen::Update => update(m),
+        Screen::Update => update(ui, m),
         Screen::About => Page::default()
             .fact("Reborn", reborn_core::VERSION)
             .fact(
@@ -252,7 +298,7 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
     let normalise = m.settings.replay_gain != reborn_core::ReplayGainMode::Off;
     Page::rows(vec![
         row("Equalizer", "equalizer", eq_preset_name(m)).with_kind(RowKind::Chevron),
-        row("Normalise Volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
+        row("Normalize Volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
         row("Gapless Playback", "gapless", "")
             .with_kind(RowKind::Toggle(m.settings.gapless_enabled)),
         row(
@@ -312,14 +358,12 @@ fn screen_timeout(m: &AppModel) -> Page {
 
 /// The skin picker: Reborn's own look first, then every installed skin.
 fn theme(ui: &Ui, m: &AppModel) -> Page {
-    let mut rows = vec![row("Reborn", "theme_set:", "The built-in look")
-        .with_kind(RowKind::Check(m.settings.theme.is_empty()))];
+    let mut rows = vec![
+        row("Reborn", "theme_set:", "").with_kind(RowKind::Check(m.settings.theme.is_empty()))
+    ];
     for skin in &ui.themes {
-        let detail = match (&skin.problem, skin.author.is_empty()) {
-            (Some(problem), _) => problem.clone(),
-            (None, false) => format!("by {}", skin.author),
-            (None, true) => skin.description.clone(),
-        };
+        // A skin's swatch says more than its author; only a problem is told.
+        let detail = skin.problem.clone().unwrap_or_default();
         rows.push(disabled(
             row(&skin.name, &format!("theme_set:{}", skin.id), detail)
                 .with_kind(RowKind::Check(m.settings.theme == skin.id)),
@@ -333,17 +377,6 @@ fn theme(ui: &Ui, m: &AppModel) -> Page {
         "Add skins by copying their folder into Themes on Internal Storage or the SD card.".into()
     });
     page
-}
-
-fn usb_summary(m: &AppModel) -> &'static str {
-    match m.platform.snapshot.usb {
-        UsbTransfer::Ready => "Ready",
-        UsbTransfer::Copying => "Copying Files…",
-        UsbTransfer::Developer => "Advanced Transfer",
-        UsbTransfer::Starting => "Preparing…",
-        UsbTransfer::Error => "Reconnect cable",
-        UsbTransfer::Disconnected | UsbTransfer::Unknown => "",
-    }
 }
 
 /// Wi-Fi and Bluetooth before the owner's one-time firmware copy (Y2Linux 49+):
@@ -371,7 +404,7 @@ fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
 fn radio_menu(ui: &Ui) -> Page {
     let r = &ui.radio;
     let favorites = match r.favorites.len() {
-        0 => "Hold Select on a station to add it".to_owned(),
+        0 => "No stations yet".to_owned(),
         n => crate::components::count(n, "station", "stations"),
     };
     let mut rows = vec![];
@@ -488,7 +521,7 @@ fn radio_stations(ui: &Ui) -> Page {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                let mut detail = s.summary();
+                let mut detail = crate::views_radio::station_detail(s);
                 if r.is_favorite(s) {
                     detail = if detail.is_empty() {
                         "Favorite".into()
@@ -589,18 +622,14 @@ fn wifi(ui: &Ui) -> Page {
     page
 }
 
+/// Saved, Secured or Open; the bars beside it show the signal (UI v4).
 fn network_detail(n: &NetworkView) -> String {
-    let signal = match n.bars {
-        0 | 1 => "Weak signal",
-        2 => "Good signal",
-        _ => "Strong signal",
-    };
     match (n.saved_id.is_some(), n.secured) {
         (_, None) => "Unsupported security".into(),
         (true, _) if !n.visible => "Saved · Not in range".into(),
-        (true, _) => format!("Saved · {signal}"),
-        (false, Some(true)) => format!("Secured · {signal}"),
-        (false, Some(false)) => format!("Open · {signal}"),
+        (true, _) => "Saved".into(),
+        (false, Some(true)) => "Secured".into(),
+        (false, Some(false)) => "Open".into(),
     }
 }
 
@@ -662,7 +691,7 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
         rows.push(row(
             &d.name,
             &format!("bt_device:{}", d.path),
-            d.description(&m.output),
+            d.description(),
         ));
     }
     let scanning = b.scan.active();
@@ -1024,6 +1053,18 @@ pub fn free_text(v: &VolumeSpace) -> Option<String> {
     }
 }
 
+/// What the computer connection is doing; empty without a cable.
+fn usb_summary(m: &AppModel) -> &'static str {
+    match m.platform.snapshot.usb {
+        UsbTransfer::Ready => "Ready",
+        UsbTransfer::Copying => "Copying Files…",
+        UsbTransfer::Developer => "Advanced Transfer",
+        UsbTransfer::Starting => "Preparing…",
+        UsbTransfer::Error => "Reconnect cable",
+        UsbTransfer::Disconnected | UsbTransfer::Unknown => "",
+    }
+}
+
 fn storage(m: &AppModel) -> Page {
     let s = &m.platform.snapshot;
     if !s.observed {
@@ -1045,21 +1086,25 @@ fn storage(m: &AppModel) -> Page {
         ),
         _ => Page::default(),
     };
-    page = page.with_rows(vec![
-        disabled(
-            row(
-                "Scan for Music",
-                "scan_library",
-                if m.library.scanning {
-                    "Scanning…"
-                } else {
-                    ""
-                },
-            ),
-            !m.library.scanning,
+    page = page.with_rows(vec![disabled(
+        row(
+            "Scan for Music",
+            "scan_library",
+            if m.library.scanning {
+                "Scanning…"
+            } else {
+                ""
+            },
         ),
-        row("From a Computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
-    ]);
+        !m.library.scanning,
+    )]);
+    // The computer page opens by itself when a cable is connected; Storage
+    // leads back to it only while one is (UI v4: no idle "From a Computer").
+    if !usb_summary(m).is_empty() {
+        page.rows.push(
+            row("From a Computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
+        );
+    }
     page = page.fact(
         "Internal Storage",
         free_text(internal).unwrap_or_else(|| "Checking…".into()),
@@ -1102,13 +1147,25 @@ pub fn update_summary(m: &AppModel) -> String {
     }
 }
 
-/// "1.0.0-platform-v1-power-final-candidate.35" reads as "1.0.0 (35)".
+/// "1.0.0-beta.6.3" reads as "1.0 Beta 6.3", "1.0.0" as "1.0", and a
+/// development build "1.0.0-platform-v1-power-final-candidate.35" as "1.0.0 (35)".
 pub fn short_version(version: &str) -> String {
-    // "1.0.0-beta.1" reads as "1.0.0 Beta 1".
+    let release = |base: &str| {
+        base.strip_suffix(".0")
+            .filter(|b| b.contains('.'))
+            .unwrap_or(base)
+            .to_owned()
+    };
     if let Some((base, beta)) = version.split_once("-beta.") {
-        if !beta.is_empty() && beta.chars().all(|c| c.is_ascii_digit()) {
-            return format!("{base} Beta {beta}");
+        let numbered = beta
+            .split('.')
+            .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        if numbered {
+            return format!("{} Beta {beta}", release(base));
         }
+    }
+    if !version.contains('-') && version.split('.').count() == 3 {
+        return release(version);
     }
     match (version.split('-').next(), version.rsplit('.').next()) {
         (Some(base), Some(build))
@@ -1121,10 +1178,24 @@ pub fn short_version(version: &str) -> String {
 }
 
 /// About & Updates: the update status first, then the facts an owner may want.
-fn update(m: &AppModel) -> Page {
+fn update(ui: &Ui, m: &AppModel) -> Page {
     let mut page = update_status(m);
-    page.rows
-        .push(row("Version", "version", reborn_core::VERSION));
+    page.rows.push(row(
+        "Version",
+        "version",
+        short_version(reborn_core::VERSION),
+    ));
+    // How much music there is, and the way to Storage (UI v4: the count left
+    // Storage's own page).
+    let songs = ui.library_counts(&m.library.tracks)[2];
+    page.rows.push(
+        row(
+            "Music Library",
+            "storage",
+            crate::components::count(songs, "song", "songs"),
+        )
+        .with_kind(RowKind::Chevron),
+    );
     page.rows
         .push(row("Reset Settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
     page

@@ -54,6 +54,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
             views_playing::now_playing(&mut c, ui, m, tracks, has_art, interactive)
         }
         Screen::Home => views_library::home(&mut c, ui, m, tracks, has_art, interactive),
+        Screen::Music => views_library::music(&mut c, ui, m, tracks, interactive),
         Screen::Albums
         | Screen::Artists
         | Screen::Genres
@@ -72,6 +73,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::ScreenTimeout
         | Screen::Theme
         | Screen::TimeZone
+        | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
@@ -119,6 +121,7 @@ fn native_screen(
         | Screen::ScreenTimeout
         | Screen::Theme
         | Screen::TimeZone
+        | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
@@ -181,6 +184,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::ScreenTimeout => keys!("screen_off"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
+        Screen::HomeMenu => keys!("home_menu"),
         Screen::SettingsLibrary => keys!("library"),
         Screen::SettingsDisplay => keys!("display"),
         Screen::SettingsSystem => keys!("service"),
@@ -257,7 +261,7 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         Some(reborn_core::PlatformTask::UpdateApply | reborn_core::PlatformTask::UpdateRollback)
     ) {
         views_system::installing(&mut c);
-        skin::remap(&mut c, 1, &skin.palette, ui.accent());
+        skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
         return c.finish();
     }
     if m.screen_off {
@@ -269,7 +273,7 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         && ui.alert.is_none();
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
-        skin::remap(&mut c, 1, &skin.palette, ui.accent());
+        skin::remap(&mut c, 1, &skin.palette, ui.cover_accent());
         skinned_overlays(&mut c, ui, skin, m, tracks);
         return c.finish();
     }
@@ -294,7 +298,7 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         }
         None => {
             native_screen(&mut c, ui, m, tracks, has_art, interactive);
-            skin::remap(&mut c, start, &skin.palette, ui.accent());
+            skin::remap(&mut c, start, &skin.palette, ui.cover_accent());
         }
     }
     skinned_overlays(&mut c, ui, skin, m, tracks);
@@ -360,7 +364,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
                 let body = |c: &mut Canvas| {
                     let at = c.draw.len();
                     crate::keyboard::draw_body(c, ui, m, tracks, k);
-                    skin::remap(c, at, &skin.palette, ui.accent());
+                    skin::remap(c, at, &skin.palette, ui.cover_accent());
                 };
                 let s = Scene {
                     native: Some(&body),
@@ -377,7 +381,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
             }
             None => {
                 crate::keyboard::draw(c, ui, m, tracks, k);
-                skin::remap(c, at, &skin.palette, ui.accent());
+                skin::remap(c, at, &skin.palette, ui.cover_accent());
             }
         }
     } else if m.navigation.modal.is_some() {
@@ -432,7 +436,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
                 } else {
                     components::action_sheet(c, title, body, &rows, *focus);
                 }
-                skin::remap(c, at, &skin.palette, ui.accent());
+                skin::remap(c, at, &skin.palette, ui.cover_accent());
             }
         }
     }
@@ -464,7 +468,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
             None => {
                 let at = c.draw.len();
                 components::toast(c, message, if *error { Tone::Error } else { Tone::Info });
-                skin::remap(c, at, &skin.palette, ui.accent());
+                skin::remap(c, at, &skin.palette, ui.cover_accent());
             }
         }
     }
@@ -475,13 +479,13 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
             None => {
                 let at = c.draw.len();
                 views_playing::volume_line(c, ui, m);
-                skin::remap(c, at, &skin.palette, ui.accent());
+                skin::remap(c, at, &skin.palette, ui.cover_accent());
             }
         }
     }
     let at = c.draw.len();
     views_playing::power_hold(c, ui);
-    skin::remap(c, at, &skin.palette, ui.accent());
+    skin::remap(c, at, &skin.palette, ui.cover_accent());
 }
 
 /// The sheet, dialog or entry surface above the screen, then toasts and the
@@ -673,6 +677,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::ScreenTimeout => "Screen Off After".into(),
         Screen::Theme => "Theme".into(),
         Screen::TimeZone => "Time Zone".into(),
+        Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::SettingsSystem => "Service".into(),
