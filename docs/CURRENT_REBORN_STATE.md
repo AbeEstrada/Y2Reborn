@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.6 — Y2Linux 1.0 Beta 7.6 (Baseline 67), 2026-10-16 (latest): smooth update screens
+## 1.0.0-beta.7.7 — Y2Linux 1.0 Beta 7.7 (Baseline 70), 2026-10-16 (latest): Last.fm scrobbling
+
+- `reborn_core::scrobble` (half or 4 min heard, seeks/pauses add nothing, radio/untagged never), `reborn_platform::scrobble`
+  (fsynced locked JSONL queue, `drop_sent`, Rockbox log, clock trust, CLOCK_BOOTTIME), `reborn_platform::lastfm` (own MD5,
+  curl form on stdin, QR token flow + mobile-session fallback, batches of 50, back-off with random spread),
+  `app/reborn/src/scrobbling.rs`, Settings → Last.fm with an own QR encoder (native in every skin). App key from
+  `/usr/share/reborn/lastfm-api.json` (release image); session 0600 on Y2DATA. Previews 96–96d. 509 tests, strict Clippy.
+- Device checks owed: QR sign-in, first real scrobble, offline play sent after sleep.
+
+## 1.0.0-beta.7.6 — Y2Linux 1.0 Beta 7.6 (Baseline 67), 2026-10-16: smooth update screens
 
 - Owner: low fps on the update download. Cause: download/check counted only as `spinning` (calm 34-ms frame gap, ≤ 29
   fps). `Ui::download_shown` (visible, screen on) joins `gliding()` but not `responding()` (no CPU lease); the percentage
