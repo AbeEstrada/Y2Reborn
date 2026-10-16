@@ -485,6 +485,29 @@ pub fn backoff(failures: u32) -> Duration {
     Duration::from_secs((60u64 << failures.min(6)).min(3600))
 }
 
+/// `backoff` plus up to a quarter more, at random: after a Last.fm outage the
+/// players come back spread out instead of all in the same second.
+pub fn backoff_spread(failures: u32) -> Duration {
+    spread(backoff(failures), random_u32())
+}
+/// `base` plus `random`'s share of a quarter of it.
+pub fn spread(base: Duration, random: u32) -> Duration {
+    base + base / 4 * random / u32::MAX
+}
+fn random_u32() -> u32 {
+    let mut value = [0u8; 4];
+    // SAFETY: getrandom writes at most the buffer's length into it.
+    let n = unsafe { libc::getrandom(value.as_mut_ptr().cast(), value.len(), 0) };
+    if n == 4 {
+        u32::from_ne_bytes(value)
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    }
+}
+
 pub fn session_path(root: &Path) -> PathBuf {
     root.join("state/lastfm.json")
 }
@@ -698,6 +721,20 @@ mod tests {
         assert_eq!(queue.len(), 3);
         assert_eq!(backoff(0), Duration::from_secs(60));
         assert_eq!(backoff(10), Duration::from_secs(3600));
+        assert_eq!(spread(Duration::from_secs(60), 0), Duration::from_secs(60));
+        assert_eq!(
+            spread(Duration::from_secs(60), u32::MAX),
+            Duration::from_secs(75)
+        );
+        let spread_out: std::collections::HashSet<_> =
+            (0..20).map(|_| backoff_spread(2).as_millis()).collect();
+        assert!(
+            spread_out.len() > 1,
+            "retries are not all at the same moment"
+        );
+        assert!(spread_out
+            .iter()
+            .all(|&ms| (240_000..=300_000).contains(&ms)));
         fs::remove_dir_all(root).unwrap();
     }
 }

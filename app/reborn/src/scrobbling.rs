@@ -381,7 +381,7 @@ impl Runtime {
             Reply::Flushed(lastfm::flush(&client, &session, &queue, now_unix))
         });
         if !self.lastfm.flushing {
-            self.lastfm.next_flush = now + lastfm::backoff(0);
+            self.lastfm.next_flush = now + lastfm::backoff_spread(0);
         }
         self.lastfm_view();
     }
@@ -479,7 +479,7 @@ impl Runtime {
                     Err(e) => {
                         self.lastfm.failures += 1;
                         self.lastfm.next_flush =
-                            Instant::now() + lastfm::backoff(self.lastfm.failures - 1);
+                            Instant::now() + lastfm::backoff_spread(self.lastfm.failures - 1);
                         self.log.emit(
                             Level::Warn,
                             "lastfm",
