@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.5 — Y2Linux 1.0 Beta 7.5 (Baseline 66), 2026-10-16 (latest): larger status bar, Skin in Settings
+## 1.0.0-beta.7.6 — Y2Linux 1.0 Beta 7.6 (Baseline 67), 2026-10-16 (latest): smooth update screens
+
+- Owner: low fps on the update download. Cause: download/check counted only as `spinning` (calm 34-ms frame gap, ≤ 29
+  fps). `Ui::download_shown` (visible, screen on) joins `gliding()` but not `responding()` (no CPU lease); the percentage
+  follows `download_fill`; the sweep fades at its ends; Connecting eases.
+- `views_settings::steps` (Download · Check · Install) replaces "STEP 1 OF 3", also on `views_system::installing`;
+  10-px bar with a bright head. Preview `34d-update-installing`. 489 tests, strict Clippy.
+
+## 1.0.0-beta.7.5 — Y2Linux 1.0 Beta 7.5 (Baseline 66), 2026-10-16: larger status bar, Skin in Settings
 
 - Status bar layout C (owner's choice of four rendered variants): `status_bar` draws the Title Case name beside the
   back arrow (SemiBold 15, white; call sites no longer uppercase), `status_cluster(.., roomy)` returns its left edge
