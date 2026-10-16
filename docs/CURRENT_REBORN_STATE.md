@@ -1,6 +1,13 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.2 — Y2Linux 1.0 Beta 7.2 (Baseline 63), 2026-10-16 (latest): motion and the Now Playing wave
+## 1.0.0-beta.7.3 — Y2Linux 1.0 Beta 7.3 (Baseline 64), 2026-10-16 (latest): USB message and symbol
+
+- Owner: the locked computer screen (7.1) kept the player unusable while connected; a message and a status-bar symbol
+  instead. `Ui::observe` flashes "Connected to a computer" / "Copying files from the computer…"; `status_cluster` draws
+  `Icon::Usb` while Ready/Copying (accent while copying). Removed: `usb_overlay`, `views_system::usb`, the input lock,
+  `usb_dismissed`, `Settings::usb_developer` and "Use While Connected". 487 tests, strict Clippy.
+
+## 1.0.0-beta.7.2 — Y2Linux 1.0 Beta 7.2 (Baseline 63), 2026-10-16: motion and the Now Playing wave
 
 - Owner: more animation for a polished, responsive feel, at 60 fps; the progress as a wave, not a perfect sine.
 - `motion.rs`: per-key eased values (QUICK/CALM), retargetable, frame-rate independent; `Motion::moving()` and
