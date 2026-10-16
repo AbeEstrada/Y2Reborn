@@ -1,6 +1,21 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.6.3 — Y2Linux 1.0 Beta 6.3 (Baseline 60), 2026-10-16 (latest): sleep while paused
+## 1.0.0-beta.7 — Y2Linux 1.0 Beta 7 (Baseline 61), 2026-10-16 (latest): UI v4
+
+- Owner: the UI looked full and rough after playlists, search and radio; make it consistent and for listeners. Review,
+  owner decisions and every phase: [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md).
+- **One system:** a fixed accent (`Ui::accent`) for controls and state, the cover's colour (`Ui::cover_accent`) only on Now
+  Playing and the Home cover card; `components::focus_row`, `button`, `empty_state`/`Mark`, `menu_entry`; one LIVE badge.
+  Skins are drawn with the cover accent as before.
+- **Home and Music:** Home is Now Playing, Music, Playlists, Radio, Search, Settings; Music lists Artists, Albums, Songs,
+  Genres, Folders with counts; Settings → Display → Home Menu pins lists (`Settings::home_pins`, `Effect::SetHomePin`,
+  `Screen::HomeMenu`). Display scrolls past the brightness card.
+- **Less on screen:** no hint lines (hold menus name the actions), no NOW PLAYING label, gapless icon or radio codec tags;
+  stations "Country · Genre" without ranks; Bluetooth Connected/Paired, Wi-Fi Saved/Secured/Open; folder roots show songs;
+  theme swatches (`SkinInfo::swatch`); Storage bars + Scan, About "1.0 Beta 7" + Music Library; Normalize.
+- 479 tests, strict Clippy; previews of 114 states and 16 skins compared by eye. Device tour with screen capture owed.
+
+## 1.0.0-beta.6.3 — Y2Linux 1.0 Beta 6.3 (Baseline 60), 2026-10-16: sleep while paused
 
 - Owner: Power while paused "does not go to sleep … finishing another task". Device journal (6.2, battery): four requests
   refused `activity_operation:808/reborn` (Reborn's PID). An open sink holds a shared flock on `/run/y2/activity.lock`
