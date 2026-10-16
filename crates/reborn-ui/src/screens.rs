@@ -400,7 +400,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
         let focus = m.navigation.modal_focus.min(rows.len().saturating_sub(1));
         sheet = Some(match &m.navigation.modal {
             Some(Modal::Confirm(action)) => {
-                let danger = !matches!(action, reborn_core::ConfirmAction::Platform(_));
+                let danger = crate::confirm_is_danger(*action);
                 (title, body, rows, focus, danger, true)
             }
             Some(Modal::ContextMenu) => {
@@ -599,7 +599,7 @@ fn modal(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
         .collect();
     match &m.navigation.modal {
         Some(Modal::Confirm(action)) => {
-            let danger = !matches!(action, reborn_core::ConfirmAction::Platform(_));
+            let danger = crate::confirm_is_danger(*action);
             components::dialog(c, &title, &body, &sheet, focus, danger);
         }
         Some(Modal::ContextMenu) => {

@@ -1420,6 +1420,11 @@ impl Ui {
                             PlatformTask::UpdateApply => u.can_install,
                             PlatformTask::UpdateCancel => u.can_cancel,
                             PlatformTask::UpdateRollback => u.can_rollback,
+                            // Only the old storage the platform still reports waiting.
+                            PlatformTask::InternalStorageSetup => matches!(
+                                m.platform.snapshot.internal_setup,
+                                reborn_core::platform::InternalSetup::Waiting { .. }
+                            ),
                             _ => true,
                         };
                 }
@@ -2904,6 +2909,7 @@ fn platform_task(name: &str) -> PlatformTask {
         "storage_benchmark" => StorageBenchmark,
         "library_benchmark" => LibraryBenchmark,
         "network" => NetworkCheck,
+        "internal_setup" => InternalStorageSetup,
         _ => Refresh,
     }
 }
@@ -2918,9 +2924,14 @@ fn confirm_action(name: &str) -> Option<ConfirmAction> {
         "forget_bluetooth" => ConfirmAction::ForgetAllBluetooth,
         "clear_cache" => ConfirmAction::ClearCache,
         "update_apply" | "update_cancel" | "update_rollback" | "storage_benchmark"
-        | "library_benchmark" => ConfirmAction::Platform(platform_task(name)),
+        | "library_benchmark" | "internal_setup" => ConfirmAction::Platform(platform_task(name)),
         _ => return None,
     })
+}
+
+/// Red (cannot be undone): everything except platform checks, and erasing the old storage.
+pub(crate) fn confirm_is_danger(action: ConfirmAction) -> bool {
+    !matches!(action, ConfirmAction::Platform(task) if task != PlatformTask::InternalStorageSetup)
 }
 
 fn confirm_label(action: ConfirmAction) -> &'static str {
@@ -2938,6 +2949,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::Platform(PlatformTask::UpdateApply) => "Restart and Install",
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => "Cancel Update",
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => "Restore",
+        ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => "Set Up Now",
         ConfirmAction::Platform(_) => "Run",
     }
 }
@@ -2993,6 +3005,10 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => (
             "Restore Previous System?",
             "The player restarts into the system that was installed before the last update.",
+        ),
+        ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => (
+            "Set Up Internal Storage?",
+            "You get 5.4 GB for music. The old Innioasis storage and every file on it are erased: copy them to a computer first (the Old Storage drive). The player restarts afterwards.",
         ),
         ConfirmAction::Platform(_) => (
             "Run This Check?",

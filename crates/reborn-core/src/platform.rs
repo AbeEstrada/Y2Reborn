@@ -428,6 +428,29 @@ pub struct DiagnosticSection {
     pub facts: Vec<Fact>,
 }
 
+/// Turning the stock player's storage into Internal Storage (Y2Linux STORAGE-SETUP): the
+/// platform does it by itself at start unless the old storage holds a real library.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InternalSetup {
+    /// An older platform, or not observed this boot.
+    #[default]
+    Unknown,
+    NotNeeded,
+    /// Waits for a later start (an update still being checked, the battery).
+    Pending,
+    /// The old storage holds more than can be kept: the listener decides (it is erased).
+    Waiting {
+        files: u32,
+        bytes: u64,
+    },
+    Running,
+    /// Set up during this start; `kept` old files are in "Old Player Files".
+    Done {
+        kept: u32,
+    },
+    Failed,
+}
+
 /// Everything Reborn knows about the platform from its last observation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlatformSnapshot {
@@ -435,6 +458,11 @@ pub struct PlatformSnapshot {
     pub observed: bool,
     /// The MediaTek radio firmware the owner supplies once (Y2Linux 49+).
     pub radio_firmware: RadioFirmware,
+    /// The copy goes into the Firmware folder on Internal Storage (else the Firmware drive).
+    pub firmware_in_internal: bool,
+    /// The last copy was refused: not enough space where it was copied to.
+    pub firmware_no_space: bool,
+    pub internal_setup: InternalSetup,
     pub info: PlatformInfo,
     pub storage: StorageState,
     pub usb: UsbTransfer,

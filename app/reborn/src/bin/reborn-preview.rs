@@ -565,6 +565,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("32-storage", at(Screen::Storage, ""), |_, m| m
         .navigation
         .focus = 0);
+    case!(
+        "32-storage-setup-waiting",
+        at(Screen::Storage, ""),
+        |_, m| {
+            m.navigation.focus = 0;
+            m.platform.snapshot.internal_setup = reborn_core::platform::InternalSetup::Waiting {
+                files: 1234,
+                bytes: 3_100_000_000,
+            };
+        }
+    );
+    case!("32-storage-setup-question", at(Screen::Home, ""), |_, m| {
+        m.platform.snapshot.internal_setup = reborn_core::platform::InternalSetup::Waiting {
+            files: 1234,
+            bytes: 3_100_000_000,
+        };
+        m.navigation.modal = Some(reborn_core::Modal::Confirm(
+            reborn_core::ConfirmAction::Platform(reborn_core::PlatformTask::InternalStorageSetup),
+        ));
+    });
+    case!("32-firmware-no-space", at(Screen::Wifi, ""), |_, m| {
+        m.platform.snapshot.radio_firmware = reborn_core::platform::RadioFirmware::Missing;
+        m.platform.snapshot.firmware_no_space = true;
+    });
     case!("32-storage-sd-repair", at(Screen::Storage, ""), |_, m| {
         m.navigation.focus = 0;
         m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::NeedsRepair;

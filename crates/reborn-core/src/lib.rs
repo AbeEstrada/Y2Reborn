@@ -700,6 +700,8 @@ pub enum PlatformTask {
     StorageBenchmark,
     LibraryBenchmark,
     NetworkCheck,
+    /// Set up Internal Storage over the old storage the platform reported waiting (erases it).
+    InternalStorageSetup,
 }
 
 /// Presented platform state. Owned and filled by the application from the
@@ -795,6 +797,9 @@ pub struct Settings {
     pub lastfm_scrobble: bool,
     #[serde(default = "default_true")]
     pub lastfm_now_playing: bool,
+    /// The one-time "Set Up Internal Storage?" question was shown.
+    #[serde(default)]
+    pub internal_setup_asked: bool,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -863,6 +868,7 @@ impl Default for Settings {
             scrobble_log: false,
             lastfm_scrobble: true,
             lastfm_now_playing: true,
+            internal_setup_asked: false,
         }
     }
 }

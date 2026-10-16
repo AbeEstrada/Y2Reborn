@@ -698,7 +698,10 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
     let volumes = [
         (
             "Internal Storage",
-            Some(&snapshot.storage.internal),
+            // Not set up yet (STORAGE-SETUP): no bar for the small Y2DATA.
+            internal_note(snapshot.internal_setup)
+                .is_none()
+                .then_some(&snapshot.storage.internal),
             0x6EA0FFFFu32,
         ),
         (
@@ -746,7 +749,9 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
                 }
             }
             None => {
-                let note = if matches!(snapshot.storage.sd, SdCard::Error) && i == 1 {
+                let note = if i == 0 {
+                    internal_note(snapshot.internal_setup).unwrap_or("Checking…")
+                } else if matches!(snapshot.storage.sd, SdCard::Error) && i == 1 {
                     "Card can't be read"
                 } else if matches!(snapshot.storage.sd, SdCard::NeedsRepair) && i == 1 {
                     "Needs repair · Check it on a computer"
@@ -1042,4 +1047,15 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
         interactive,
         start_rows,
     );
+}
+
+/// The Internal Storage card while the old storage is not set up yet.
+fn internal_note(setup: reborn_core::platform::InternalSetup) -> Option<&'static str> {
+    use reborn_core::platform::InternalSetup;
+    match setup {
+        InternalSetup::Waiting { .. } => Some("Not set up · Your old files are kept"),
+        InternalSetup::Pending => Some("Restart to finish setting up"),
+        InternalSetup::Running => Some("Setting up…"),
+        _ => None,
+    }
 }

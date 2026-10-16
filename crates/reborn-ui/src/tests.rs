@@ -3282,3 +3282,67 @@ fn lastfm_password_sign_in_never_shows_or_prints_the_password() {
     assert!(!format!("{effect:?}").contains("hunter22"));
     assert!(ui.keyboard.is_none());
 }
+
+#[test]
+fn internal_storage_setup_is_offered_only_for_a_waiting_old_library_and_confirmed_red() {
+    use reborn_core::platform::InternalSetup;
+    let mut ui = radios();
+    let mut m = app(Screen::Storage);
+    assert!(!ui
+        .rows(&m, &[])
+        .iter()
+        .any(|r| r.key == "confirm:internal_setup"));
+    m.platform.snapshot.internal_setup = InternalSetup::Pending;
+    assert!(visible_text(&ui, &m).contains("Restart to finish setting up"));
+    m.platform.snapshot.internal_setup = InternalSetup::Waiting {
+        files: 1234,
+        bytes: 3_100_000_000,
+    };
+    let row = ui
+        .rows(&m, &[])
+        .into_iter()
+        .find(|r| r.key == "confirm:internal_setup")
+        .expect("Set Up Internal Storage row");
+    assert!(row.label.contains("Set Up Internal Storage"));
+    assert!(visible_text(&ui, &m).contains("1234 old files"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "confirm:internal_setup"),
+        Effect::None
+    );
+    let (title, body) = ui.modal_copy(&m);
+    assert_eq!(title, "Set Up Internal Storage?");
+    assert!(body.contains("erased") && body.contains("Old Storage") && body.contains("restarts"));
+    assert!(crate::confirm_is_danger(ConfirmAction::Platform(
+        PlatformTask::InternalStorageSetup
+    )));
+    assert!(!crate::confirm_is_danger(ConfirmAction::Platform(
+        PlatformTask::StorageBenchmark
+    )));
+    // Cancel has the focus; Set Up Now runs the platform task.
+    assert_eq!(m.navigation.modal_focus, 0);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::InternalStorageSetup)
+    );
+    // A stale question cannot erase anything once the platform no longer waits.
+    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::Platform(
+        PlatformTask::InternalStorageSetup,
+    )));
+    m.platform.snapshot.internal_setup = InternalSetup::NotNeeded;
+    assert!(!ui.modal_rows_public(&m, &[])[1].enabled);
+}
+
+#[test]
+fn radio_firmware_page_names_the_right_place_and_a_space_refusal() {
+    use reborn_core::platform::RadioFirmware;
+    let ui = radios();
+    let mut m = app(Screen::Wifi);
+    m.platform.snapshot.radio_firmware = RadioFirmware::Missing;
+    assert!(visible_text(&ui, &m).contains("Firmware drive"));
+    m.platform.snapshot.firmware_in_internal = true;
+    assert!(visible_text(&ui, &m).contains("Firmware folder on Internal Storage"));
+    m.platform.snapshot.firmware_no_space = true;
+    let text = visible_text(&ui, &m);
+    assert!(text.contains("Not Enough Space") && text.contains("SD card"));
+}

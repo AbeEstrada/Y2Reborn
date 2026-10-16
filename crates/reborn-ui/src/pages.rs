@@ -452,16 +452,25 @@ fn theme(ui: &Ui, m: &AppModel) -> Page {
 /// what to do, while it installs, and when the file was not the right one.
 fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
     use reborn_core::platform::RadioFirmware;
-    const HOW: &str = "Connect the player to a computer and copy system.img from the Innioasis Y2 firmware package to the Firmware drive.";
-    Some(match m.platform.snapshot.radio_firmware {
-        RadioFirmware::Missing => Page::hero(format!("{radio} Needs the Radio Firmware"), HOW),
+    let s = &m.platform.snapshot;
+    let how = if s.firmware_in_internal {
+        "Connect the player to a computer and copy system.img from the Innioasis Y2 firmware package into the Firmware folder on Internal Storage."
+    } else {
+        "Connect the player to a computer and copy system.img from the Innioasis Y2 firmware package to the Firmware drive."
+    };
+    Some(match s.radio_firmware {
+        RadioFirmware::Missing if s.firmware_no_space => Page::hero(
+            "Not Enough Space for That File",
+            "Use system.img from the Innioasis zip (about 520 MB), or copy it into a folder named Firmware on the SD card.",
+        ),
+        RadioFirmware::Missing => Page::hero(format!("{radio} Needs the Radio Firmware"), how),
         RadioFirmware::Installing => Page::hero(
             "Installing the Radio Firmware…",
             "This takes a few seconds. Wi-Fi and Bluetooth start by themselves.",
         ),
         RadioFirmware::Failed => Page::hero(
             "That File Isn't the Y2 Firmware",
-            "Use system.img from the Innioasis Y2 firmware package (v3.2.0). Delete the file on the Firmware drive and copy the right one.",
+            "Use system.img from the Innioasis Y2 firmware package (v3.2.0). Delete the copied file and copy the right one.",
         ),
         RadioFirmware::Ready | RadioFirmware::Unknown => return None,
     })
@@ -1178,9 +1187,37 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
             row("From a Computer", "pc_transfer", usb_summary(m)).with_kind(RowKind::Chevron),
         );
     }
+    // Y2Linux sets Internal Storage up by itself at start; a real library on
+    // the old storage waits for the listener (it is erased).
+    use reborn_core::platform::InternalSetup;
+    if let InternalSetup::Waiting { files, bytes } = s.internal_setup {
+        page.rows.push(
+            row(
+                "Set Up Internal Storage",
+                "confirm:internal_setup",
+                if files == 0 {
+                    // The platform could not read the old storage (nothing to copy off).
+                    "Old storage can't be read".to_owned()
+                } else {
+                    format!(
+                        "{} old {} · {}",
+                        files,
+                        if files == 1 { "file" } else { "files" },
+                        reborn_core::platform::human_bytes(bytes)
+                    )
+                },
+            )
+            .with_kind(RowKind::Chevron),
+        );
+    }
     page = page.fact(
         "Internal Storage",
-        free_text(internal).unwrap_or_else(|| "Checking…".into()),
+        match s.internal_setup {
+            InternalSetup::Pending => "Restart to finish setting up".into(),
+            InternalSetup::Running => "Setting up…".into(),
+            InternalSetup::Waiting { .. } => "Not set up · Old files kept".into(),
+            _ => free_text(internal).unwrap_or_else(|| "Checking…".into()),
+        },
     );
     page = page.fact(
         "SD Card",

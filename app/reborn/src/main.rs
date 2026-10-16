@@ -127,6 +127,8 @@ struct Runtime {
     platform_observed: bool,
     /// The release the daily check last announced, so the toast shows once.
     announced_update: Option<String>,
+    /// "Internal Storage is ready" was said this start.
+    announced_setup: bool,
     /// Remaining frames of the first-frame fade from the boot mark into the UI.
     boot_fade: u8,
     thumbs: Option<artwork::Worker>,
@@ -1683,6 +1685,16 @@ impl Runtime {
                 if self.model.platform.busy.is_some() {
                     return Ok(());
                 }
+                if task == reborn_core::PlatformTask::InternalStorageSetup
+                    && matches!(
+                        self.model.platform.snapshot.usb,
+                        reborn_core::platform::UsbTransfer::Ready
+                            | reborn_core::platform::UsbTransfer::Copying
+                            | reborn_core::platform::UsbTransfer::Starting
+                    )
+                {
+                    return Err("Unplug from the computer first".into());
+                }
                 if task == reborn_core::PlatformTask::SleepRequest {
                     self.sleep_attempt = Some(Instant::now());
                     use reborn_core::platform::{SleepPhase, SleepProblem, SleepState};
@@ -2402,6 +2414,7 @@ impl Runtime {
         let mut blank_screen = false;
         // The one-step update installs right after its download (Beta 7.1).
         let mut install_next = false;
+        let mut restart_after_setup = false;
         let p = &mut self.model.platform;
         match reply {
             client::Reply::Sleep(result) => {
@@ -2452,6 +2465,39 @@ impl Runtime {
                         && p.snapshot.radio_firmware == Ready
                     {
                         self.ui.flash("Wi-Fi and Bluetooth are ready");
+                    }
+                }
+                {
+                    // Y2Linux STORAGE-SETUP: said once when it ran at this start;
+                    // a real old library is asked about once (Settings > Storage
+                    // keeps the choice).
+                    use reborn_core::platform::InternalSetup;
+                    match p.snapshot.internal_setup {
+                        InternalSetup::Done { kept } if !self.announced_setup => {
+                            self.announced_setup = true;
+                            self.ui.flash(match kept {
+                                0 => "Internal Storage is ready".to_owned(),
+                                1 => "Internal Storage is ready · Kept 1 file in Old Player Files"
+                                    .to_owned(),
+                                n => format!(
+                                    "Internal Storage is ready · Kept {n} files in Old Player Files"
+                                ),
+                            });
+                        }
+                        InternalSetup::Waiting { .. }
+                            if !self.model.settings.internal_setup_asked
+                                && self.model.navigation.modal.is_none() =>
+                        {
+                            self.model.settings.internal_setup_asked = true;
+                            self.model.navigation.modal = Some(reborn_core::Modal::Confirm(
+                                reborn_core::ConfirmAction::Platform(
+                                    reborn_core::PlatformTask::InternalStorageSetup,
+                                ),
+                            ));
+                            self.model.navigation.modal_focus = 0;
+                            self.dirty.mark_both();
+                        }
+                        _ => {}
                     }
                 }
                 p.snapshot.diagnostics.extend(health_section);
@@ -2545,6 +2591,12 @@ impl Runtime {
                                 self.ui.flash("Diagnostic report saved. See Latest Result.");
                                 self.ui.show_operation_result(&mut self.model);
                             }
+                            InternalStorageSetup => {
+                                // Library, USB and folders start again on the new
+                                // Internal Storage.
+                                self.ui.flash("Internal Storage is ready. Restarting…");
+                                restart_after_setup = true;
+                            }
                             _ => self.ui.flash("Check finished. See Latest Result."),
                         }
                     }
@@ -2590,6 +2642,11 @@ impl Runtime {
         }
         if blank_screen && !self.model.screen_off {
             if let Err(error) = self.effect(Effect::ScreenSleep) {
+                self.ui.flash(error);
+            }
+        }
+        if restart_after_setup {
+            if let Err(error) = self.effect(Effect::Reboot) {
                 self.ui.flash(error);
             }
         }
@@ -3450,6 +3507,7 @@ fn run() -> Result<(), String> {
         platform_refresh_pending: false,
         platform_observed: false,
         announced_update: None,
+        announced_setup: false,
         boot_fade: reborn_ui::BOOT_FADE_FRAMES,
         thumbs: if headless {
             None

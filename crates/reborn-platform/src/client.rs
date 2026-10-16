@@ -8,9 +8,9 @@
 //! display is off.
 use reborn_core::{
     platform::{
-        BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, LdacQuality,
-        OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, SbcQuality, SdCard,
-        SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
+        BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, InternalSetup,
+        LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, SbcQuality,
+        SdCard, SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
         UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
@@ -234,6 +234,7 @@ fn execute(task: PlatformTask) -> Reply {
                     .map_err(|e| friendly_error(&e)),
             );
         }
+        InternalStorageSetup => call(&["internal-media", "setup", "--confirm-shown"], 300),
         StorageBenchmark => call(
             &[
                 "bench-storage",
@@ -615,6 +616,9 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
     PlatformSnapshot {
         observed: true,
         radio_firmware: radio_firmware(status),
+        firmware_in_internal: status["system"]["radio_firmware"]["location"] == "internal",
+        firmware_no_space: status["system"]["radio_firmware"]["reason"] == "no_space",
+        internal_setup: internal_setup(status),
         info: PlatformInfo {
             release_version: text(&status["system"]["versions"]["release_version"]),
         },
@@ -627,6 +631,25 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         health: HealthLevel::Unknown,
         diagnostics: diagnostics(status, caps),
         enabled,
+    }
+}
+
+pub fn internal_setup(status: &Value) -> InternalSetup {
+    let v = &status["storage"]["internal_setup"];
+    let count = |key: &str| v[key].as_u64().unwrap_or(0);
+    match v["state"].as_str() {
+        Some("NotNeeded") => InternalSetup::NotNeeded,
+        Some("Pending") => InternalSetup::Pending,
+        Some("Waiting") => InternalSetup::Waiting {
+            files: count("files").min(u32::MAX as u64) as u32,
+            bytes: count("bytes"),
+        },
+        Some("Running") => InternalSetup::Running,
+        Some("Done") => InternalSetup::Done {
+            kept: count("kept").min(u32::MAX as u64) as u32,
+        },
+        Some("Failed") => InternalSetup::Failed,
+        _ => InternalSetup::Unknown,
     }
 }
 
@@ -1387,6 +1410,23 @@ mod tests {
             assert_eq!(radio_firmware(&s), want);
         }
         assert_eq!(radio_firmware(&json!({})), RadioFirmware::Unknown);
+        // STORAGE-SETUP and #39 hints.
+        let status = json!({"storage":{"internal_setup":{"state":"Waiting","files":541,"bytes":21_000_000_u64}},
+            "system":{"radio_firmware":{"state":"Missing","location":"internal","reason":"no_space"}}});
+        assert_eq!(
+            internal_setup(&status),
+            InternalSetup::Waiting {
+                files: 541,
+                bytes: 21_000_000
+            }
+        );
+        let s = snapshot(&status, &json!({}));
+        assert!(s.firmware_in_internal && s.firmware_no_space);
+        assert_eq!(
+            internal_setup(&json!({"storage":{"internal_setup":{"state":"Done","kept":3}}})),
+            InternalSetup::Done { kept: 3 }
+        );
+        assert_eq!(internal_setup(&json!({})), InternalSetup::Unknown);
         // A cancelled queue followed by a check: the newer release is offered.
         v["system"]["update"] = json!({"state":"Failed","failure":"owner cancelled before installation",
             "download":{"state":"Checked","release_version":"1.0.0-platform-v1-power-final-candidate.49"}});
