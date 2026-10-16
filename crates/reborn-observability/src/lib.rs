@@ -39,6 +39,11 @@ pub const SUBSYSTEMS: &[&str] = &[
     "metrics",
     "control",
     "diagnostics",
+    "radio",
+    "clock",
+    "platform",
+    "lastfm",
+    "scrobble",
 ];
 pub const METRICS: &[&str] = &[
     "reborn_uptime_seconds",

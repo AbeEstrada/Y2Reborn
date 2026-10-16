@@ -183,3 +183,40 @@ fn ui_and_core_perform_no_platform_io() {
         }
     }
 }
+
+/// Every subsystem the code logs under must be in the observer's allowlist:
+/// `Observer::emit` silently drops unknown ones (radio, clock, platform,
+/// Last.fm and scrobble events were lost that way until Beta 7.7.1).
+#[test]
+fn every_logged_subsystem_is_allowed() {
+    let mut files = vec![];
+    sources(&root().join("crates"), &mut files);
+    sources(&root().join("app"), &mut files);
+    let mut missing = vec![];
+    for file in files {
+        let text = fs::read_to_string(&file).unwrap();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find(".emit(") {
+            rest = &rest[at + 6..];
+            let call = rest.trim_start();
+            let Some(after_level) = call.strip_prefix("Level::") else {
+                continue;
+            };
+            let Some(comma) = after_level.find(',') else {
+                continue;
+            };
+            let arg = after_level[comma + 1..].trim_start();
+            let Some(name) = arg.strip_prefix('"').and_then(|a| a.split('"').next()) else {
+                continue;
+            };
+            if !reborn_observability::SUBSYSTEMS.contains(&name) {
+                missing.push(format!("{}: {name}", relative(&file)));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "add to SUBSYSTEMS or the events are dropped:\n{}",
+        missing.join("\n")
+    );
+}
