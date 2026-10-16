@@ -565,6 +565,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("32-storage", at(Screen::Storage, ""), |_, m| m
         .navigation
         .focus = 0);
+    case!("32-storage-sd-repair", at(Screen::Storage, ""), |_, m| {
+        m.navigation.focus = 0;
+        m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::NeedsRepair;
+    });
     case!("33-about", at(Screen::Update, ""), |_, m| {
         m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Available {
             version: "1.1.0".into(),

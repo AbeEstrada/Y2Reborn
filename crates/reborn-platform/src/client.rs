@@ -397,6 +397,8 @@ pub fn storage(status: &Value) -> StorageState {
             Some(r) if r.contains("not_uniquely_mounted") || r.contains("not_mounted") => {
                 SdCard::Absent
             }
+            // Inserted, but refused by its filesystem check (still this card).
+            Some("filesystem_check_failed") => SdCard::NeedsRepair,
             _ if v["state"] == "Unavailable" => SdCard::Absent,
             _ => SdCard::Error,
         },
@@ -1269,6 +1271,15 @@ mod tests {
         assert_eq!(s.storage.internal.state, VolumeState::LowSpace);
         assert_eq!(s.storage.internal.free_bytes, Some(1_000_000_000));
         assert_eq!(s.storage.sd, SdCard::Absent);
+        // A card the platform refused after a failed check (issue #44).
+        let mut refused = status();
+        for v in refused["storage"]["volumes"].as_array_mut().unwrap() {
+            if v["path"] == "/media/sd" {
+                *v = json!({"path":"/media/sd","state":"Degraded",
+                    "reason":"filesystem_check_failed","filesystem":"vfat"});
+            }
+        }
+        assert_eq!(snapshot(&refused, &caps()).storage.sd, SdCard::NeedsRepair);
         assert_eq!(s.usb, UsbTransfer::Developer);
         assert_eq!(
             s.update.phase,

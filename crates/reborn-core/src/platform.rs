@@ -257,6 +257,10 @@ pub enum SdCard {
     Absent,
     /// Inserted but not usable: unsupported filesystem, damaged, or not mounted.
     Error,
+    /// Inserted, but its filesystem check found damage, so it was not mounted
+    /// (a repair on a computer fixes it). A card only pulled out while in use
+    /// is not this: it is mounted.
+    NeedsRepair,
     Ready(VolumeSpace),
 }
 

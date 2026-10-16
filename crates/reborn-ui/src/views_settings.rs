@@ -748,6 +748,8 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
             None => {
                 let note = if matches!(snapshot.storage.sd, SdCard::Error) && i == 1 {
                     "Card can't be read"
+                } else if matches!(snapshot.storage.sd, SdCard::NeedsRepair) && i == 1 {
+                    "Needs repair · Check it on a computer"
                 } else if i == 1 {
                     "No SD card"
                 } else {

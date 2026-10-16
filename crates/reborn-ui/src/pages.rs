@@ -867,6 +867,7 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
     } else {
         match m.platform.snapshot.storage.sd {
             SdCard::Error => "Card can't be read".into(),
+            SdCard::NeedsRepair => "Card needs repair".into(),
             _ => "No SD card".into(),
         }
     };
@@ -1187,6 +1188,7 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
             SdCard::Ready(space) => free_text(space).unwrap_or_else(|| "Ready".into()),
             SdCard::Absent => "No SD card".into(),
             SdCard::Error => "SD card error · Reinsert the card".into(),
+            SdCard::NeedsRepair => "Needs repair · Check it on a computer".into(),
             SdCard::Unknown => "Checking…".into(),
         },
     );

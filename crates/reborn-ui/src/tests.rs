@@ -1333,6 +1333,10 @@ fn storage_battery_and_pc_transfer_present_user_states() {
     assert!(visible_text(&ui, &m).contains("Storage Almost Full"));
     m.platform.snapshot.storage.sd = SdCard::Error;
     assert!(visible_text(&ui, &m).contains("SD card error"));
+    // Issue #44: a card refused by its check says so, not "No SD card".
+    m.platform.snapshot.storage.sd = SdCard::NeedsRepair;
+    let text = visible_text(&ui, &m);
+    assert!(text.contains("Check it on a computer") && !text.contains("No SD card"));
 
     let mut m = app(Screen::Battery);
     m.platform.battery.level = LowBattery::Critical;
