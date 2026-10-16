@@ -42,16 +42,20 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 - Pause and Play continue at once: a paused song keeps its file and audio output open for up to
   three minutes (a station stops; it is live). Holding Previous/Next seeks, and Previous/Next work
   even while a song is still starting.
-- A status-bar clock in the time zone chosen under Settings → Display → Time Zone (built-in zone
-  rules with daylight saving; shown once the player's clock is set).
+- A status-bar clock in the player's time zone: found automatically over Wi-Fi (once per network)
+  or chosen under Settings → Display → Time Zone (country first; built-in zone rules with
+  daylight saving; shown once the player's clock is set).
 - A full-screen keyboard for search, station search and Wi-Fi passwords, driven by the buttons:
   Back, Play/Pause, Previous and Next move up, down, left and right; Select types; hold Select
   when done, hold Back to cancel. Pages for capitals, digits, symbols and accented letters.
-- Click-wheel UI (Product UI v3, Open Sans): Now Playing with option icons, volume line,
-  settings, hold-to-turn-off, startup and shutdown screens, plus screens for USB computer
-  connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
-  with progress, speed and time left, Restart and Install). A to Z lists ignore case, accents and
-  a leading "The".
+- Click-wheel UI (Product UI v4, Open Sans) with motion at 60 frames per second: gliding focus,
+  smooth scrolling, sliding screens, and the playing song as a wave on Now Playing. A status bar
+  with the screen's name, clock, Wi-Fi, Bluetooth, a USB symbol while a computer is connected
+  and the battery; short messages (a computer connected, files copying, songs added, problems)
+  appear in it. Home with Now Playing, Music, Playlists, Radio, Search and Settings; Bluetooth
+  pairing, low battery, hold-to-turn-off, startup and shutdown screens; Software Update in one
+  step (Update Now: Download · Check · Install with progress, speed and time left; Cancel during
+  the download). A to Z lists ignore case, accents and a leading "The".
 - Skins: Settings → Skin switches between Reborn's own look and skins that
   restyle every screen (colours, fonts, pictures, layouts). Sixteen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
   Cassette, Neon Night, Zune, Bunny Bow and five Mini colours);

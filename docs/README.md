@@ -1,8 +1,8 @@
 # Reborn documentation
 
-Reborn 0.3.0 is the player in **Y2Linux Baseline 34** (2026-10-14, tag `baseline-34`), built with Rust 1.99.
-Start with [current Reborn state](CURRENT_REBORN_STATE.md), the
-[Product UI v3](ui/REBORN-PRODUCT-UI-V3.md) design and the paired
+Reborn 1.0.0-beta.7.6 is the player in **Y2Linux 1.0 Beta 7.6** (Baseline 67, 2026-10-16, tag `baseline-67`), built
+with Rust 1.99. Start with [current Reborn state](CURRENT_REBORN_STATE.md), the
+[Product UI v4](ui/REBORN-PRODUCT-UI-V4.md) design and the paired
 [Y2Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).
 To build and install it, use Y2Linux's
 [BUILDING](https://github.com/SchulzCode/Y2Linux/blob/main/docs/BUILDING.md) and
@@ -16,7 +16,7 @@ To build and install it, use Y2Linux's
 | All pages by scope | [Complete catalog](DOCUMENTATION_CATALOG.md) |
 | Media / live volume | [FFmpeg stack](architecture/reborn-audio-stack-ffmpeg9.md), [volume](architecture/live-volume.md) |
 | Platform 1.0 metadata and ingest evidence | [FFmpeg/metadata/library pass](validation/REBORN-PLATFORM-V1-FFMPEG-METADATA.md) |
-| UI source and software candidate | [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md); planned [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md); [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md), [navigation v2](ui/REBORN-PRODUCT-NAVIGATION-V2.md), [pass v2](review/REBORN-PRODUCT-PASS-V2.md); historical [UI v1](ui/REBORN-UI-V1.md), [candidate report](ui/REBORN-UI-V1-REPORT.md) |
+| UI source and software candidate | [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md) (current, with the Beta 7.2–7.6 refinements); earlier [Product UI v3](ui/REBORN-PRODUCT-UI-V3.md), [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md), [navigation v2](ui/REBORN-PRODUCT-NAVIGATION-V2.md), [pass v2](review/REBORN-PRODUCT-PASS-V2.md); historical [UI v1](ui/REBORN-UI-V1.md), [candidate report](ui/REBORN-UI-V1-REPORT.md) |
 | Boot progress and display hand-off | [Boot hand-off](architecture/boot-handoff.md) |
 | SQLite / large-library performance | [Platform 1.0 database pass](validation/REBORN-PLATFORM-V1-LIBRARY-DB.md) (host and bounded native Y2 through 50k; ARM build) |
 | Platform data/ownership | [Linux API](https://github.com/SchulzCode/Y2Linux/blob/main/docs/architecture/platform-api-v1.md) |

@@ -1,7 +1,8 @@
 # Reborn Product UI v4 — one strict system
 
-Plan and design contract, 2026-10-16. **Phases 0–3 implemented (unreleased, host
-previews only); phase 4 (qualification) open.** The owner builds once all UI phases are done. Successor to
+Plan and design contract, 2026-10-16. **Phases 0–3 released in Y2Linux 1.0 Beta 7
+(`baseline-61`), refined through Beta 7.6 (`baseline-67`, sections at the end); phase 4
+(device qualification) open.** Successor to
 [Product UI v3](REBORN-PRODUCT-UI-V3.md); applies to Reborn's own look. Skins keep
 drawing their own layouts (see *Skins*).
 
@@ -263,5 +264,7 @@ previews, spelling (3).
 
 ## Not verified
 
-Nothing here is built. Hold-menu discoverability without hints and the fixed accent's
-look on the panel need the device walk-through in phase 4.
+Everything here is released (Beta 7 to 7.6) and checked on the host (previews, tests). On the
+device only the motion frame rate is measured (Beta 7.3: 62 fps median). Hold-menu
+discoverability without hints, the fixed accent, the Beta 7.5 status bar and the Beta 7.6
+update screens on the panel need the device walk-through in phase 4.

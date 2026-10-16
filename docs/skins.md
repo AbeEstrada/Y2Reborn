@@ -4,7 +4,7 @@ A skin gives Reborn a different look: its own colours, fonts, pictures and
 screen layouts, for example the shipped **Classic** skin with light menus and
 blue highlights. A skin only draws. What the buttons do, the menus, playback,
 settings and the built-in parts (Cover Flow, the equalizer, text entry, the
-USB screen) stay Reborn's. Reborn's own look is not a skin and is always
+update screens) stay Reborn's. Reborn's own look is not a skin and is always
 available as **Reborn** in the picker.
 
 ## Installing and choosing
@@ -118,7 +118,7 @@ most specific name first:
 | `page` | pages with a heading or facts (About, Storage, Song Info, …) |
 | `artists`, `albums`, `genres`, `songs`, `folders`, `album`, `artist`, `queue` | one library screen (else `list`) |
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
-| `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`) |
+| `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`); `theme` is the Skin picker (Settings → Skin since Beta 7.5; the key keeps its name for existing skins) |
 | `time_zone` | the time zone picker (else `page` or `list`) |
 | `search`, `playlists`, `playlist`, `radio`, `radio_stations`, `radio_categories` | search results, Playlists, one playlist, Radio, a station list, countries or genres (else `list`) |
 | `radio_info` | Station Info: the station as heading, its facts and two actions (else `page`) |
@@ -129,7 +129,7 @@ most specific name first:
 | `volume` | the volume indicator (drawn fading out) |
 | `keyboard` | the full-screen keyboard (search, Wi-Fi password, playlist names): draw your title bar and `{sheet_title}` over a `native` `screen` part, which is Reborn's field and keys in your palette without its own header (else all Reborn's) |
 
-Pairing, the USB computer screen, installing an update, the Power hold and
+Pairing, installing an update, the Power hold and
 the start/shut-down screens are always Reborn's, in the skin's palette.
 
 ## Elements
@@ -208,7 +208,8 @@ Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,
 `back chevron check close play pause prev next play_large pause_large
 prev_large next_large shuffle repeat repeat_one gapless eq normalise bluetooth
 wifi lock bolt folder note speaker headphones sd usb warning info sun drive
-power download refresh search vinyl person crossfade heart`, and three that follow
+power download refresh search vinyl person crossfade heart palette` (`palette` since
+Beta 7.5), and three that follow
 the state: `play_pause`, `play_pause_large`, `repeat_mode`.
 
 ## Limits and checks
