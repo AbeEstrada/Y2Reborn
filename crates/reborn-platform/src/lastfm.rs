@@ -440,9 +440,12 @@ fn post(curl: &str, url: &str, body: &[u8]) -> Result<Vec<u8>, Error> {
 
 // -------------------------------------------------------------- sending
 
+/// Last.fm's error for a request it can never accept as it is.
+const INVALID_PARAMETERS: i64 = 6;
+
 /// Send waiting plays oldest first, in batches, until the queue is empty or
-/// an error stops it. Too old plays (Last.fm would ignore them) are dropped.
-/// Returns how many were accepted.
+/// an error stops it. Too old plays (Last.fm would ignore them) and plays it
+/// calls invalid are dropped. Returns how many were accepted.
 pub fn flush(
     client: &Client,
     session: &Session,
@@ -469,8 +472,26 @@ pub fn flush(
             return Ok(accepted);
         }
         let batch = &waiting[..waiting.len().min(BATCH)];
-        let (ok, _ignored) = client.scrobble(session, batch)?;
-        accepted += ok;
+        accepted += match client.scrobble(session, batch) {
+            Ok((ok, _ignored)) => ok,
+            // A play Last.fm calls invalid would block every later one:
+            // send this batch one by one and leave out only such plays.
+            Err(Error::Refused(INVALID_PARAMETERS, _)) => {
+                let mut ok = 0;
+                for (i, play) in batch.iter().enumerate() {
+                    match client.scrobble(session, std::slice::from_ref(play)) {
+                        Ok((n, _)) => ok += n,
+                        Err(Error::Refused(INVALID_PARAMETERS, _)) => {}
+                        Err(e) => {
+                            let _ = queue.drop_sent(&batch[..i]);
+                            return Err(e);
+                        }
+                    }
+                }
+                ok
+            }
+            Err(e) => return Err(e),
+        };
         if !queue
             .drop_sent(batch)
             .map_err(|e| Error::Offline(e.to_string()))?
@@ -735,6 +756,45 @@ mod tests {
         assert!(spread_out
             .iter()
             .all(|&ms| (240_000..=300_000).contains(&ms)));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_invalid_play_is_left_out_instead_of_blocking_the_queue() {
+        let root = dir("invalid");
+        // Refuses any batch holding the play titled "Bad" (error 6).
+        let script = root.join("curl");
+        fs::write(
+            &script,
+            "#!/bin/sh\nbody=$(cat)\ncase \"$body\" in\n\
+             *track%5B0%5D=Bad*|*track%5B1%5D=*) echo '{\"error\":6,\"message\":\"Invalid parameters\"}' ;;\n\
+             *) echo '{\"scrobbles\":{\"@attr\":{\"accepted\":1,\"ignored\":0}}}' ;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let c = client_with(&script);
+        let queue = crate::scrobble::Queue::new(root.join("q.jsonl"));
+        let now = 1_800_000_000;
+        for (i, title) in ["One", "Bad", "Two"].into_iter().enumerate() {
+            queue
+                .push(&Scrobble {
+                    play: Play {
+                        artist: "A".into(),
+                        title: title.into(),
+                        duration_s: 200,
+                        ..Default::default()
+                    },
+                    timestamp: now - 100 + i as i64,
+                })
+                .unwrap();
+        }
+        let session = Session {
+            name: "n".into(),
+            key: "k".into(),
+        };
+        assert_eq!(flush(&c, &session, &queue, now), Ok(2));
+        assert!(queue.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 }

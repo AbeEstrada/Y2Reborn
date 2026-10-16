@@ -24,13 +24,18 @@ const POLL_EVERY: Duration = Duration::from_secs(3);
 const SIGN_IN_FOR: Duration = Duration::from_secs(15 * 60);
 /// Plays counted before the clock was known, kept in memory at most.
 const UNSTAMPED_MAX: usize = 500;
+/// Now Playing is announced again after a pause or a failed attempt, at most
+/// this often for the same play (Last.fm drops it once the song's length has
+/// passed since the announcement).
+const ANNOUNCE_AGAIN_AFTER: Duration = Duration::from_secs(30);
 
 pub enum Reply {
     Token(Result<(String, String), lastfm::Error>),
     /// From the password sign-in (`polled` false) or the approval poll.
     Session(Result<lastfm::Session, lastfm::Error>, bool),
     Flushed(Result<u32, lastfm::Error>),
-    NowPlaying(Result<(), lastfm::Error>),
+    /// For the play (queue occurrence, play number) it announced.
+    NowPlaying(Result<(), lastfm::Error>, (u64, u64)),
 }
 
 pub struct LastFm {
@@ -47,8 +52,14 @@ pub struct LastFm {
     next_flush: Instant,
     failures: u32,
     waiting: usize,
-    /// The queue occurrence last announced as Now Playing.
-    announced: Option<u64>,
+    /// The play last announced as Now Playing (queue occurrence, play
+    /// number) and when.
+    announced: Option<((u64, u64), Instant)>,
+    /// Paused since that announcement.
+    paused_since: bool,
+    /// The announcement failed for a passing reason; tried once more.
+    announce_failed: bool,
+    announce_retried: bool,
     replies: (Sender<Reply>, Receiver<Reply>),
 }
 impl LastFm {
@@ -68,12 +79,36 @@ impl LastFm {
             failures: 0,
             waiting: disk::Queue::new(root.join("state/scrobbles.jsonl")).len(),
             announced: None,
+            paused_since: false,
+            announce_failed: false,
+            announce_retried: false,
             replies: channel(),
         }
     }
     /// An account to send to (and a key to send with).
     pub fn connected(&self) -> bool {
         self.client.is_some() && self.session.is_some()
+    }
+}
+
+/// Whether to announce play `key` (queue occurrence, play number) as Now
+/// Playing: another occurrence at once; the same one when it starts over or
+/// `again` (after a pause or a failed attempt), at most every
+/// `ANNOUNCE_AGAIN_AFTER` (a track change can look like a restart for a
+/// moment, and the last announcement has not expired yet anyway).
+fn announce_due(
+    announced: Option<((u64, u64), Instant)>,
+    key: (u64, u64),
+    again: bool,
+    now: Instant,
+) -> bool {
+    match announced {
+        None => true,
+        Some(((entry, number), at)) => {
+            entry != key.0
+                || ((number != key.1 || again)
+                    && now.saturating_duration_since(at) >= ANNOUNCE_AGAIN_AFTER)
+        }
     }
 }
 
@@ -248,6 +283,14 @@ impl Runtime {
             {
                 Err("Connect to Wi-Fi first".to_owned())
             }
+            // One sign-in request at a time (a second press waits for it).
+            LastFmRequest::Connect | LastFmRequest::Login { .. } if self.lastfm.busy => Ok(()),
+            // Certificate checks need the right date.
+            LastFmRequest::Connect | LastFmRequest::Login { .. }
+                if self.trusted_unix().is_none() =>
+            {
+                Err("The clock isn't set yet; try again in a moment".to_owned())
+            }
             LastFmRequest::Connect => {
                 let client = self.lastfm.client.clone().ok_or("no key")?;
                 self.lastfm.busy = self.lastfm_spawn("lastfm-token", move || {
@@ -304,6 +347,7 @@ impl Runtime {
         self.lastfm.waiting = 0;
         self.lastfm.failures = 0;
         self.lastfm.announced = None;
+        self.lastfm.announce_failed = false;
         self.log.emit(
             Level::Info,
             "lastfm",
@@ -328,7 +372,11 @@ impl Runtime {
                 self.lastfm.token = None;
                 self.ui.flash("The Last.fm sign-in timed out");
                 self.lastfm_view();
-            } else if !self.lastfm.polling && now >= self.lastfm.next_poll && self.online() {
+            } else if !self.lastfm.polling
+                && now >= self.lastfm.next_poll
+                && self.online()
+                && self.trusted_unix().is_some()
+            {
                 let token = self.lastfm.token.as_ref().map(|t| t.0.clone());
                 if let (Some(client), Some(token)) = (self.lastfm.client.clone(), token) {
                     self.lastfm.polling = self.lastfm_spawn("lastfm-poll", move || {
@@ -340,25 +388,15 @@ impl Runtime {
                 }
             }
         }
+        let playing = self.model.playback == PlaybackState::Playing;
+        if !playing {
+            self.lastfm.paused_since = true;
+        }
         if !self.lastfm.connected() || !self.online() {
             return;
         }
-        // Now Playing: once per queue occurrence, when it actually plays.
-        let playing = self.model.playback == PlaybackState::Playing;
-        let announce = self.current_entry().and_then(|(id, track)| {
-            (playing && self.lastfm.announced != Some(id)).then(|| (id, play_of(track)))
-        });
-        if let Some((id, play)) = announce {
-            self.lastfm.announced = Some(id);
-            if let (Some(play), true) = (play, self.model.settings.lastfm_now_playing) {
-                let client = self.lastfm.client.clone();
-                let session = self.lastfm.session.clone();
-                if let (Some(client), Some(session)) = (client, session) {
-                    let _ = self.lastfm_spawn("lastfm-now", move || {
-                        Reply::NowPlaying(client.now_playing(&session, &play))
-                    });
-                }
-            }
+        if playing && self.model.settings.lastfm_now_playing {
+            self.announce_now_playing();
         }
         // Sending: whatever waits, with back-off after failures.
         if self.lastfm.waiting == 0
@@ -385,6 +423,45 @@ impl Runtime {
         }
         self.lastfm_view();
     }
+    /// Now Playing: once per play when it actually plays, and again after a
+    /// pause or a failed attempt.
+    fn announce_now_playing(&mut self) {
+        let number = self.scrobbles.play_number();
+        let Some((key, play)) = self
+            .current_entry()
+            .map(|(id, track)| ((id, number), track))
+            .filter(|&(key, _)| {
+                announce_due(
+                    self.lastfm.announced,
+                    key,
+                    self.lastfm.paused_since || self.lastfm.announce_failed,
+                    Instant::now(),
+                )
+            })
+            .map(|(key, track)| (key, play_of(track)))
+        else {
+            return;
+        };
+        // Requests wait for a trustworthy clock (certificate checks).
+        if self.trusted_unix().is_none() {
+            return;
+        }
+        let same = self.lastfm.announced.is_some_and(|(k, _)| k == key);
+        self.lastfm.announce_retried = same && self.lastfm.announce_failed;
+        self.lastfm.announce_failed = false;
+        self.lastfm.paused_since = false;
+        self.lastfm.announced = Some((key, Instant::now()));
+        let (Some(play), Some(client), Some(session)) = (
+            play,
+            self.lastfm.client.clone(),
+            self.lastfm.session.clone(),
+        ) else {
+            return;
+        };
+        let _ = self.lastfm_spawn("lastfm-now", move || {
+            Reply::NowPlaying(client.now_playing(&session, &play), key)
+        });
+    }
     fn lastfm_reply(&mut self, reply: Reply) {
         match reply {
             Reply::Token(result) => {
@@ -408,6 +485,8 @@ impl Runtime {
                         // Another account than the one the waiting plays
                         // belong to: they are not this listener's to send.
                         let owner = lastfm::account_of(&self.lastfm.session_path);
+                        // (Dropped before the new sign-in is saved: a crash
+                        // in between loses plays, never misdirects them.)
                         if owner.is_some_and(|o| o != session.name) {
                             let _ = self.scrobble_queue.drop_first(usize::MAX);
                             self.lastfm.waiting = 0;
@@ -431,6 +510,7 @@ impl Runtime {
                         self.lastfm.token = None;
                         self.lastfm.failures = 0;
                         self.lastfm.announced = None;
+                        self.lastfm.announce_failed = false;
                     }
                     Err(lastfm::Error::NotApproved) if polled => {
                         self.lastfm.next_poll = Instant::now() + POLL_EVERY;
@@ -491,14 +571,47 @@ impl Runtime {
                     }
                 }
             }
-            Reply::NowPlaying(result) => {
-                if let Err(lastfm::Error::InvalidSession) = result {
+            Reply::NowPlaying(result, key) => match result {
+                Err(lastfm::Error::InvalidSession) => {
                     let _ = lastfm::invalidate_session(&self.lastfm.session_path);
                     self.lastfm.session = None;
                     self.ui.flash("Sign in to Last.fm again");
                 }
-            }
+                // Once more for the same play, a little later.
+                Err(e)
+                    if e.retry_later()
+                        && !self.lastfm.announce_retried
+                        && self.lastfm.announced.is_some_and(|(k, _)| k == key) =>
+                {
+                    self.lastfm.announce_failed = true;
+                }
+                _ => {}
+            },
         }
         self.lastfm_view();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn now_playing_is_announced_per_play_and_again_after_a_pause() {
+        let t0 = Instant::now();
+        let later = t0 + ANNOUNCE_AGAIN_AFTER;
+        // Nothing announced yet, another occurrence: announce at once.
+        assert!(announce_due(None, (1, 1), false, t0));
+        assert!(announce_due(Some(((1, 1), t0)), (2, 2), false, t0));
+        // The same occurrence from its start: a new play, but not twice
+        // within 30 s.
+        assert!(!announce_due(Some(((1, 1), t0)), (1, 2), false, t0));
+        assert!(announce_due(Some(((1, 1), t0)), (1, 2), false, later));
+        // The same play: not again, unless paused or failed since...
+        assert!(!announce_due(Some(((1, 1), t0)), (1, 1), false, later));
+        assert!(announce_due(Some(((1, 1), t0)), (1, 1), true, later));
+        // ...and never more often than every 30 s.
+        let soon = t0 + ANNOUNCE_AGAIN_AFTER - Duration::from_millis(1);
+        assert!(!announce_due(Some(((1, 1), t0)), (1, 1), true, soon));
     }
 }

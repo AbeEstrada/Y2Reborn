@@ -119,8 +119,14 @@ struct Current {
 #[derive(Clone, Debug, Default)]
 pub struct Tracker {
     current: Option<Current>,
+    plays: u64,
 }
 impl Tracker {
+    /// Changes whenever a new play begins (another occurrence, or the same
+    /// one from its start again).
+    pub fn play_number(&self) -> u64 {
+        self.plays
+    }
     /// One observation: the queue occurrence and track playing (if any),
     /// whether audio is actually playing, its position, a monotonic clock and
     /// the wall clock when it is trustworthy. Returns a play the moment it
@@ -144,6 +150,7 @@ impl Tracker {
                 && position_ms < c.last_position_ms
         });
         if restart || self.current.as_ref().is_none_or(|c| c.entry != entry) {
+            self.plays = self.plays.wrapping_add(1);
             self.current = Some(Current {
                 entry,
                 play: play_of(track),
@@ -304,10 +311,17 @@ mod tests {
         let mut tr = Tracker::default();
         let mut clock = 0;
         assert_eq!(run(&mut tr, 1, &t, &mut clock, 0, 60_000).len(), 1);
+        let first = tr.play_number();
         // Repeat one: the same occurrence from the start again.
         assert_eq!(run(&mut tr, 1, &t, &mut clock, 0, 60_000).len(), 1);
+        let repeated = tr.play_number();
+        assert_ne!(
+            repeated, first,
+            "a repeat is a new play (Now Playing again)"
+        );
         // Gapless boundary: the next occurrence begins mid-period.
         assert_eq!(run(&mut tr, 2, &t, &mut clock, 400, 31_400).len(), 1);
+        assert_ne!(tr.play_number(), repeated);
         // No queue entry (stopped): forgotten.
         assert_eq!(tr.observe(None, false, 0, clock, None), None);
         assert!(tr.current.is_none());
