@@ -3141,3 +3141,133 @@ fn the_download_percentage_counts_with_the_bar() {
     let caught_up = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(caught_up.contains("10%"), "{caught_up}");
 }
+
+#[test]
+fn lastfm_settings_follow_the_account_and_the_sign_in() {
+    use crate::LastFmView;
+    use reborn_core::LastFmRequest;
+    let mut ui = radios();
+    let mut m = app(Screen::Settings);
+    let row = |ui: &Ui, m: &AppModel| {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .find(|r| r.key == "lastfm")
+            .expect("Last.fm row")
+    };
+    assert_eq!(row(&ui, &m).secondary, "Off");
+    m.settings.scrobble_log = true;
+    assert_eq!(row(&ui, &m).secondary, "Log file");
+    // Eight places fit on the Settings root.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 8);
+    assert_eq!(select_key(&mut ui, &mut m, "lastfm"), Effect::None);
+    assert_eq!(m.screen, Screen::LastFm);
+    // A build without the app key: the log still works.
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.expect("no key").title, "Last.fm Isn't Available");
+    assert_eq!(page.rows[0].key, "scrobble_log");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "scrobble_log"),
+        Effect::SetScrobbleLog(false)
+    );
+    // Not signed in: phone first, password second, the log.
+    ui.lastfm = LastFmView {
+        available: true,
+        ..Default::default()
+    };
+    let keys: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert_eq!(keys, ["lastfm_connect", "lastfm_password", "scrobble_log"]);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_connect"),
+        Effect::LastFm(LastFmRequest::Connect)
+    );
+    // Signing in: the code page with Cancel; the QR code is drawn.
+    ui.lastfm.approval = Some(format!(
+        "https://www.last.fm/api/auth/?api_key={}&token={}",
+        "a".repeat(32),
+        "b".repeat(32)
+    ));
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.expect("code").title, "Scan to Sign In");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_cancel"),
+        Effect::LastFm(LastFmRequest::Cancel)
+    );
+    let draw = ui.draw(&m, &m.library.tracks, true);
+    assert!(drawn_text(&draw).contains("Allow Y2Reborn"));
+    // Signed in: the account, its switches, what waits, Disconnect.
+    ui.lastfm = LastFmView {
+        available: true,
+        user: Some("luca".into()),
+        waiting: 3,
+        ..Default::default()
+    };
+    let rows = ui.rows(&m, &m.library.tracks);
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "lastfm_account",
+            "lastfm_scrobble",
+            "lastfm_now_playing",
+            "lastfm_send",
+            "scrobble_log",
+            "lastfm_disconnect"
+        ]
+    );
+    assert_eq!(rows[0].secondary, "luca");
+    assert_eq!(rows[3].secondary, "3 plays waiting");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_scrobble"),
+        Effect::SetLastFmScrobble(false)
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_now_playing"),
+        Effect::SetLastFmNowPlaying(false)
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_send"),
+        Effect::LastFm(LastFmRequest::SendNow)
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "lastfm_disconnect"),
+        Effect::LastFm(LastFmRequest::Disconnect)
+    );
+    m.screen = Screen::Settings;
+    assert_eq!(row(&ui, &m).secondary, "luca");
+}
+
+#[test]
+fn lastfm_password_sign_in_never_shows_or_prints_the_password() {
+    use crate::LastFmView;
+    use reborn_core::LastFmRequest;
+    let mut ui = radios();
+    ui.lastfm = LastFmView {
+        available: true,
+        ..Default::default()
+    };
+    let mut m = app(Screen::LastFm);
+    assert_eq!(select_key(&mut ui, &mut m, "lastfm_password"), Effect::None);
+    ui.keyboard.as_mut().unwrap().text = "luca".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert!(matches!(
+        ui.keyboard.as_ref().map(|k| &k.purpose),
+        Some(crate::keyboard::Purpose::LastFmPassword { .. })
+    ));
+    ui.keyboard.as_mut().unwrap().text = "hunter22".into();
+    let draw = ui.draw(&m, &m.library.tracks, false);
+    assert!(!drawn_text(&draw).contains("hunter22"));
+    let effect = ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(
+        effect,
+        Effect::LastFm(LastFmRequest::Login {
+            username: "luca".into(),
+            password: "hunter22".into()
+        })
+    );
+    assert!(!format!("{effect:?}").contains("hunter22"));
+    assert!(ui.keyboard.is_none());
+}

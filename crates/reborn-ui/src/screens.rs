@@ -77,6 +77,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Storage
+        | Screen::LastFm
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
@@ -126,6 +127,7 @@ fn native_screen(
         | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Storage
+        | Screen::LastFm
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(c, ui, m, tracks, has_art, interactive)
@@ -181,6 +183,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Bluetooth => keys!("bluetooth"),
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
+        Screen::LastFm => keys!("lastfm"),
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
         Screen::ScreenTimeout => keys!("screen_off"),
@@ -673,6 +676,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Bluetooth => "Bluetooth".into(),
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),
+        Screen::LastFm => "Last.fm".into(),
         Screen::Equalizer => "Equalizer".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),

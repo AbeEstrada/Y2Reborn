@@ -898,6 +898,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.playback = reborn_core::PlaybackState::Playing;
         }
     );
+    // Last.fm scrobbling.
+    case!("96-lastfm-sign-in", at(Screen::LastFm, ""), |ui, _| {
+        ui.lastfm = reborn_ui::LastFmView {
+            available: true,
+            ..Default::default()
+        };
+    });
+    case!("96b-lastfm-code", at(Screen::LastFm, ""), |ui, _| {
+        ui.lastfm = reborn_ui::LastFmView {
+            available: true,
+            approval: Some(
+                "https://www.last.fm/api/auth/?api_key=0123456789abcdef0123456789abcdef&token=Zx8f3kQwErTyUiOpAsDfGhJkLzXcVbNm"
+                    .into(),
+            ),
+            ..Default::default()
+        };
+    });
+    case!("96c-lastfm-connected", at(Screen::LastFm, ""), |ui, m| {
+        ui.lastfm = reborn_ui::LastFmView {
+            available: true,
+            user: Some("luca".into()),
+            waiting: 3,
+            ..Default::default()
+        };
+        m.navigation.focus = 3;
+    });
+    case!(
+        "96d-settings-with-lastfm",
+        at(Screen::Settings, ""),
+        |ui, m| {
+            ui.lastfm = reborn_ui::LastFmView {
+                available: true,
+                user: Some("luca".into()),
+                ..Default::default()
+            };
+            m.navigation.focus = 6;
+        }
+    );
     case!(
         "65b-radio-tuning-in",
         at(Screen::NowPlaying, ""),

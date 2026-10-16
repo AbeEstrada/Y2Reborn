@@ -32,7 +32,77 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
         Screen::Storage => storage(c, m, &page, focus, interactive),
         Screen::Update => update(c, ui, m, &page, focus, interactive),
+        Screen::LastFm if ui.lastfm.approval.is_some() => {
+            sign_in_code(c, ui, &page, focus, interactive)
+        }
         _ => group_page(c, ui, m, &page, focus, interactive, 38.),
+    }
+}
+
+// --------------------------------------------------------------- last.fm
+
+/// The Last.fm sign-in: the approval address as a QR code beside the steps,
+/// Cancel below.
+fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
+    let Some(url) = &ui.lastfm.approval else {
+        return;
+    };
+    if let Some(code) = crate::qr::encode(url.as_bytes()) {
+        let module = (236. / (code.size as f32 + 8.)).floor().max(2.);
+        let side = module * (code.size as f32 + 8.);
+        let (x0, y0) = (24., 46.);
+        c.rrect(x0, y0, side, side, 10., 0xFFFFFFFF);
+        let inner = x0 + module * 4.;
+        let top = y0 + module * 4.;
+        for y in 0..code.size {
+            let mut x = 0;
+            while x < code.size {
+                if !code.dark(x, y) {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                while x < code.size && code.dark(x, y) {
+                    x += 1;
+                }
+                c.rect(
+                    inner + start as f32 * module,
+                    top + y as f32 * module,
+                    (x - start) as f32 * module,
+                    module,
+                    0x000000FF,
+                );
+            }
+        }
+    }
+    let tx = 240.;
+    let mut y = 58.;
+    c.text(tx, y, "Sign in to Last.fm", Face::S17, color::TEXT);
+    y += 30.;
+    for line in [
+        "1  Point your phone's",
+        "   camera at the code.",
+        "2  Allow Y2Reborn.",
+        "3  This page continues",
+        "   by itself.",
+    ] {
+        c.text(tx, y, line, Face::R13, color::MUTED);
+        y += 20.;
+    }
+    let selected = interactive && focus == 0;
+    if let Some(cancel) = page.rows.first() {
+        let by = HEIGHT - 66.;
+        if selected {
+            components::focus_row(c, 14., by, WIDTH - 28., 44.);
+        }
+        c.text_mid(
+            30.,
+            by + 22.,
+            200.,
+            &cancel.label,
+            if selected { Face::S17 } else { Face::R17 },
+            color::TEXT,
+        );
     }
 }
 
@@ -40,8 +110,8 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
 
 fn root(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
     let _ = ui;
-    // Seven places fit without scrolling (Beta 7.5: Skin joined them).
-    const ROW: f32 = 44.;
+    // Eight places fit without scrolling (Beta 7.5: Skin; Last.fm then).
+    let row_h: f32 = if page.rows.len() > 7 { 39. } else { 44. };
     let tile = |key: &str| match key {
         "bluetooth" => (0x3E82FFFF, Icon::Bluetooth),
         "wifi" => (0x3CBE78FF, Icon::Wifi),
@@ -49,16 +119,17 @@ fn root(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
         "display" => (0xFFBE3CFF, Icon::Sun),
         "theme" => (0xEE6AB4FF, Icon::Palette),
         "storage" => (0x9678FFFF, Icon::Drive),
+        "lastfm" => (0xD51007FF, Icon::Note),
         _ => (0x828CA0FF, Icon::Info),
     };
-    let rows = page.rows.len().min(7);
-    components::card(c, 10., 38., WIDTH - 20., rows as f32 * ROW + 4.);
+    let rows = page.rows.len().min(8);
+    components::card(c, 10., 38., WIDTH - 20., rows as f32 * row_h + 4.);
     for (i, row) in page.rows.iter().enumerate().take(rows) {
-        let y = 40. + i as f32 * ROW;
-        let mid = y + ROW / 2.;
+        let y = 40. + i as f32 * row_h;
+        let mid = y + row_h / 2.;
         let selected = interactive && i == focus;
         if selected {
-            components::focus_row(c, 14., y + 3., WIDTH - 28., ROW - 6.);
+            components::focus_row(c, 14., y + 3., WIDTH - 28., row_h - 6.);
         } else if i > 0 && !(interactive && i - 1 == focus) {
             c.rect(64., y + 1., WIDTH - 88., 1., color::RULE);
         }

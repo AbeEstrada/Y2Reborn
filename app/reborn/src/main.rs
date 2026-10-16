@@ -6,6 +6,7 @@ mod graphics_recovery;
 mod performance;
 mod playback;
 mod playlists;
+mod scrobbling;
 mod skins;
 mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
@@ -158,6 +159,14 @@ struct Runtime {
     radio_live: Option<String>,
     /// The list a station was started from, for Previous/Next between stations.
     radio_list: Vec<reborn_core::RadioStation>,
+    /// Scrobbling: the play being followed, plays counted before the clock
+    /// was known, the queue for Last.fm and when the clock was last checked.
+    scrobbles: reborn_core::scrobble::Tracker,
+    scrobbles_unstamped: Vec<reborn_core::scrobble::Counted>,
+    scrobble_queue: reborn_platform::scrobble::Queue,
+    clock_trusted: Option<(Instant, bool)>,
+    /// Last.fm: the app's key, the listener's session, sign-in and sending.
+    lastfm: scrobbling::LastFm,
     /// Station logos: downloads (once per logo) and the logo shown as Now
     /// Playing's picture.
     radio_logos: Option<LogoFetcher>,
@@ -1716,6 +1725,19 @@ impl Runtime {
             }
             Effect::CancelDownload => client::abort_download(),
             Effect::Radio(request) => self.radio(request)?,
+            Effect::LastFm(request) => self.lastfm_request(request)?,
+            Effect::SetScrobbleLog(on) => {
+                self.model.settings.scrobble_log = on;
+                self.checkpoint();
+            }
+            Effect::SetLastFmScrobble(on) => {
+                self.model.settings.lastfm_scrobble = on;
+                self.checkpoint();
+            }
+            Effect::SetLastFmNowPlaying(on) => {
+                self.model.settings.lastfm_now_playing = on;
+                self.checkpoint();
+            }
             Effect::Playlist(request) => self.playlist(*request)?,
             Effect::SetCodecPreference(preference) => {
                 if !codec_change_allowed(
@@ -2140,6 +2162,8 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::ResetSettings => {
+                // The Last.fm sign-in is a setting too: forget it and its plays.
+                self.lastfm_forget();
                 // Volume and the music location are part of the session, not
                 // preferences a reset should surprise the listener with.
                 let defaults = reborn_core::Settings {
@@ -3458,6 +3482,11 @@ fn run() -> Result<(), String> {
         radio_directory: Arc::new(Mutex::new(None)),
         radio_live: None,
         radio_list: vec![],
+        scrobbles: reborn_core::scrobble::Tracker::default(),
+        scrobbles_unstamped: vec![],
+        scrobble_queue: reborn_platform::scrobble::Queue::new(root.join("state/scrobbles.jsonl")),
+        clock_trusted: None,
+        lastfm: scrobbling::LastFm::load(&root),
         radio_logos: if headless {
             None
         } else {
@@ -3492,6 +3521,7 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|s| s.key().to_owned())
         .collect();
+    rt.lastfm_view();
     if !rt.model.settings.theme.is_empty() {
         let id = rt.model.settings.theme.clone();
         // A skin on a missing SD card or a refused skin falls back to Reborn's
@@ -4225,6 +4255,8 @@ fn run() -> Result<(), String> {
             rt.radio_reply(reply);
         }
         rt.radio_tick();
+        rt.scrobble_tick();
+        rt.lastfm_tick();
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {

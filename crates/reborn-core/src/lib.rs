@@ -3,6 +3,7 @@ pub mod clock;
 mod countries;
 pub mod platform;
 pub mod playlist;
+pub mod scrobble;
 pub mod sort;
 mod zones;
 use serde::{Deserialize, Serialize};
@@ -468,6 +469,33 @@ pub enum RadioRequest {
     ToggleFavoriteStation(Box<RadioStation>),
 }
 
+/// Settings > Last.fm requests. A password lives only in `Login` on its way
+/// to the one sign-in request and is never printed.
+#[derive(Clone, PartialEq, Eq)]
+pub enum LastFmRequest {
+    /// Start a sign-in: the player shows a QR code to approve on a phone.
+    Connect,
+    Cancel,
+    /// Fallback sign-in with username and password.
+    Login {
+        username: String,
+        password: String,
+    },
+    SendNow,
+    Disconnect,
+}
+impl std::fmt::Debug for LastFmRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connect => f.write_str("Connect"),
+            Self::Cancel => f.write_str("Cancel"),
+            Self::Login { .. } => f.write_str("Login { .. }"),
+            Self::SendNow => f.write_str("SendNow"),
+            Self::Disconnect => f.write_str("Disconnect"),
+        }
+    }
+}
+
 /* A queue occurrence is a playback identity, not a library identity. Two
  * occurrences may reference the same Track, so boundary and artwork updates
  * must be able to address the occurrence that was scheduled. */
@@ -597,6 +625,8 @@ pub enum Screen {
     RadioInfo,
     /// Every playlist file, Favorites first.
     Playlists,
+    /// Settings > Last.fm: sign-in, scrobbling and the scrobbler log.
+    LastFm,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
 }
@@ -756,6 +786,15 @@ pub struct Settings {
     /// is Now Playing, Music, Playlists, Radio, Search and Settings.
     #[serde(default)]
     pub home_pins: Vec<String>,
+    /// Also write every scrobble to `.scrobbler.log` on Internal Storage
+    /// (Rockbox format, for upload tools); works without an account.
+    #[serde(default)]
+    pub scrobble_log: bool,
+    /// With a Last.fm account: send counted plays, and the song playing now.
+    #[serde(default = "default_true")]
+    pub lastfm_scrobble: bool,
+    #[serde(default = "default_true")]
+    pub lastfm_now_playing: bool,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -821,6 +860,9 @@ impl Default for Settings {
             time_zone: default_time_zone(),
             time_zone_auto: None,
             home_pins: Vec::new(),
+            scrobble_log: false,
+            lastfm_scrobble: true,
+            lastfm_now_playing: true,
         }
     }
 }
@@ -888,6 +930,10 @@ pub enum Effect {
     StopPlayback,
     Radio(RadioRequest),
     Playlist(Box<PlaylistRequest>),
+    LastFm(LastFmRequest),
+    SetScrobbleLog(bool),
+    SetLastFmScrobble(bool),
+    SetLastFmNowPlaying(bool),
     SetCodecPreference(CodecPreference),
     Play(usize),
     PlayShuffled(usize),

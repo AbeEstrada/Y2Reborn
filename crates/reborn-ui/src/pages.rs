@@ -153,6 +153,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
+        Screen::LastFm => lastfm(ui, m),
         Screen::Equalizer => equalizer(m),
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
@@ -260,7 +261,73 @@ fn settings(ui: &Ui, m: &AppModel) -> Page {
         )
         .with_kind(RowKind::Chevron),
         row("Storage", "storage", storage).with_kind(RowKind::Chevron),
+        row(
+            "Last.fm",
+            "lastfm",
+            match &ui.lastfm.user {
+                Some(user) => user.clone(),
+                None if m.settings.scrobble_log => "Log file".to_owned(),
+                None => "Off".to_owned(),
+            },
+        )
+        .with_kind(RowKind::Chevron),
         row("About & Updates", "update", reborn_core::VERSION).with_kind(RowKind::Chevron),
+    ])
+}
+
+/// Settings > Last.fm: sign-in (a QR code while it runs), the account's
+/// switches, what waits to be sent, and the scrobbler log.
+fn lastfm(ui: &Ui, m: &AppModel) -> Page {
+    let l = &ui.lastfm;
+    let log = row("Also Write .scrobbler.log", "scrobble_log", "")
+        .with_kind(RowKind::Toggle(m.settings.scrobble_log));
+    if l.approval.is_some() {
+        return Page::hero(
+            "Scan to Sign In",
+            "Open the code with your phone's camera and allow Y2Reborn. This page continues by itself.",
+        )
+        .with_rows(vec![row("Cancel", "lastfm_cancel", "")]);
+    }
+    if !l.available {
+        return Page::hero(
+            "Last.fm Isn't Available",
+            "This build of Reborn has no Last.fm key. The scrobbler log still works.",
+        )
+        .with_rows(vec![log]);
+    }
+    let Some(user) = &l.user else {
+        return Page::rows(vec![
+            row(
+                "Connect with Your Phone",
+                "lastfm_connect",
+                if l.busy { "Starting…" } else { "Scan a code" },
+            )
+            .with_kind(RowKind::Chevron),
+            row("Sign In with Password", "lastfm_password", "").with_kind(RowKind::Chevron),
+            log,
+        ]);
+    };
+    let waiting = match l.waiting {
+        0 => "Nothing waiting".to_owned(),
+        n => crate::components::count(n, "play", "plays") + " waiting",
+    };
+    Page::rows(vec![
+        row("Account", "lastfm_account", user.clone()),
+        row("Scrobble", "lastfm_scrobble", "")
+            .with_kind(RowKind::Toggle(m.settings.lastfm_scrobble)),
+        row("Show Now Playing", "lastfm_now_playing", "")
+            .with_kind(RowKind::Toggle(m.settings.lastfm_now_playing)),
+        row(
+            "Send Now",
+            "lastfm_send",
+            if l.busy {
+                "Sending…".to_owned()
+            } else {
+                waiting
+            },
+        ),
+        log,
+        row("Disconnect", "lastfm_disconnect", ""),
     ])
 }
 

@@ -15,6 +15,7 @@ mod motion;
 pub mod pages;
 pub mod playlist_index;
 mod playlists_ui;
+pub mod qr;
 pub use playlists_ui::{is_favorites as playlists_is_favorites, PlaylistsView};
 mod screens;
 mod search;
@@ -217,6 +218,21 @@ pub struct BluetoothView {
     pub problem: Option<String>,
 }
 
+/// Settings > Last.fm as the player knows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LastFmView {
+    /// This build carries the app's Last.fm key.
+    pub available: bool,
+    /// The account plays go to.
+    pub user: Option<String>,
+    /// Plays waiting to be sent.
+    pub waiting: usize,
+    /// A sign-in in progress: the address its QR code holds.
+    pub approval: Option<String>,
+    /// A request is running (sign-in step or sending).
+    pub busy: bool,
+}
+
 /// Internet radio lists as the player last received them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RadioView {
@@ -315,6 +331,7 @@ pub struct Ui {
     pub wifi: WifiView,
     pub bluetooth: BluetoothView,
     pub radio: RadioView,
+    pub lastfm: LastFmView,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
     /// The full-screen keyboard, while it is open.
@@ -2089,6 +2106,17 @@ impl Ui {
             "shuffle" => Effect::SetShuffle(!m.settings.shuffle),
             "repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
+            "scrobble_log" => Effect::SetScrobbleLog(!m.settings.scrobble_log),
+            "lastfm_scrobble" => Effect::SetLastFmScrobble(!m.settings.lastfm_scrobble),
+            "lastfm_now_playing" => Effect::SetLastFmNowPlaying(!m.settings.lastfm_now_playing),
+            "lastfm_connect" => Effect::LastFm(reborn_core::LastFmRequest::Connect),
+            "lastfm_cancel" => Effect::LastFm(reborn_core::LastFmRequest::Cancel),
+            "lastfm_send" => Effect::LastFm(reborn_core::LastFmRequest::SendNow),
+            "lastfm_disconnect" => Effect::LastFm(reborn_core::LastFmRequest::Disconnect),
+            "lastfm_password" => {
+                self.keyboard = Some(keyboard::Keyboard::new(keyboard::Purpose::LastFmUser, ""));
+                Effect::None
+            }
             "album_view" => Effect::SetAlbumView(match m.settings.album_view {
                 reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
                 reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,
@@ -2579,6 +2607,26 @@ impl Ui {
                         self.keyboard = None;
                         Effect::WifiConnect { ssid, password }
                     }
+                    Purpose::LastFmUser => {
+                        if text.is_empty() {
+                            self.flash("Type your Last.fm username");
+                            return Effect::None;
+                        }
+                        self.keyboard = Some(keyboard::Keyboard::new(
+                            Purpose::LastFmPassword { username: text },
+                            "",
+                        ));
+                        Effect::None
+                    }
+                    Purpose::LastFmPassword { username } => {
+                        if k.text.is_empty() {
+                            self.flash("Type your Last.fm password");
+                            return Effect::None;
+                        }
+                        let password = std::mem::take(&mut k.text);
+                        self.keyboard = None;
+                        Effect::LastFm(reborn_core::LastFmRequest::Login { username, password })
+                    }
                     Purpose::RadioSearch => {
                         if text.chars().count() < 2 {
                             self.flash("Type at least two letters");
@@ -2821,6 +2869,7 @@ fn route(key: &str) -> Option<Screen> {
         "maintenance" => Screen::Maintenance,
         "diagnostics" => Screen::Diagnostics,
         "radio" => Screen::Radio,
+        "lastfm" => Screen::LastFm,
         _ => return None,
     })
 }

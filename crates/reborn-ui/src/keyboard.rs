@@ -25,6 +25,11 @@ pub enum Purpose {
     /// A new playlist's name, or a playlist's new name.
     PlaylistNew,
     PlaylistRename,
+    /// Last.fm fallback sign-in: the username, then the password.
+    LastFmUser,
+    LastFmPassword {
+        username: String,
+    },
 }
 
 impl Purpose {
@@ -34,10 +39,15 @@ impl Purpose {
             Self::WifiPassword { .. } => 63,
             Self::RadioSearch | Self::LibrarySearch => 40,
             Self::PlaylistNew | Self::PlaylistRename => 60,
+            Self::LastFmUser => 32,
+            Self::LastFmPassword { .. } => 64,
         }
     }
     fn secret(&self) -> bool {
-        matches!(self, Self::WifiPassword { .. })
+        matches!(
+            self,
+            Self::WifiPassword { .. } | Self::LastFmPassword { .. }
+        )
     }
     pub fn done_label(&self) -> &'static str {
         match self {
@@ -45,6 +55,8 @@ impl Purpose {
             Self::RadioSearch | Self::LibrarySearch => "Search",
             Self::PlaylistNew => "Create",
             Self::PlaylistRename => "Rename",
+            Self::LastFmUser => "Next",
+            Self::LastFmPassword { .. } => "Sign In",
         }
     }
     pub(crate) fn title(&self) -> String {
@@ -55,6 +67,8 @@ impl Purpose {
             Self::LibrarySearch => "Search".into(),
             Self::PlaylistNew => "New Playlist".into(),
             Self::PlaylistRename => "Rename Playlist".into(),
+            Self::LastFmUser => "Last.fm Username".into(),
+            Self::LastFmPassword { .. } => "Last.fm Password".into(),
         }
     }
     fn prompt(&self) -> String {
@@ -63,6 +77,8 @@ impl Purpose {
             Self::RadioSearch => "Station name".into(),
             Self::LibrarySearch => "Artist, album or song".into(),
             Self::PlaylistNew | Self::PlaylistRename => "Playlist name".into(),
+            Self::LastFmUser => "Username".into(),
+            Self::LastFmPassword { username } => format!("Password for “{username}”"),
         }
     }
 }
