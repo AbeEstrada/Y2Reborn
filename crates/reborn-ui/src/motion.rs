@@ -102,8 +102,17 @@ impl Motion {
     /// Something drawn in the latest frame is still moving: keep the
     /// panel's full frame rate for the next one.
     pub fn moving(&self) -> bool {
+        self.settling() || {
+            let frame = self.frame.get();
+            frame > 0 && self.live.get() == frame
+        }
+    }
+
+    /// A value is still on its way (motion a button started), as opposed to
+    /// motion that goes on by itself (the playing wave).
+    pub fn settling(&self) -> bool {
         let frame = self.frame.get();
-        frame > 0 && (self.unsettled.get() == frame || self.live.get() == frame)
+        frame > 0 && self.unsettled.get() == frame
     }
 }
 

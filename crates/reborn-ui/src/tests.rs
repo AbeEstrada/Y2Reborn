@@ -1814,13 +1814,20 @@ fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
     let tracks = m.library.tracks.clone();
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
     ui.observe(&m);
-    let usb_symbol = |q: &[reborn_graphics::Quad]| q.iter().any(|q| q.src == maskdata::USB);
+    // The status bar's symbol (right side, visible); a message's own icon
+    // sits in its pill in the middle, and the bar gives way under it.
+    let usb_symbol = |q: &[reborn_graphics::Quad]| {
+        q.iter()
+            .any(|q| q.src == maskdata::USB && q.x > 300. && q.color & 0xFF != 0)
+    };
     assert!(!usb_symbol(&ui.draw(&m, &tracks, false)));
     m.platform.snapshot.usb = UsbTransfer::Ready;
     ui.observe(&m);
     let frame = ui.draw(&m, &tracks, false);
     assert!(drawn_text(&frame).contains("Connected to a computer"));
-    assert!(usb_symbol(&frame));
+    assert!(!usb_symbol(&frame), "the bar gives way to the message");
+    ui.notice.clear();
+    assert!(usb_symbol(&ui.draw(&m, &tracks, false)));
     // Everything keeps working: the wheel moves, Back goes back.
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(m.navigation.focus, 1);
@@ -1835,7 +1842,8 @@ fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
     ui.observe(&m);
     let frame = ui.draw(&m, &tracks, false);
     assert!(drawn_text(&frame).contains("Copying files"));
-    assert!(usb_symbol(&frame));
+    ui.notice.clear();
+    assert!(usb_symbol(&ui.draw(&m, &tracks, false)));
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
     ui.observe(&m);
     assert!(!usb_symbol(&ui.draw(&m, &tracks, false)));
@@ -3002,6 +3010,9 @@ fn motion_waves_while_playing_slides_screens_and_glides_focus() {
         ui.gliding(),
         "the wave keeps the full frame rate while playing"
     );
+    // …without the Interactive CPU lease: its frames fit the lowest clock.
+    ui.draw(&m, &m.library.tracks, false);
+    assert!(!ui.responding(), "the wave alone takes no CPU boost");
     m.playback = reborn_core::PlaybackState::Paused;
     // Paused: the wave settles flat and the frame rate drops back.
     for _ in 0..60 {

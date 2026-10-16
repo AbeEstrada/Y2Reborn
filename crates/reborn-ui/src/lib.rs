@@ -516,6 +516,15 @@ impl Ui {
             || (self.ui_motion && (self.motion.moving() || self.slide.borrow().is_some()))
     }
 
+    /// Motion a button started (a glide, a slide, Cover Flow): it earns the
+    /// short Interactive CPU lease. The playing wave alone does not: its
+    /// ≈3-ms frames fit the lowest clock (Beta 7.4: less heat on Now Playing).
+    pub fn responding(&self) -> bool {
+        self.flow.borrow().moving()
+            || self.transition_progress().is_some()
+            || (self.ui_motion && (self.motion.settling() || self.slide.borrow().is_some()))
+    }
+
     /// `target` eased in time under `key` (see `motion::Motion::ease`);
     /// exactly `target` without UI motion.
     pub(crate) fn ease(

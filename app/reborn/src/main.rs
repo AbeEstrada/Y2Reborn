@@ -3921,8 +3921,9 @@ fn run() -> Result<(), String> {
             rt.dirty.mark_render();
         }
         // A glide continues after the last wheel detent; keep the short
-        // interactive CPU lease alive until it rests.
-        if rt.ui.gliding() && !rt.model.screen_off {
+        // interactive CPU lease alive until it rests. The playing wave keeps
+        // the frame rate (`gliding`) but not the lease (Beta 7.4).
+        if rt.ui.responding() && !rt.model.screen_off {
             rt.interaction_hints.interactive();
         }
         if let Some(effect) = rt.ui.power_hold_complete() {

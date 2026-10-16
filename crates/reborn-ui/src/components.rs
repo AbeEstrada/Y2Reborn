@@ -67,16 +67,17 @@ pub fn art_key(track: &Track) -> u64 {
 /// The top strip: optional back arrow, a tracked-caps title in the middle and
 /// the status cluster (radios, charging, battery) on the right.
 pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool) {
+    if back {
+        c.icon(Icon::Back, 22., 18., 20., color::MUTED);
+    }
+    // The title and the status cluster: a message takes their place.
     let start = c.draw.len();
-    status_bar_inner(c, ui, m, title, back);
+    status_bar_inner(c, ui, m, title);
     let end = c.draw.len();
     c.mark_moving(Moving::StatusBar { start, end });
 }
 
-fn status_bar_inner(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool) {
-    if back {
-        c.icon(Icon::Back, 22., 18., 20., color::MUTED);
-    }
+fn status_bar_inner(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str) {
     if !title.is_empty() {
         // The clock sits left of the radios; long titles stop short of it.
         let room = if ui.clock(m).is_some() { 180. } else { 250. };
@@ -769,24 +770,62 @@ pub enum Tone {
     Error,
 }
 
-/// A short message at the top of the screen.
+/// A short message (Beta 7.4): a slim pill in the status bar, which gives
+/// way while it shows (the back arrow stays), with an icon for what it is
+/// about. It covers no content and nothing peeks out beside it.
 pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
-    // In the status bar, over the screen's title: a notice never hides the
-    // focused row, the cover or a text being typed.
+    let bar = c.moving.iter().rev().find_map(|k| match *k {
+        Moving::StatusBar { start, end } => Some((start, end)),
+        _ => None,
+    });
+    if let Some((s, e)) = bar {
+        for q in &mut c.draw[s..e] {
+            q.color &= 0xFFFF_FF00;
+        }
+    }
     let start = c.draw.len();
-    let w = (text::width(Face::S13, message) + 52.).min(WIDTH - 24.);
+    let h = 26.;
+    let w = (text::width(Face::S13, message) + 54.).min(WIDTH - 100.);
     let x = (WIDTH - w) / 2.;
-    let y = 2.;
-    c.rrect(x, y, w, 34., 17., 0x14161CFC);
-    c.rrect_outline(x, y, w, 34., 17., 1., color::GLASS);
-    let dot = match tone {
-        Tone::Info => color::MUTED,
-        Tone::Error => color::DANGER,
-    };
-    c.disc(x + 18., y + 17., 4., dot);
-    c.text_mid(x + 32., y + 17., w - 46., message, Face::S13, color::TEXT);
+    let y = 5.;
+    c.rrect(x, y, w, h, h / 2., 0x1A1D24FA);
+    c.rrect_outline(x, y, w, h, h / 2., 1., color::GLASS);
+    let (icon, tint) = toast_icon(message, tone);
+    c.icon(icon, x + 20., y + h / 2., 16., tint);
+    c.text_mid(
+        x + 36.,
+        y + h / 2.,
+        w - 50.,
+        message,
+        Face::S13,
+        color::TEXT,
+    );
     let end = c.draw.len();
     c.mark_moving(Moving::Toast { start, end });
+}
+
+/// The icon of a message: what it is about, or a warning for a problem.
+fn toast_icon(message: &str, tone: Tone) -> (Icon, u32) {
+    if tone == Tone::Error {
+        return (Icon::Warning, color::DANGER);
+    }
+    let lower = message.to_lowercase();
+    let icon = if lower.contains("computer") {
+        Icon::Usb
+    } else if lower.contains("bluetooth") {
+        Icon::Bluetooth
+    } else if lower.contains("wi-fi") {
+        Icon::Wifi
+    } else if lower.contains("update") {
+        Icon::Download
+    } else if lower.contains("favorite") {
+        Icon::HeartOn
+    } else if lower.contains("song") || lower.contains("music") || lower.contains("playlist") {
+        Icon::Note
+    } else {
+        Icon::Info
+    };
+    (icon, color::ACCENT)
 }
 
 /// A thin position rail beside a long list.
