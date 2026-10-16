@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.3 — Y2Linux 1.0 Beta 7.3 (Baseline 64), 2026-10-16 (latest): USB message and symbol
+## 1.0.0-beta.7.4 — Y2Linux 1.0 Beta 7.4 (Baseline 65), 2026-10-16 (latest): status-bar messages, cooler wave
+
+- `components::toast`: a 26-px pill in the status bar with `toast_icon` (subject icon; red warning for problems); the
+  StatusBar mark's quads (title and status cluster, not the back arrow) are hidden while it shows. Owner chose this
+  placement (C) over below-the-bar (A) and bottom (B).
+- `Ui::responding()` (button-started motion: Cover Flow, slides, settling springs) drives the Interactive CPU lease;
+  `gliding()` (incl. the playing wave) only the frame pacing. The wave alone runs at the lowest clock.
+- Measured on 7.3: 62 fps median while moving, 64–65 fps wave, 0 missed, 0 fps at rest. 487 tests, strict Clippy.
+
+## 1.0.0-beta.7.3 — Y2Linux 1.0 Beta 7.3 (Baseline 64), 2026-10-16: USB message and symbol
 
 - Owner: the locked computer screen (7.1) kept the player unusable while connected; a message and a status-bar symbol
   instead. `Ui::observe` flashes "Connected to a computer" / "Copying files from the computer…"; `status_cluster` draws
