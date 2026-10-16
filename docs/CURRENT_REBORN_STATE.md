@@ -1,6 +1,19 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.1 — Y2Linux 1.0 Beta 7.1 (Baseline 62), 2026-10-16 (latest): one-step update, USB screen, time zone
+## 1.0.0-beta.7.2 — Y2Linux 1.0 Beta 7.2 (Baseline 63), 2026-10-16 (latest): motion and the Now Playing wave
+
+- Owner: more animation for a polished, responsive feel, at 60 fps; the progress as a wave, not a perfect sine.
+- `motion.rs`: per-key eased values (QUICK/CALM), retargetable, frame-rate independent; `Motion::moving()` and
+  `mark_live` feed `Ui::gliding()`, i.e. Cover Flow's 12-ms frame gap and Interactive lease; at rest nothing redraws.
+  `Ui::ui_motion` (runtime on; previews/tests off); `reborn-preview --motion` captures frames mid-animation.
+- Components mark moving quads (`canvas::Moving`), eased by `motion::apply`: focus row and Home marker glide; smooth list
+  scrolling (±1 extra row, hidden at rest, status bar kept above; long jumps glide one row); sheets rise; dialogs and toasts
+  fade in; switches slide. `Ui::slide_screens`: screens slide (200 ms), skins included.
+- Now Playing: `shown_position` moves on between reports; `components::wave_progress` (travelling, imperfect wave; flat
+  when paused); a new song fades in; the play button dips on a change.
+- 487 tests, strict Clippy. Device frame rate owed.
+
+## 1.0.0-beta.7.1 — Y2Linux 1.0 Beta 7.1 (Baseline 62), 2026-10-16: one-step update, USB screen, time zone
 
 - **Update:** the check's reply sets Up to Date / Available at once (it waited for the next status refresh). Update Now /
   Install Now (`Ui::update_run`) download, check and restart to install on one screen that cannot be left, after the charge
