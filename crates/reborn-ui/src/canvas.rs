@@ -148,6 +148,59 @@ fn radius_slot(r: f32) -> usize {
 
 pub struct Canvas {
     pub draw: Vec<Quad>,
+    /// Where shared components drew things that move (Beta 7.2); one pass
+    /// eases them once the frame is built (`motion::apply`).
+    pub moving: Vec<Moving>,
+}
+
+/// A run of quads `[start, end)` that one kind of motion moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Moving {
+    /// A focus highlight at `y` (it glides to the next row); `layer` 0 is
+    /// the screen, 1 a sheet over it.
+    Focus {
+        start: usize,
+        end: usize,
+        y: f32,
+        layer: u8,
+    },
+    /// The status bar, kept above rows that scroll under it.
+    StatusBar { start: usize, end: usize },
+    /// List rows in the window `top..bottom`, `row_h` apart, starting at row
+    /// `first` (one row more is drawn on each side to scroll into view;
+    /// whatever is wholly outside the window is hidden).
+    List {
+        start: usize,
+        end: usize,
+        top: f32,
+        bottom: f32,
+        row_h: f32,
+        first: usize,
+    },
+    /// A sheet `height` tall rising from the bottom over its scrim.
+    Sheet {
+        scrim: usize,
+        start: usize,
+        end: usize,
+        height: f32,
+    },
+    /// A dialog fading in over its scrim.
+    Dialog {
+        scrim: usize,
+        start: usize,
+        end: usize,
+    },
+    /// A message dropping in at the top.
+    Toast { start: usize, end: usize },
+    /// A switch: track quads `[start, knob)`, knob quads `[knob, end)`.
+    Switch {
+        start: usize,
+        knob: usize,
+        end: usize,
+        on: bool,
+        x: f32,
+        y: f32,
+    },
 }
 
 impl Default for Canvas {
@@ -160,10 +213,18 @@ impl Canvas {
     pub fn new() -> Self {
         Self {
             draw: Vec::with_capacity(1200),
+            moving: Vec::new(),
         }
     }
     pub fn from_quads(draw: Vec<Quad>) -> Self {
-        Self { draw }
+        Self {
+            draw,
+            moving: Vec::new(),
+        }
+    }
+    /// Note quads that move (see `Moving`).
+    pub fn mark_moving(&mut self, mark: Moving) {
+        self.moving.push(mark);
     }
     pub fn finish(self) -> Vec<Quad> {
         self.draw

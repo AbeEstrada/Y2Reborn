@@ -3004,3 +3004,94 @@ fn playlist_speed_on_a_large_playlist() {
     let resolved = ui.resolved(&tracks, &ui.playlists.lists[0].clone());
     assert_eq!(resolved.iter().filter(|r| r.is_some()).count(), 13_334);
 }
+
+#[test]
+fn motion_waves_while_playing_slides_screens_and_glides_focus() {
+    // Beta 7.2 UI motion, as the player runs it.
+    let mut ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::NowPlaying);
+    let warped = |q: &[reborn_graphics::Quad]| q.iter().filter(|q| q.warp.is_some()).count();
+    m.playback = reborn_core::PlaybackState::Playing;
+    m.position_ms = 60_000;
+    let frame = ui.draw(&m, &m.library.tracks, false);
+    assert!(warped(&frame) > 20, "the played part waves");
+    assert!(
+        ui.gliding(),
+        "the wave keeps the full frame rate while playing"
+    );
+    m.playback = reborn_core::PlaybackState::Paused;
+    // Paused: the wave settles flat and the frame rate drops back.
+    for _ in 0..60 {
+        ui.draw(&m, &m.library.tracks, false);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    let flat = ui.draw(&m, &m.library.tracks, false);
+    let ys: Vec<f32> = flat
+        .iter()
+        .filter_map(|q| q.warp.map(|w| w.corners[0][1]))
+        .collect();
+    let spread =
+        ys.iter().cloned().fold(f32::MIN, f32::max) - ys.iter().cloned().fold(f32::MAX, f32::min);
+    assert!(spread < 1.5, "flat when paused: {spread}");
+
+    // A list: the extra rows stay hidden at rest; the focus glides.
+    let mut m = app(Screen::Tracks);
+    let tracks = m.library.tracks.clone();
+    m.navigation.focus = 2;
+    ui.draw(&m, &tracks, false);
+    // Coming from Now Playing, the list slides in first.
+    assert!(ui.gliding());
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    ui.draw(&m, &tracks, false);
+    ui.draw(&m, &tracks, false);
+    assert!(!ui.gliding(), "nothing moves at rest");
+    let rest = ui.draw(&m, &tracks, false);
+    // The rows drawn to scroll in are invisible at rest.
+    assert!(rest
+        .iter()
+        .filter(|q| q.color & 0xFF != 0)
+        .all(|q| q.y < 360. && q.y + q.h > 0.));
+    let focus_y = |q: &[reborn_graphics::Quad]| q.iter().find(|q| q.focus_target).unwrap().y;
+    let before = focus_y(&ui.draw(&m, &tracks, false));
+    ui.model_action(&mut m, Action::NavigateDown);
+    let during = focus_y(&ui.draw(&m, &tracks, false));
+    assert!(
+        during >= before && during < before + 53.,
+        "{before} → {during}"
+    );
+    assert!(ui.gliding());
+
+    // A new screen slides in over the last one; one focus target only.
+    let mut m = app(Screen::Home);
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Music);
+    let sliding = ui.draw(&m, &tracks, false);
+    assert_eq!(crate::focus_target_count(&sliding), 1);
+    assert!(ui.gliding(), "the slide runs at the full frame rate");
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    ui.draw(&m, &tracks, false);
+    let rested = ui.draw(&m, &tracks, false);
+    assert!(!ui.gliding() && crate::focus_target_count(&rested) == 1);
+}
+
+#[test]
+fn a_long_wheel_jump_glides_only_its_last_row() {
+    let ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::Tracks);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = tracks.len() - 1;
+    ui.normalize(&mut m, &tracks);
+    let frame = ui.draw(&m, &tracks, false);
+    // The focused (last) row is on screen at once, not a long slide away.
+    let focus = frame.iter().find(|q| q.focus_target).unwrap();
+    assert!(focus.y > 0. && focus.y < 360., "{}", focus.y);
+}

@@ -3,7 +3,7 @@
 //! Shuffle, its songs; songs the player does not have are shown dimmed; a song
 //! being moved is lifted).
 use crate::{
-    canvas::{Canvas, Icon},
+    canvas::{Canvas, Icon, Moving},
     components::{self, cover},
     playlists_ui::{is_favorites, summary},
     screens::screen_title,
@@ -84,9 +84,11 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let first = components::list_window(m, focus, ROWS);
-    for (n, row) in ui.visible_rows(m, tracks, first, ROWS).iter().enumerate() {
-        let i = first + n;
-        let y = 38. + (i - first) as f32 * ROW_H;
+    let (from, shown) = components::scroll_rows(ui, first, ROWS, count);
+    let rows_start = c.draw.len();
+    for (n, row) in ui.visible_rows(m, tracks, from, shown).iter().enumerate() {
+        let i = from + n;
+        let y = 38. + (i as f32 - first as f32) * ROW_H;
         let selected = interactive && i == focus;
         if selected {
             components::focus_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3.);
@@ -123,6 +125,14 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
         c.text_mid(72., y + 36., 330., &detail, Face::R11, color::MUTED);
         c.icon(Icon::Chevron, WIDTH - 36., y + ROW_H / 2., 16., color::DIM);
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: 38.,
+        bottom: 38. + ROWS as f32 * ROW_H,
+        row_h: ROW_H,
+        first,
+    });
     if count > ROWS {
         components::scroll_rail(c, 44., 286., first, count, ROWS, accent);
     }

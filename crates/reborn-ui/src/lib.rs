@@ -11,6 +11,7 @@ mod flow;
 mod fontdata;
 pub mod keyboard;
 mod maskdata;
+mod motion;
 pub mod pages;
 pub mod playlist_index;
 mod playlists_ui;
@@ -361,6 +362,21 @@ pub struct Ui {
     pub update_run: bool,
     /// The update is installed: the platform restarts the player now.
     pub update_restarting: bool,
+    /// UI motion (Beta 7.2): gliding focus, scrolling, screen slides,
+    /// sheets, the Now Playing wave. The player turns it on; previews and
+    /// tests draw still, exact frames.
+    pub ui_motion: bool,
+    motion: motion::Motion,
+    /// The screen last drawn (screen, filter, depth) and its frame, for
+    /// the slide to the next screen.
+    seen: RefCell<Option<Seen>>,
+    slide: RefCell<Option<Slide>>,
+    /// The playing position as last reported, and when: Now Playing moves
+    /// on between reports.
+    position_seen: std::cell::Cell<Option<(u64, Instant)>>,
+    /// The song and the play state Now Playing last showed: a change fades
+    /// the new song in and pulses the button (Beta 7.2).
+    np_seen: std::cell::Cell<Option<(i64, bool)>>,
     battery_acked: u8,
     /// Something on screen sweeps with time (a spinner), so keep redrawing.
     spinning: bool,
@@ -489,17 +505,69 @@ impl Ui {
     /// Whether something on screen changes with time (a fade, a ring), so the
     /// caller keeps redrawing.
     pub fn animating(&self) -> bool {
-        self.volume_until.is_some()
-            || self.power_hold.is_some()
-            || self.spinning
-            || self.flow.borrow().moving()
-            || self.transition_progress().is_some()
+        self.volume_until.is_some() || self.power_hold.is_some() || self.spinning || self.gliding()
     }
 
     /// Motion that wants the panel's full frame rate: Cover Flow's glide and
-    /// the cover's flight. Spinners and fades stay at the calm rate.
+    /// the cover's flight, and (Beta 7.2) every eased value on its way, a
+    /// screen sliding in and the playing wave. Spinners stay at the calm rate.
     pub fn gliding(&self) -> bool {
-        self.flow.borrow().moving() || self.transition_progress().is_some()
+        self.flow.borrow().moving()
+            || self.transition_progress().is_some()
+            || (self.ui_motion && (self.motion.moving() || self.slide.borrow().is_some()))
+    }
+
+    /// `target` eased in time under `key` (see `motion::Motion::ease`);
+    /// exactly `target` without UI motion.
+    pub(crate) fn ease(
+        &self,
+        key: &str,
+        start: Option<f32>,
+        target: f32,
+        rate: f32,
+        settle: f32,
+    ) -> f32 {
+        if !self.ui_motion {
+            return target;
+        }
+        self.motion
+            .ease(key, start, target, rate, settle, Instant::now())
+    }
+
+    /// Now Playing's changes since its last frame: (new song, new play state).
+    pub(crate) fn np_changes(&self, song: i64, playing: bool) -> (bool, bool) {
+        let before = self.np_seen.replace(Some((song, playing)));
+        match before {
+            Some((s, p)) => (s != song, p != playing),
+            None => (false, false),
+        }
+    }
+
+    /// The frame draws motion that goes on by itself (the playing wave).
+    pub(crate) fn mark_live(&self) {
+        if self.ui_motion {
+            self.motion.mark_live();
+        }
+    }
+
+    /// The playing position for this frame: the last report moved on by the
+    /// time since, while playing (reports come a few times a second).
+    pub(crate) fn shown_position(&self, m: &AppModel) -> u64 {
+        let now = Instant::now();
+        let (reported, at) = match self.position_seen.get() {
+            Some((p, at)) if p == m.position_ms => (p, at),
+            _ => {
+                self.position_seen.set(Some((m.position_ms, now)));
+                (m.position_ms, now)
+            }
+        };
+        let playing = m.playback == reborn_core::PlaybackState::Playing;
+        if !self.ui_motion || !playing {
+            return reported;
+        }
+        let ahead = (now.saturating_duration_since(at).as_millis() as u64).min(1_500);
+        let length = m.current().map_or(u64::MAX, |t| t.duration_ms.max(1));
+        (reported + ahead).min(length)
     }
 
     /// "9 songs · 38 min" for the album with filter `key`, computed once per
@@ -2655,7 +2723,67 @@ impl Ui {
     }
 
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
-        screens::draw(self, m, tracks, has_art)
+        self.motion.begin_frame();
+        let frame = screens::draw(self, m, tracks, has_art);
+        if self.ui_motion {
+            self.slide_screens(m, frame)
+        } else {
+            frame
+        }
+    }
+
+    /// A new screen slides in from the right over the last one (Back: the
+    /// last one slides out to the right), 200 ms, eased out.
+    fn slide_screens(&self, m: &AppModel, frame: Vec<Quad>) -> Vec<Quad> {
+        let now = Instant::now();
+        let here = (
+            m.screen,
+            m.navigation.filter.clone(),
+            m.navigation.history.len(),
+        );
+        {
+            let mut seen = self.seen.borrow_mut();
+            if let Some((screen, filter, depth, old)) = seen.take() {
+                let moved = (screen, &filter) != (here.0, &here.1);
+                // Cover Flow's cover flight is its own transition.
+                if moved && !m.screen_off && self.transition.get().is_none() && !old.is_empty() {
+                    *self.slide.borrow_mut() = Some(Slide {
+                        started: now,
+                        push: here.2 >= depth,
+                        old,
+                    });
+                }
+            }
+            *seen = Some((here.0, here.1, here.2, frame.clone()));
+        }
+        let mut slide = self.slide.borrow_mut();
+        let Some(s) = slide.as_ref() else {
+            return frame;
+        };
+        let p = motion::ease_out(now.saturating_duration_since(s.started).as_secs_f32() / SLIDE_S);
+        if p >= 1. || m.screen_off {
+            *slide = None;
+            return frame;
+        }
+        let mut old = s.old.clone();
+        for q in &mut old {
+            q.focus_target = false;
+        }
+        let mut new = frame;
+        let w = theme::WIDTH;
+        let mut out = Vec::with_capacity(old.len() + new.len());
+        if s.push {
+            motion::shift(&mut old, -w * 0.3 * p);
+            motion::shift(&mut new, w * (1. - p));
+            out.extend(old);
+            out.extend(new);
+        } else {
+            motion::shift(&mut new, -w * 0.3 * (1. - p));
+            motion::shift(&mut old, w * p);
+            out.extend(new);
+            out.extend(old);
+        }
+        out
     }
 
     /// List rows one screen shows: the skin's list, else Reborn's own.
@@ -2669,6 +2797,19 @@ impl Ui {
             .unwrap_or_else(|| screens::visible_rows_for(m.screen))
     }
 }
+
+/// The screen last drawn: screen, filter, history depth and its frame.
+type Seen = (Screen, String, usize, Vec<Quad>);
+
+/// A screen slide in progress: the frame being left and the direction.
+struct Slide {
+    started: Instant,
+    push: bool,
+    old: Vec<Quad>,
+}
+
+/// How long a screen slide takes.
+const SLIDE_S: f32 = 0.2;
 
 fn route(key: &str) -> Option<Screen> {
     Some(match key {

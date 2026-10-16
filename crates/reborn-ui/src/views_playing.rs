@@ -30,6 +30,20 @@ pub fn now_playing(
     components::status_bar(c, ui, m, "", true);
 
     let radio = t.is_radio();
+    let playing = matches!(
+        m.playback,
+        PlaybackState::Playing | PlaybackState::Buffering
+    );
+    // Beta 7.2: a new song fades in; a new play state pulses the button.
+    let (new_song, new_state) = ui.np_changes(t.id, playing);
+    let shown = ui.ease(
+        &format!("np:song:{}", t.id),
+        new_song.then_some(0.),
+        1.,
+        crate::motion::CALM,
+        0.01,
+    );
+    let song_from = c.draw.len();
     cover_shadow(c, 26., 46., 176.);
     if has_art {
         c.draw.push(Quad {
@@ -119,11 +133,24 @@ pub fn now_playing(
         }
     }
     status_icons(c, m, 222., info_cy + 33., accent);
+    if shown < 1. {
+        crate::motion::fade_all(&mut c.draw[song_from..], shown);
+    }
 
-    // Progress.
+    // Progress: a wave while music plays, laid flat when paused (Beta 7.2).
+    let position = ui.shown_position(m);
     let (x0, x1) = (26., WIDTH - 26.);
-    // A station has no length: a full bar, listening time and LIVE.
-    components::slider(
+    let amp = ui.ease("np:wave", None, if playing { 3.6 } else { 0. }, 6., 0.02);
+    let phase = if ui.ui_motion {
+        crate::motion::phase(0.9)
+    } else {
+        0.
+    };
+    if playing && amp > 0. {
+        ui.mark_live();
+    }
+    // A station has no length: a full wave, listening time and LIVE.
+    components::wave_progress(
         c,
         x0,
         263.,
@@ -131,20 +158,23 @@ pub fn now_playing(
         if radio {
             1.
         } else {
-            components::progress(m.position_ms, t.duration_ms)
+            components::progress(position, t.duration_ms)
         },
+        // Opaque, so the wave's joints do not bead.
         if radio {
-            alpha(accent, 0xB0)
+            crate::theme::mix(accent, color::BG, 0.3)
         } else {
             color::TEXT
         },
+        phase,
+        amp,
         !radio,
     );
     c.text_mid(
         x0,
         281.,
         80.,
-        &components::time(m.position_ms),
+        &components::time(position),
         Face::R11,
         color::MUTED,
     );
@@ -154,22 +184,26 @@ pub fn now_playing(
     } else {
         format!(
             "-{}",
-            components::time(t.duration_ms.saturating_sub(m.position_ms))
+            components::time(t.duration_ms.saturating_sub(position))
         )
     };
     c.text_mid_right(x1, 281., &remaining, Face::R11, color::MUTED);
 
-    // Transport.
+    // Transport: the button dips and its new icon fades in on a change.
     let cy = 322.;
+    let pulse = ui.ease(
+        &format!("np:press:{playing}"),
+        new_state.then_some(1.),
+        0.,
+        crate::motion::QUICK,
+        0.01,
+    );
     let at = c.draw.len();
-    c.disc(240., cy, 25., color::TEXT);
+    c.disc(240., cy, 25. * (1. - 0.1 * pulse), color::TEXT);
     if interactive {
         c.mark_focus(at);
     }
-    let playing = matches!(
-        m.playback,
-        PlaybackState::Playing | PlaybackState::Buffering
-    );
+    let icon_at = c.draw.len();
     c.icon(
         if playing {
             Icon::PauseLarge
@@ -181,6 +215,9 @@ pub fn now_playing(
         26.,
         color::INK,
     );
+    if pulse > 0. {
+        crate::motion::fade_all(&mut c.draw[icon_at..], 1. - pulse);
+    }
     c.icon(Icon::PrevLarge, 240. - 78., cy, 30., color::TEXT);
     c.icon(Icon::NextLarge, 240. + 78., cy, 30., color::TEXT);
     let output = pages::output_name(ui, m);

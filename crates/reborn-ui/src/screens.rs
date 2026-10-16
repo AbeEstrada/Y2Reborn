@@ -47,11 +47,13 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
     if ui.update_run {
         views_settings::update_overlay(&mut c, ui, m);
         overlays(&mut c, ui, m, tracks);
+        crate::motion::apply(ui, m, &mut c);
         return c.finish();
     }
     if ui.usb_overlay(m) {
         views_system::usb(&mut c, ui, m);
         overlays(&mut c, ui, m, tracks);
+        crate::motion::apply(ui, m, &mut c);
         return c.finish();
     }
     match m.screen {
@@ -91,6 +93,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         _ => views_system::page(&mut c, ui, m, tracks, interactive),
     }
     overlays(&mut c, ui, m, tracks);
+    crate::motion::apply(ui, m, &mut c);
     c.finish()
 }
 

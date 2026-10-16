@@ -1077,6 +1077,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // `--motion`: frames caught mid-animation (Beta 7.2), to look at the
+    // motion itself. Timing-dependent, so never part of the normal set.
+    if args.iter().any(|a| a == "--motion") {
+        fn wait(ms: u64) {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        fn settle(ui: &Ui, m: &AppModel) {
+            ui.draw(m, &m.library.tracks, false);
+            wait(260);
+            ui.draw(m, &m.library.tracks, false);
+        }
+        case!("m1-slide-in", at(Screen::Home, ""), |ui, m| {
+            ui.ui_motion = true;
+            m.navigation.focus = 1;
+            settle(ui, m);
+            ui.model_action(m, Action::Select);
+            ui.draw(m, &m.library.tracks, false);
+            wait(70);
+        });
+        case!("m2-slide-back", at(Screen::Home, ""), |ui, m| {
+            ui.ui_motion = true;
+            m.navigation.focus = 1;
+            settle(ui, m);
+            ui.model_action(m, Action::Select);
+            settle(ui, m);
+            ui.model_action(m, Action::Back);
+            ui.draw(m, &m.library.tracks, false);
+            wait(70);
+        });
+        case!("m3-sheet-rising", at(Screen::Tracks, ""), |ui, m| {
+            ui.ui_motion = true;
+            m.navigation.focus = 2;
+            settle(ui, m);
+            ui.model_action(m, Action::ContextMenu);
+            ui.draw(m, &m.library.tracks, false);
+            wait(50);
+        });
+        case!("m4-list-scrolling", at(Screen::Tracks, ""), |ui, m| {
+            ui.ui_motion = true;
+            m.navigation.focus = 5;
+            settle(ui, m);
+            ui.model_action(m, Action::NavigateDown);
+            ui.draw(m, &m.library.tracks, false);
+            wait(45);
+        });
+        case!("m5-focus-gliding", at(Screen::Settings, ""), |ui, m| {
+            ui.ui_motion = true;
+            settle(ui, m);
+            ui.model_action(m, Action::NavigateDown);
+            ui.draw(m, &m.library.tracks, false);
+            wait(30);
+        });
+        case!("m6-toast-dropping", at(Screen::Albums, ""), |ui, m| {
+            ui.ui_motion = true;
+            settle(ui, m);
+            ui.flash("12 new songs added");
+            ui.draw(m, &m.library.tracks, false);
+            wait(50);
+        });
+        case!(
+            "m7-switch-sliding",
+            at(Screen::SettingsAudio, ""),
+            |ui, m| {
+                ui.ui_motion = true;
+                settle(ui, m);
+                m.settings.gapless_enabled = !m.settings.gapless_enabled;
+                ui.draw(m, &m.library.tracks, false);
+                wait(40);
+            }
+        );
+        case!("m8-wave-playing", at(Screen::NowPlaying, ""), |ui, m| {
+            ui.ui_motion = true;
+            m.position_ms = 137_000;
+            settle(ui, m);
+            wait(333);
+        });
+    }
+
     let mut manifest = vec![];
     let write = |name: &str, quads: &[reborn_graphics::Quad], focus: usize| {
         fs::write(

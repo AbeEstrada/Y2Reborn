@@ -2,7 +2,7 @@
 //! grouped cards, switches, buttons, empty states, covers, sheets and toasts.
 //! One component per idea; screens do not draw their own variants.
 use crate::{
-    canvas::{Canvas, Icon},
+    canvas::{Canvas, Icon, Moving},
     text::{self, Face},
     theme::{alpha, color, fade, mix, HEIGHT, WIDTH},
     Ui,
@@ -67,6 +67,13 @@ pub fn art_key(track: &Track) -> u64 {
 /// The top strip: optional back arrow, a tracked-caps title in the middle and
 /// the status cluster (radios, charging, battery) on the right.
 pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool) {
+    let start = c.draw.len();
+    status_bar_inner(c, ui, m, title, back);
+    let end = c.draw.len();
+    c.mark_moving(Moving::StatusBar { start, end });
+}
+
+fn status_bar_inner(c: &mut Canvas, ui: &Ui, m: &AppModel, title: &str, back: bool) {
     if back {
         c.icon(Icon::Back, 22., 18., 20., color::MUTED);
     }
@@ -168,9 +175,22 @@ pub(crate) fn status_cluster(c: &mut Canvas, ui: &Ui, m: &AppModel, tint: u32) {
 /// glass. Focus never uses the accent; the accent marks state (playing,
 /// checked, on).
 pub fn focus_row(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
+    focus_row_on(c, x, y, w, h, 0);
+}
+
+/// The focus row on `layer` (0 the screen, 1 a sheet): it glides between
+/// rows (Beta 7.2).
+pub(crate) fn focus_row_on(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, layer: u8) {
     let start = c.draw.len();
     c.rrect(x, y, w, h, 12., FOCUS_FILL);
     c.mark_focus(start);
+    let end = c.draw.len();
+    c.mark_moving(Moving::Focus {
+        start,
+        end,
+        y,
+        layer,
+    });
 }
 
 /// The focus row's fill, and the opaque colour it gives over `BG` (for
@@ -198,6 +218,7 @@ pub fn toggle(c: &mut Canvas, right: f32, cy: f32, on: bool) {
     let (w, h) = (44., 26.);
     let x = right - w;
     let y = cy - h / 2.;
+    let start = c.draw.len();
     c.rrect(
         x,
         y,
@@ -210,7 +231,18 @@ pub fn toggle(c: &mut Canvas, right: f32, cy: f32, on: bool) {
             color::GLASS_STRONG
         },
     );
+    let knob = c.draw.len();
     c.disc(x + if on { 31. } else { 13. }, cy, 10., color::TEXT);
+    let end = c.draw.len();
+    // The knob slides and the track takes its colour (Beta 7.2).
+    c.mark_moving(Moving::Switch {
+        start,
+        knob,
+        end,
+        on,
+        x: right,
+        y: cy,
+    });
 }
 
 pub fn check(c: &mut Canvas, cx: f32, cy: f32, tint: u32) {
@@ -340,6 +372,110 @@ pub fn slider(c: &mut Canvas, x: f32, cy: f32, w: f32, value: f32, lit: u32, kno
     }
 }
 
+/// The Now Playing progress as a wave (Beta 7.2): the played part waves,
+/// the rest is the thin track. Not a perfect sine: a second, faster wave
+/// rides on the first and the height breathes along the line; it tapers in
+/// at the start and settles into the knob. `phase` moves it while music
+/// plays; `amp` (pixels) eases to 0 when paused, which lays it flat.
+#[allow(clippy::too_many_arguments)]
+pub fn wave_progress(
+    c: &mut Canvas,
+    x: f32,
+    cy: f32,
+    w: f32,
+    value: f32,
+    lit: u32,
+    phase: f32,
+    amp: f32,
+    knob: bool,
+) {
+    let head = x + (w * value.clamp(0., 1.)).round();
+    if head < x + w {
+        c.rrect(head, cy - 2., x + w - head, 4., 2., color::TRACK);
+    }
+    // Laid flat (paused): a clean line, as before the wave.
+    if amp < 0.25 {
+        if head > x {
+            c.rrect(x, cy - 2., head - x, 4., 2., lit);
+        }
+        if knob {
+            c.disc(head, cy, 6., color::TEXT);
+        }
+        return;
+    }
+    let y = |px: f32| -> f32 {
+        let s = px - x;
+        let k = std::f32::consts::TAU / 34.;
+        let main = (k * s - phase).sin() * 0.78;
+        let ripple = (2.3 * k * s + 1.7 - 1.6 * phase).sin() * 0.22;
+        let breathe = 0.88 + 0.12 * (s / 57. + 0.6 * phase).sin();
+        let smooth = |e: f32| {
+            let e = e.clamp(0., 1.);
+            e * e * (3. - 2. * e)
+        };
+        let taper = smooth(s / 10.) * smooth((head - px) / 14.);
+        cy + amp * taper * breathe * (main + ripple)
+    };
+    let step = 3.;
+    let mut px = x;
+    while px < head {
+        let nx = (px + step).min(head);
+        let (y0, y1) = (y(px), y(nx));
+        // A faint wider stroke under a solid core: soft edges without MSAA.
+        // Only the core overlaps at the joints (an opaque overlap is
+        // invisible; a translucent one would bead).
+        segment(c, px, y0, nx, y1, 5., crate::theme::fade(lit, 0.28), 0.);
+        segment(c, px, y0, nx, y1, 2.6, lit, 0.6);
+        px = nx;
+    }
+    if knob {
+        c.disc(head, cy, 6., color::TEXT);
+    }
+}
+
+/// A straight stroke from (x0, y0) to (x1, y1), `thick` wide, `extend`
+/// longer at both ends so neighbouring strokes meet without a gap.
+#[allow(clippy::too_many_arguments)]
+fn segment(
+    c: &mut Canvas,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    thick: f32,
+    color: u32,
+    extend: f32,
+) {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 0.01 || color & 0xFF == 0 {
+        return;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (x0, y0, x1, y1) = (
+        x0 - ux * extend,
+        y0 - uy * extend,
+        x1 + ux * extend,
+        y1 + uy * extend,
+    );
+    let (nx, ny) = (-uy * thick / 2., ux * thick / 2.);
+    let corners = [
+        [x0 - nx, y0 - ny],
+        [x1 - nx, y1 - ny],
+        [x1 + nx, y1 + ny],
+        [x0 + nx, y0 + ny],
+    ];
+    let (min_x, max_x) = (x0.min(x1) - thick, x0.max(x1) + thick);
+    let (min_y, max_y) = (y0.min(y1) - thick, y0.max(y1) + thick);
+    c.draw.push(reborn_graphics::Quad {
+        warp: Some(reborn_graphics::Warp {
+            corners,
+            colors: [color; 4],
+        }),
+        ..reborn_graphics::Quad::rect(min_x, min_y, max_x - min_x, max_y - min_y, color)
+    });
+}
+
 // ------------------------------------------------------------------- covers
 
 /// Where the cover of a track comes from for the current frame.
@@ -440,7 +576,9 @@ pub struct SheetRow<'a> {
 /// A bottom sheet of actions, as used for song options. Its focused row is
 /// the focus row of every list.
 pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRow], focus: usize) {
+    let scrim_at = c.draw.len();
     scrim(c, false);
+    let body = c.draw.len();
     let row_h = 31.;
     let head = if subtitle.is_empty() { 40. } else { 52. };
     let visible = rows.len().min(6);
@@ -458,7 +596,7 @@ pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRo
         let ry = y + head + (i - start) as f32 * row_h;
         let selected = i == focus && row.enabled;
         if selected {
-            focus_row(c, x + 8., ry, w - 16., row_h - 3.);
+            focus_row_on(c, x + 8., ry, w - 16., row_h - 3., 1);
         }
         let ink = if row.enabled { color::TEXT } else { color::DIM };
         c.text_mid(
@@ -479,6 +617,14 @@ pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRo
             );
         }
     }
+    // It rises from the bottom over its fading scrim (Beta 7.2).
+    let end = c.draw.len();
+    c.mark_moving(Moving::Sheet {
+        scrim: scrim_at,
+        start: body,
+        end,
+        height: h,
+    });
 }
 
 /// A centred dialog with a message and a short row of choices.
@@ -490,7 +636,9 @@ pub fn dialog(
     focus: usize,
     danger: bool,
 ) {
+    let scrim_at = c.draw.len();
     scrim(c, true);
+    let start = c.draw.len();
     let lines = text::wrap(Face::R13, body, 300., 4);
     let h = 74. + lines.len() as f32 * 19. + rows.len() as f32 * 38. + 10.;
     let (w, x) = (340., 70.);
@@ -538,6 +686,12 @@ pub fn dialog(
         }
         ry += 38.;
     }
+    let end = c.draw.len();
+    c.mark_moving(Moving::Dialog {
+        scrim: scrim_at,
+        start,
+        end,
+    });
 }
 
 /// What stands above an empty, info or error state's title.
@@ -607,6 +761,7 @@ pub enum Tone {
 pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
     // In the status bar, over the screen's title: a notice never hides the
     // focused row, the cover or a text being typed.
+    let start = c.draw.len();
     let w = (text::width(Face::S13, message) + 52.).min(WIDTH - 24.);
     let x = (WIDTH - w) / 2.;
     let y = 2.;
@@ -618,6 +773,8 @@ pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
     };
     c.disc(x + 18., y + 17., 4., dot);
     c.text_mid(x + 32., y + 17., w - 46., message, Face::S13, color::TEXT);
+    let end = c.draw.len();
+    c.mark_moving(Moving::Toast { start, end });
 }
 
 /// A thin position rail beside a long list.
@@ -742,6 +899,17 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
     } else {
         format!("{} {many}", crate::screens::count_label(n))
     }
+}
+
+/// The rows a list draws: its window, plus (with UI motion) one row above
+/// and below that slide into view as it scrolls. Returns (first, count).
+pub(crate) fn scroll_rows(ui: &Ui, scroll: usize, visible: usize, total: usize) -> (usize, usize) {
+    if !ui.ui_motion {
+        return (scroll, visible);
+    }
+    let from = scroll.saturating_sub(1);
+    let to = (scroll + visible + 1).min(total.max(scroll + visible));
+    (from, to - from)
 }
 
 /// The first row shown so the focused one is in view among `visible`.

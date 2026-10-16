@@ -1,7 +1,7 @@
 //! Home and the music library: lists with covers, the album grid, album and
 //! artist pages, folders and the queue.
 use crate::{
-    canvas::{Canvas, Icon},
+    canvas::{Canvas, Icon, Moving},
     components::{self, cover, cover_rounded, cover_shadow},
     screens::{is_current, row_track, screen_title, visible_rows_for},
     text::{self, Face},
@@ -89,6 +89,14 @@ pub fn home(
             if interactive {
                 c.mark_focus(at);
             }
+            // The marker glides to the chosen place (Beta 7.2).
+            let end = c.draw.len();
+            c.mark_moving(Moving::Focus {
+                start: at,
+                end,
+                y: y + 8.,
+                layer: 0,
+            });
             c.text(
                 42.,
                 cy + Face::S28.mid_offset(),
@@ -192,13 +200,12 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
     let artists = m.screen == Screen::Artists;
     let queue = m.screen == Screen::Queue;
-    for (i, row) in ui
-        .visible_rows(m, tracks, scroll, visible)
-        .iter()
-        .enumerate()
-    {
-        let index = scroll + i;
-        let y = 38. + i as f32 * 53.;
+    // With UI motion one row more on each side slides in as the list scrolls.
+    let (from, shown) = components::scroll_rows(ui, scroll, visible, count);
+    let rows_start = c.draw.len();
+    for (i, row) in ui.visible_rows(m, tracks, from, shown).iter().enumerate() {
+        let index = from + i;
+        let y = 38. + (index as f32 - scroll as f32) * 53.;
         let selected = interactive && index == focus;
         let queue_track = if queue { m.queue.get(index) } else { None };
         let song = row_track(row, tracks).map(|(_, t)| t).or(queue_track);
@@ -262,6 +269,14 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
             );
         }
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: 38.,
+        bottom: 38. + visible as f32 * 53.,
+        row_h: 53.,
+        first: scroll,
+    });
     if count > visible {
         components::scroll_rail(c, 44., 286., scroll, count, visible, accent);
     }
@@ -672,14 +687,13 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(Screen::Folders);
     let scroll = components::list_window(m, focus, visible);
-    for (i, row) in ui
-        .visible_rows(m, tracks, scroll, visible)
-        .iter()
-        .enumerate()
-    {
-        let y = 40. + i as f32 * 54.;
+    let (from, shown) = components::scroll_rows(ui, scroll, visible, count);
+    let rows_start = c.draw.len();
+    for (i, row) in ui.visible_rows(m, tracks, from, shown).iter().enumerate() {
+        let index = from + i;
+        let y = 40. + (index as f32 - scroll as f32) * 54.;
         let song = row_track(row, tracks).map(|(_, t)| t);
-        if interactive && scroll + i == focus {
+        if interactive && index == focus {
             components::focus_row(c, 10., y, WIDTH - 24., 50.);
         }
         match song {
@@ -713,6 +727,14 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             }
         }
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: 40.,
+        bottom: 40. + visible as f32 * 54.,
+        row_h: 54.,
+        first: scroll,
+    });
     if count > visible {
         components::scroll_rail(c, 44., 250., scroll, count, visible, accent);
     }

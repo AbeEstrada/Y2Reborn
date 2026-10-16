@@ -3307,7 +3307,9 @@ fn run() -> Result<(), String> {
         }
     };
     startup_phase(&log, process_started, "graphics_ready");
-    let ui = Ui::default();
+    // The player animates (Beta 7.2); previews and tests draw still frames.
+    let mut ui = Ui::default();
+    ui.ui_motion = true;
     // The early splash keeps the display, showing real startup progress, until
     // the first complete UI frame below is ready. That frame is the hand-off:
     // it is presented under a full boot-screen cover that dissolves at once.

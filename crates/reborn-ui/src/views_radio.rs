@@ -2,7 +2,7 @@
 //! category tiles, station details and a LIVE badge on what is playing.
 //! Loading, error and empty states are ordinary pages (`views_system`).
 use crate::{
-    canvas::{Canvas, Icon},
+    canvas::{Canvas, Icon, Moving},
     components::{self, initials_tile, live_pill, station_logo},
     pages,
     screens::{count_label, screen_title},
@@ -155,8 +155,10 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
     components::status_bar(c, ui, m, &title, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let first = components::list_window(m, focus, STATION_ROWS);
-    for (i, row) in rows.iter().enumerate().skip(first).take(STATION_ROWS) {
-        let y = 38. + (i - first) as f32 * STATION_H;
+    let (from, shown) = components::scroll_rows(ui, first, STATION_ROWS, rows.len());
+    let rows_start = c.draw.len();
+    for (i, row) in rows.iter().enumerate().skip(from).take(shown) {
+        let y = 38. + (i as f32 - first as f32) * STATION_H;
         let selected = interactive && i == focus;
         let station = row
             .key
@@ -211,6 +213,14 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
             color::MUTED,
         );
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: 38.,
+        bottom: 38. + STATION_ROWS as f32 * STATION_H,
+        row_h: STATION_H,
+        first,
+    });
     if rows.len() > STATION_ROWS {
         components::scroll_rail(c, 44., 286., first, rows.len(), STATION_ROWS, accent);
     }
@@ -225,8 +235,10 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
     components::status_bar(c, ui, m, if genres { "GENRES" } else { "COUNTRIES" }, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let first = components::list_window(m, focus, CATEGORY_ROWS);
-    for (i, row) in rows.iter().enumerate().skip(first).take(CATEGORY_ROWS) {
-        let y = 42. + (i - first) as f32 * CATEGORY_H;
+    let (from, shown) = components::scroll_rows(ui, first, CATEGORY_ROWS, rows.len());
+    let rows_start = c.draw.len();
+    for (i, row) in rows.iter().enumerate().skip(from).take(shown) {
+        let y = 42. + (i as f32 - first as f32) * CATEGORY_H;
         let selected = interactive && i == focus;
         if selected {
             components::focus_row(c, 12., y + 2., WIDTH - 24., CATEGORY_H - 4.);
@@ -276,6 +288,14 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
             color::DIM,
         );
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: 42.,
+        bottom: 42. + CATEGORY_ROWS as f32 * CATEGORY_H,
+        row_h: CATEGORY_H,
+        first,
+    });
     if rows.len() > CATEGORY_ROWS {
         components::scroll_rail(c, 44., 286., first, rows.len(), CATEGORY_ROWS, accent);
     }

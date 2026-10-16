@@ -60,6 +60,17 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
     channel(24) | channel(16) | channel(8) | (a & 0xFF)
 }
 
+/// Linear blend of two colours, alpha included (a switch's track).
+pub fn mix_rgba(a: u32, b: u32, t: f32) -> u32 {
+    let t = t.clamp(0., 1.);
+    let channel = |shift: u32| {
+        let x = ((a >> shift) & 0xFF) as f32;
+        let y = ((b >> shift) & 0xFF) as f32;
+        ((x + (y - x) * t).round() as u32) << shift
+    };
+    channel(24) | channel(16) | channel(8) | channel(0)
+}
+
 pub mod layout {
     pub const SIDE: f32 = 16.0;
     /// Vertical room taken by the status bar on list screens.
