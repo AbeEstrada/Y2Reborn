@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 /// long (Last.fm's codes last an hour; the page gives up sooner).
 const POLL_EVERY: Duration = Duration::from_secs(3);
 const SIGN_IN_FOR: Duration = Duration::from_secs(15 * 60);
+/// Plays counted before the clock was known, kept in memory at most.
+const UNSTAMPED_MAX: usize = 500;
 
 pub enum Reply {
     Token(Result<(String, String), lastfm::Error>),
@@ -163,6 +165,9 @@ impl Runtime {
             self.scrobbles
                 .observe(current, playing, self.model.position_ms, now_ms, unix)
         {
+            if self.scrobbles_unstamped.len() >= UNSTAMPED_MAX {
+                self.scrobbles_unstamped.remove(0);
+            }
             self.scrobbles_unstamped.push(counted);
         }
         if self.scrobbles_unstamped.is_empty() || unix.is_none() {
@@ -219,13 +224,16 @@ impl Runtime {
             json!({"duration_s": scrobble.play.duration_s}),
         );
     }
-    fn lastfm_spawn(&self, name: &str, job: impl FnOnce() -> Reply + Send + 'static) {
+    /// Run one request in its own thread; `false` when no thread could
+    /// start (the caller clears its busy flag, nothing stays stuck).
+    fn lastfm_spawn(&self, name: &str, job: impl FnOnce() -> Reply + Send + 'static) -> bool {
         let reply = self.lastfm.replies.0.clone();
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
                 let _ = reply.send(job());
-            });
+            })
+            .is_ok()
     }
     /// Settings > Last.fm.
     pub(crate) fn lastfm_request(&mut self, request: LastFmRequest) -> Result<(), String> {
@@ -242,8 +250,7 @@ impl Runtime {
             }
             LastFmRequest::Connect => {
                 let client = self.lastfm.client.clone().ok_or("no key")?;
-                self.lastfm.busy = true;
-                self.lastfm_spawn("lastfm-token", move || {
+                self.lastfm.busy = self.lastfm_spawn("lastfm-token", move || {
                     Reply::Token(client.token().map(|t| {
                         let url = client.approval_url(&t);
                         (t, url)
@@ -253,8 +260,7 @@ impl Runtime {
             }
             LastFmRequest::Login { username, password } => {
                 let client = self.lastfm.client.clone().ok_or("no key")?;
-                self.lastfm.busy = true;
-                self.lastfm_spawn("lastfm-login", move || {
+                self.lastfm.busy = self.lastfm_spawn("lastfm-login", move || {
                     Reply::Session(client.mobile_session(&username, &password), false)
                 });
                 Ok(())
@@ -316,17 +322,21 @@ impl Runtime {
         }
         let now = Instant::now();
         // Sign-in: ask whether the code was approved.
-        if let Some((token, _, started)) = self.lastfm.token.clone() {
+        // (Fields read in place: this runs every frame while signing in.)
+        if let Some(started) = self.lastfm.token.as_ref().map(|t| t.2) {
             if started.elapsed() > SIGN_IN_FOR {
                 self.lastfm.token = None;
                 self.ui.flash("The Last.fm sign-in timed out");
                 self.lastfm_view();
             } else if !self.lastfm.polling && now >= self.lastfm.next_poll && self.online() {
-                if let Some(client) = self.lastfm.client.clone() {
-                    self.lastfm.polling = true;
-                    self.lastfm_spawn("lastfm-poll", move || {
+                let token = self.lastfm.token.as_ref().map(|t| t.0.clone());
+                if let (Some(client), Some(token)) = (self.lastfm.client.clone(), token) {
+                    self.lastfm.polling = self.lastfm_spawn("lastfm-poll", move || {
                         Reply::Session(client.session(&token), true)
                     });
+                    if !self.lastfm.polling {
+                        self.lastfm.next_poll = now + POLL_EVERY;
+                    }
                 }
             }
         }
@@ -344,7 +354,7 @@ impl Runtime {
                 let client = self.lastfm.client.clone();
                 let session = self.lastfm.session.clone();
                 if let (Some(client), Some(session)) = (client, session) {
-                    self.lastfm_spawn("lastfm-now", move || {
+                    let _ = self.lastfm_spawn("lastfm-now", move || {
                         Reply::NowPlaying(client.now_playing(&session, &play))
                     });
                 }
@@ -367,11 +377,13 @@ impl Runtime {
             return;
         };
         let queue = self.scrobble_queue.clone();
-        self.lastfm.flushing = true;
-        self.lastfm_view();
-        self.lastfm_spawn("lastfm-send", move || {
+        self.lastfm.flushing = self.lastfm_spawn("lastfm-send", move || {
             Reply::Flushed(lastfm::flush(&client, &session, &queue, now_unix))
         });
+        if !self.lastfm.flushing {
+            self.lastfm.next_flush = now + lastfm::backoff(0);
+        }
+        self.lastfm_view();
     }
     fn lastfm_reply(&mut self, reply: Reply) {
         match reply {

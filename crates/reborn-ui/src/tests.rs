@@ -3180,6 +3180,13 @@ fn lastfm_settings_follow_the_account_and_the_sign_in() {
         .map(|r| r.key)
         .collect();
     assert_eq!(keys, ["lastfm_connect", "lastfm_password", "scrobble_log"]);
+    ui.lastfm.waiting = 2;
+    assert_eq!(
+        ui.rows(&m, &m.library.tracks)[0].secondary,
+        "2 plays waiting",
+        "a session Last.fm ended keeps its plays for the next sign-in"
+    );
+    ui.lastfm.waiting = 0;
     assert_eq!(
         select_key(&mut ui, &mut m, "lastfm_connect"),
         Effect::LastFm(LastFmRequest::Connect)

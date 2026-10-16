@@ -96,6 +96,19 @@ impl Queue {
         let all = parse(&fs::read(&self.path).unwrap_or_default());
         self.rewrite(&all[n.min(all.len())..])
     }
+    /// Remove `sent` from the front, but only while the front still is
+    /// exactly those plays: a send that finishes after a Disconnect (and a
+    /// new account's first plays) must not remove anything it did not send.
+    /// Returns whether they were removed.
+    pub fn drop_sent(&self, sent: &[Scrobble]) -> io::Result<bool> {
+        let _guard = Self::lock();
+        let all = parse(&fs::read(&self.path).unwrap_or_default());
+        if !all.starts_with(sent) {
+            return Ok(false);
+        }
+        self.rewrite(&all[sent.len()..])?;
+        Ok(true)
+    }
     /// Called with the lock held.
     fn rewrite(&self, entries: &[Scrobble]) -> io::Result<()> {
         let tmp = self.path.with_extension("jsonl.tmp");
@@ -240,6 +253,14 @@ mod tests {
         let left = q.load();
         assert_eq!(left.len(), 300);
         assert_eq!(left.last().unwrap(), &s(399));
+        // A late send removes only what it sent.
+        let sent = q.load()[..2].to_vec();
+        q.drop_first(usize::MAX).unwrap();
+        q.push(&s(900)).unwrap();
+        assert!(!q.drop_sent(&sent).unwrap());
+        assert_eq!(q.load(), vec![s(900)]);
+        assert!(q.drop_sent(&[s(900)]).unwrap());
+        assert!(q.is_empty());
         // At the cap the oldest go first.
         let small = Queue::with_max(root.join("small.jsonl"), 3);
         for i in 0..5 {

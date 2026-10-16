@@ -296,13 +296,16 @@ fn lastfm(ui: &Ui, m: &AppModel) -> Page {
         .with_rows(vec![log]);
     }
     let Some(user) = &l.user else {
+        // Plays kept from a session Last.fm ended go out after signing in.
+        let connect = if l.busy {
+            "Starting…".to_owned()
+        } else if l.waiting > 0 {
+            crate::components::count(l.waiting, "play", "plays") + " waiting"
+        } else {
+            "Scan a code".to_owned()
+        };
         return Page::rows(vec![
-            row(
-                "Connect with Your Phone",
-                "lastfm_connect",
-                if l.busy { "Starting…" } else { "Scan a code" },
-            )
-            .with_kind(RowKind::Chevron),
+            row("Connect with Your Phone", "lastfm_connect", connect).with_kind(RowKind::Chevron),
             row("Sign In with Password", "lastfm_password", "").with_kind(RowKind::Chevron),
             log,
         ]);

@@ -457,9 +457,12 @@ pub fn flush(
             .take_while(|s| now_unix - s.timestamp > crate::scrobble::MAX_AGE_S)
             .count();
         if stale > 0 {
-            queue
-                .drop_first(stale)
-                .map_err(|e| Error::Offline(e.to_string()))?;
+            if !queue
+                .drop_sent(&waiting[..stale])
+                .map_err(|e| Error::Offline(e.to_string()))?
+            {
+                return Ok(accepted); // the queue changed under us (Disconnect)
+            }
             continue;
         }
         if waiting.is_empty() {
@@ -468,9 +471,12 @@ pub fn flush(
         let batch = &waiting[..waiting.len().min(BATCH)];
         let (ok, _ignored) = client.scrobble(session, batch)?;
         accepted += ok;
-        queue
-            .drop_first(batch.len())
-            .map_err(|e| Error::Offline(e.to_string()))?;
+        if !queue
+            .drop_sent(batch)
+            .map_err(|e| Error::Offline(e.to_string()))?
+        {
+            return Ok(accepted);
+        }
     }
 }
 
