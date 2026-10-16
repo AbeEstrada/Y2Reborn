@@ -63,6 +63,7 @@ pub enum Icon {
     Heart,
     HeartOn,
     Plus,
+    Palette,
 }
 
 impl Icon {
@@ -120,6 +121,7 @@ impl Icon {
             Self::Heart => mask::HEART,
             Self::HeartOn => mask::HEART_ON,
             Self::Plus => mask::PLUS,
+            Self::Palette => mask::PALETTE,
         }
     }
 }

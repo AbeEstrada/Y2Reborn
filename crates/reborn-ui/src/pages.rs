@@ -184,14 +184,6 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             rows.push(row("Album View", "album_view", m.settings.album_view.label()));
             rows.push(row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron));
             rows.push(
-                row(
-                    "Theme",
-                    "theme",
-                    ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
-                )
-                .with_kind(RowKind::Chevron),
-            );
-            rows.push(
                 row("Time Zone", "time_zone", crate::time_zone::summary(m))
                     .with_kind(RowKind::Chevron),
             );
@@ -201,8 +193,8 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::SettingsSystem => system(ui, m),
         Screen::Battery => battery(m),
         Screen::Sleep => sleep(m),
-        Screen::Storage => storage(m),
-        Screen::Update => update(ui, m),
+        Screen::Storage => storage(ui, m),
+        Screen::Update => update(m),
         Screen::About => Page::default()
             .fact("Reborn", reborn_core::VERSION)
             .fact(
@@ -260,6 +252,13 @@ fn settings(ui: &Ui, m: &AppModel) -> Page {
         row("Wi-Fi", "wifi", ui.wifi_summary()).with_kind(RowKind::Chevron),
         row("Sound", "audio", eq).with_kind(RowKind::Chevron),
         row("Display", "display", brightness).with_kind(RowKind::Chevron),
+        // Beta 7.5: the look is a place of its own, not a Display detail.
+        row(
+            "Skin",
+            "theme",
+            ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
+        )
+        .with_kind(RowKind::Chevron),
         row("Storage", "storage", storage).with_kind(RowKind::Chevron),
         row("About & Updates", "update", reborn_core::VERSION).with_kind(RowKind::Chevron),
     ])
@@ -372,9 +371,9 @@ fn theme(ui: &Ui, m: &AppModel) -> Page {
     }
     let mut page = Page::rows(rows);
     page.status = Some(if ui.themes.is_empty() {
-        "Copy a skin folder into Themes on Internal Storage or the SD card.".into()
+        "Copy a skin folder into Skins on Internal Storage or the SD card.".into()
     } else {
-        "Add skins by copying their folder into Themes on Internal Storage or the SD card.".into()
+        "Add skins by copying their folder into Skins on Internal Storage or the SD card.".into()
     });
     page
 }
@@ -1065,7 +1064,7 @@ fn usb_summary(m: &AppModel) -> &'static str {
     }
 }
 
-fn storage(m: &AppModel) -> Page {
+fn storage(ui: &Ui, m: &AppModel) -> Page {
     let s = &m.platform.snapshot;
     if !s.observed {
         return Page::hero("Checking Storage…", "This takes a moment.");
@@ -1086,14 +1085,17 @@ fn storage(m: &AppModel) -> Page {
         ),
         _ => Page::default(),
     };
+    // How much music there is (Beta 7.5: no longer a row of About & Updates
+    // that led here).
+    let songs = ui.library_counts(&m.library.tracks)[2];
     page = page.with_rows(vec![disabled(
         row(
             "Scan for Music",
             "scan_library",
             if m.library.scanning {
-                "Scanning…"
+                "Scanning…".into()
             } else {
-                ""
+                crate::components::count(songs, "song", "songs")
             },
         ),
         !m.library.scanning,
@@ -1178,24 +1180,13 @@ pub fn short_version(version: &str) -> String {
 }
 
 /// About & Updates: the update status first, then the facts an owner may want.
-fn update(ui: &Ui, m: &AppModel) -> Page {
+fn update(m: &AppModel) -> Page {
     let mut page = update_status(m);
     page.rows.push(row(
         "Version",
         "version",
         short_version(reborn_core::VERSION),
     ));
-    // How much music there is, and the way to Storage (UI v4: the count left
-    // Storage's own page).
-    let songs = ui.library_counts(&m.library.tracks)[2];
-    page.rows.push(
-        row(
-            "Music Library",
-            "storage",
-            crate::components::count(songs, "song", "songs"),
-        )
-        .with_kind(RowKind::Chevron),
-    );
     page.rows
         .push(row("Reset Settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
     page

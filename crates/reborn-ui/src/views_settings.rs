@@ -16,7 +16,7 @@ use reborn_core::{
 
 pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let page = pages::page(ui, m, tracks);
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let focus = m.navigation.focus.min(page.rows.len().saturating_sub(1));
     match m.screen {
         Screen::Settings => root(c, ui, &page, focus, interactive),
@@ -40,36 +40,41 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
 
 fn root(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
     let _ = ui;
-    let tiles: [(u32, Icon); 6] = [
-        (0x3E82FFFF, Icon::Bluetooth),
-        (0x3CBE78FF, Icon::Wifi),
-        (0xFF6E5AFF, Icon::Speaker),
-        (0xFFBE3CFF, Icon::Sun),
-        (0x9678FFFF, Icon::Drive),
-        (0x828CA0FF, Icon::Info),
-    ];
-    components::card(c, 10., 38., WIDTH - 20., 6. * 52. + 4.);
-    for (i, row) in page.rows.iter().enumerate().take(6) {
-        let y = 40. + i as f32 * 52.;
+    // Seven places fit without scrolling (Beta 7.5: Skin joined them).
+    const ROW: f32 = 44.;
+    let tile = |key: &str| match key {
+        "bluetooth" => (0x3E82FFFF, Icon::Bluetooth),
+        "wifi" => (0x3CBE78FF, Icon::Wifi),
+        "audio" => (0xFF6E5AFF, Icon::Speaker),
+        "display" => (0xFFBE3CFF, Icon::Sun),
+        "theme" => (0xEE6AB4FF, Icon::Palette),
+        "storage" => (0x9678FFFF, Icon::Drive),
+        _ => (0x828CA0FF, Icon::Info),
+    };
+    let rows = page.rows.len().min(7);
+    components::card(c, 10., 38., WIDTH - 20., rows as f32 * ROW + 4.);
+    for (i, row) in page.rows.iter().enumerate().take(rows) {
+        let y = 40. + i as f32 * ROW;
+        let mid = y + ROW / 2.;
         let selected = interactive && i == focus;
         if selected {
-            components::focus_row(c, 14., y + 3., WIDTH - 28., 46.);
+            components::focus_row(c, 14., y + 3., WIDTH - 28., ROW - 6.);
         } else if i > 0 && !(interactive && i - 1 == focus) {
-            c.rect(68., y + 1., WIDTH - 92., 1., color::RULE);
+            c.rect(64., y + 1., WIDTH - 88., 1., color::RULE);
         }
-        let (tint, icon) = tiles[i];
-        c.rrect(24., y + 11., 30., 30., 8., tint);
-        c.icon(icon, 39., y + 26., 18., color::TEXT);
+        let (tint, icon) = tile(&row.key);
+        c.rrect(24., mid - 13., 26., 26., 7., tint);
+        c.icon(icon, 37., mid, 16., color::TEXT);
         let face = if selected { Face::S17 } else { Face::R17 };
-        c.text_mid(68., y + 26., 230., &row.label, face, color::TEXT);
+        c.text_mid(64., mid, 230., &row.label, face, color::TEXT);
         c.text_mid_right(
             WIDTH - 42.,
-            y + 26.,
+            mid,
             &text::fit(Face::R11, &row.secondary, 150.),
             Face::R11,
             color::MUTED,
         );
-        components::chevron(c, WIDTH - 22., y + 26.);
+        components::chevron(c, WIDTH - 22., mid);
     }
 }
 
@@ -826,7 +831,7 @@ pub(crate) fn update_overlay(c: &mut Canvas, ui: &Ui, m: &AppModel) {
         return;
     }
     c.rect(0., 0., WIDTH, HEIGHT, color::BG);
-    components::status_bar(c, ui, m, "SOFTWARE UPDATE", false);
+    components::status_bar(c, ui, m, "Software Update", false);
     download_progress(
         c,
         ui,

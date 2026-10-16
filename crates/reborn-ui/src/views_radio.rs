@@ -48,7 +48,7 @@ const ENTRY_H: f32 = 48.;
 
 fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "RADIO", true);
+    components::status_bar(c, ui, m, "Radio", true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     // Rows have two heights; scroll so the focused one ends above the bottom.
     let heights: Vec<f32> = rows
@@ -151,8 +151,7 @@ const STATION_ROWS: usize = 6;
 
 fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool) {
     let accent = ui.accent();
-    let title = screen_title(m).to_uppercase();
-    components::status_bar(c, ui, m, &title, true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let first = components::list_window(m, focus, STATION_ROWS);
     let (from, shown) = components::scroll_rows(ui, first, STATION_ROWS, rows.len());
@@ -232,7 +231,7 @@ const CATEGORY_ROWS: usize = 6;
 fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool) {
     let accent = ui.accent();
     let genres = ui.radio.genres;
-    components::status_bar(c, ui, m, if genres { "GENRES" } else { "COUNTRIES" }, true);
+    components::status_bar(c, ui, m, if genres { "Genres" } else { "Countries" }, true);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     let first = components::list_window(m, focus, CATEGORY_ROWS);
     let (from, shown) = components::scroll_rows(ui, first, CATEGORY_ROWS, rows.len());
@@ -303,7 +302,7 @@ fn categories(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive:
 
 /// Station Info: the logo large, the facts the directory has, two actions.
 fn info(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: bool) {
-    components::status_bar(c, ui, m, "STATION INFO", true);
+    components::status_bar(c, ui, m, "Station Info", true);
     let Some(s) = &ui.radio.info else {
         return;
     };

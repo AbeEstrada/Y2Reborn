@@ -1054,11 +1054,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("51-display", at(Screen::SettingsDisplay, ""), |_, m| {
         m.navigation.focus = 3;
     });
+    // Beta 7.5: the last row fits under the brightness card, no scrolling.
     case!(
-        "51b-display-scrolled",
+        "51b-display-last-row",
         at(Screen::SettingsDisplay, ""),
         |_, m| {
-            m.navigation.focus = 5;
+            m.navigation.focus = 4;
         }
     );
     // Home and Music (UI v4 phase 2)

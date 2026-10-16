@@ -33,7 +33,7 @@ pub fn installing(c: &mut Canvas) {
 }
 
 pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let page = match m.screen {
         Screen::Diagnostics | Screen::DiagnosticSection => Page {
             rows: ui.rows(m, tracks),

@@ -847,7 +847,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     }
                 }
                 NativePart::Status => {
-                    components::status_cluster(c, s.ui, s.m, color::MUTED);
+                    components::status_cluster(c, s.ui, s.m, color::MUTED, false);
                 }
             }
             if *recolor {

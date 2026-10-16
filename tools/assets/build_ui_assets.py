@@ -563,6 +563,15 @@ def ic_plus(p):
     p.line([(6, 16), (26, 16)], 2.8)
 
 
+# Settings → Skin (Beta 7.5): a painter's palette with its thumb hole and paints.
+def ic_palette(p):
+    p.ellipse(16, 16, 12.5)
+    p.ellipse(24.2, 24.2, 5.4, fill=0)
+    p.ellipse(19.6, 21.2, 2.3, fill=0)
+    for x, y in ((9.6, 14.2), (13.6, 8.6), (20.4, 8.8), (9.8, 20.6)):
+        p.ellipse(x, y, 2.1, fill=0)
+
+
 ICONS = [
     ('back', 32, ic_back), ('chevron', 32, ic_chevron), ('check', 32, ic_check), ('close', 32, ic_close),
     ('play', 32, lambda p: ic_play(p, 32)), ('pause', 32, lambda p: ic_pause(p, 32)),
@@ -582,6 +591,7 @@ ICONS = [
     ('star', 32, ic_star), ('star_on', 32, ic_star_on), ('globe', 32, ic_globe),
     ('trend', 32, ic_trend), ('broadcast', 32, ic_broadcast),
     ('heart', 32, ic_heart), ('heart_on', 32, ic_heart_on), ('plus', 32, ic_plus),
+    ('palette', 32, ic_palette),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

@@ -471,7 +471,7 @@ fn draw_with(
     let at = if live { &COMPACT } else { &ROOMY };
     c.rect(0., 0., WIDTH, crate::theme::HEIGHT, color::BG);
     if header {
-        components::status_bar(c, ui, m, &k.purpose.title().to_uppercase(), false);
+        components::status_bar(c, ui, m, &k.purpose.title(), false);
     }
     if !live {
         c.text(

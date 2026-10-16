@@ -80,7 +80,7 @@ const ROWS: usize = 6;
 
 fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "PLAYLISTS", true);
+    components::status_bar(c, ui, m, "Playlists", true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let first = components::list_window(m, focus, ROWS);
@@ -158,7 +158,7 @@ fn home(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
 
 fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "PLAYLIST", true);
+    components::status_bar(c, ui, m, "Playlist", true);
     let Some(p) = ui.playlists.get(Path::new(&m.navigation.filter)) else {
         c.text_center(
             240.,

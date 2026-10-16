@@ -10,13 +10,13 @@ available as **Reborn** in the picker.
 ## Installing and choosing
 
 1. Copy the skin's **folder** (the one holding `skin.json`) into a folder
-   named `Themes` on **Internal Storage** or on the **SD card**, for example
-   `Internal Storage/Themes/Neon/skin.json`. Any letter case works for
-   `Themes`.
-2. On the player: **Settings → Display → Theme**. The list is read again every
+   named `Skins` on **Internal Storage** or on the **SD card**, for example
+   `Internal Storage/Skins/Neon/skin.json`. Any letter case works for
+   `Skins`; a `Themes` folder (its name before Beta 7.5) is read too.
+2. On the player: **Settings → Skin**. The list is read again every
    time it opens. Select a skin; it applies at once and is remembered.
 
-The folder name is the skin's id. A skin in a `Themes` folder with the same
+The folder name is the skin's id. A skin in a `Skins` folder with the same
 folder name as a shipped skin (in `/usr/share/reborn/skins`) is hidden by the
 shipped one. A skin that cannot be used appears greyed out with the reason;
 choosing a broken skin keeps the current look and shows why in a message.

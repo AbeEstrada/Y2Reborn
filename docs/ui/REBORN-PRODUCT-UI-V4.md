@@ -193,7 +193,7 @@ previews, spelling (3).
   layout shows the new menu (skins still add counts to pinned rows), and Music and Home
   Menu use each skin's `list`/`page` layout; all 16 checked by eye. `home_menu` is a known
   layout name for skins that want their own.
-* Previews: `53-home-menu`, `75-music`, `76-home-pinned`, `51b-display-scrolled`
+* Previews: `53-home-menu`, `75-music`, `76-home-pinned`, `51b-display-last-row`
   (114 states). Tests: Home's six rows, pin order and an eleven-row Home with one focus
   target, Music rows and Back through Music, Display → Home Menu pin/unpin effects,
   old settings without pins. 478 tests, strict Clippy.
@@ -229,6 +229,24 @@ previews, spelling (3).
 * Evidence: 38 of 114 Reborn previews change (compared by eye with phase 2); skins change
   only where they show Reborn's keyboard, texts or rows (all 16 checked, keyboards fit
   under every skin's title bar). 479 tests, strict Clippy.
+
+## Beta 7.5 refinements (owner request, 2026-10-16)
+
+* **Status bar (owner chose layout C of four rendered variants):** the screen's name sits
+  beside the back arrow in Title Case (Open Sans SemiBold 15, white) instead of centred
+  tracked caps; clock SemiBold 15 and battery percentage SemiBold 13 in white; icons 18 px
+  with Wi-Fi and Bluetooth at 22 px (they looked smaller than the USB plug at one size);
+  battery 25 × 13; back arrow 22 px. Long names stop short of the cluster
+  (`components::status_cluster` returns its left edge). Skins keep the compact cluster
+  (`roomy: false`) in their own layouts.
+* **Home header:** "Reborn" and the short version ("1.0 Beta 7.5", muted) where other screens
+  show their name (`components::home_bar`).
+* **Messages:** the status-bar pill is 30 px high with SemiBold 15 text and an 18 px icon.
+* **Skin:** Theme is renamed Skin and is a Settings place of its own (seven rows of 44 px
+  fit without scrolling; palette icon). Display keeps Brightness and four rows and no
+  longer scrolls. Skins are read from `Skins` folders, and still from `Themes`.
+* **About & Updates:** the Music Library row (it opened Storage) is gone; the song count is
+  the secondary text of Storage's Scan for Music.
 
 ## Not verified
 

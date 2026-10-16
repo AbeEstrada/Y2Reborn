@@ -52,10 +52,10 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   connection and copying, Bluetooth pairing, low battery, and Software Update (check, download
   with progress, speed and time left, Restart and Install). A to Z lists ignore case, accents and
   a leading "The".
-- Skins: Settings → Display → Theme switches between Reborn's own look and skins that
+- Skins: Settings → Skin switches between Reborn's own look and skins that
   restyle every screen (colours, fonts, pictures, layouts). Sixteen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
   Cassette, Neon Night, Zune, Bunny Bow and five Mini colours);
-  more are added by copying a folder into `Themes` on the player. See [skins](docs/skins.md).
+  more are added by copying a folder into `Skins` on the player. See [skins](docs/skins.md).
 - Works with the platform: sleep/wake preparation, workload hints to the CPU governor,
   `rebornctl` and a control socket at `/run/reborn/control.sock`.
 

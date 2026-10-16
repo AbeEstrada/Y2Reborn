@@ -410,12 +410,16 @@ fn the_picker_lists_skins_and_selecting_one_asks_for_it() {
         ..Default::default()
     };
     let tracks = library(1);
+    // Beta 7.5: Skin is a place of Settings itself, no longer in Display.
     let mut m = model(Screen::SettingsDisplay);
+    assert!(!ui.rows(&m, &tracks).iter().any(|r| r.key == "theme"));
+    m.screen = Screen::Settings;
     let rows = ui.rows(&m, &tracks);
     let theme_row = rows
         .iter()
         .position(|r| r.key == "theme")
-        .expect("Theme row");
+        .expect("Skin row");
+    assert_eq!(rows[theme_row].label, "Skin");
     assert_eq!(rows[theme_row].secondary, "Reborn");
     m.navigation.focus = theme_row;
     assert!(matches!(

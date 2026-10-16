@@ -1031,8 +1031,9 @@ impl Runtime {
         Ok(())
     }
 
-    /// Folders skins are installed in: the shipped ones first, then Themes on
-    /// Internal Storage and on the SD card (any letter case), as seen over MTP.
+    /// Folders skins are installed in: the shipped ones first, then Skins (or
+    /// Themes, its name before Beta 7.5) on Internal Storage and on the SD
+    /// card (any letter case), as seen over MTP.
     fn skin_roots(&self) -> Vec<PathBuf> {
         let mut roots = vec![];
         if let Ok(dev) = std::env::var("REBORN_SKINS") {
@@ -1055,9 +1056,9 @@ impl Runtime {
                 entries
                     .flatten()
                     .filter(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .eq_ignore_ascii_case("themes")
+                        let name = e.file_name();
+                        let name = name.to_string_lossy();
+                        name.eq_ignore_ascii_case("skins") || name.eq_ignore_ascii_case("themes")
                     })
                     .map(|e| e.path()),
             );

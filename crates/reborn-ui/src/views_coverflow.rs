@@ -46,7 +46,7 @@ fn warp(tex: Tex, corners: [[f32; 2]; 4], colors: [u32; 4]) -> Quad {
 }
 
 pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let pos = ui.flow_position(m, focus);

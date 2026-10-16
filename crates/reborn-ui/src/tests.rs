@@ -724,7 +724,7 @@ fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
     );
     select_key(&mut ui, &mut m, "tz_country:US");
     assert_eq!(m.screen, Screen::TimeZone);
-    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("UNITED STATES"));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("United States"));
     assert_eq!(
         select_key(&mut ui, &mut m, "tz_set:America/Chicago"),
         Effect::SetTimeZone("America/Chicago".into())
@@ -2285,10 +2285,10 @@ fn the_album_grid_of_a_genre_is_titled_with_the_genre() {
         t.genre = "Jazz".into();
     }
     let tracks = m.library.tracks.clone();
-    assert!(drawn_text(&ui.draw(&m, &tracks, false)).contains("ALBUMS"));
+    assert!(drawn_text(&ui.draw(&m, &tracks, false)).contains("Albums"));
     m.navigation.filter = "genre:Jazz".into();
     let text = drawn_text(&ui.draw(&m, &tracks, false));
-    assert!(text.contains("JAZZ") && !text.contains("ALBUMS"), "{text}");
+    assert!(text.contains("Jazz") && !text.contains("Albums"), "{text}");
 }
 
 fn station(name: &str, uuid: &str) -> reborn_core::RadioStation {

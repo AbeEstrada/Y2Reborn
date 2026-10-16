@@ -73,7 +73,7 @@ pub fn home(
     } else {
         recently_added(c, ui, tracks);
     }
-    components::status_bar(c, ui, m, "", false);
+    components::home_bar(c, ui, m);
     let rows = ui.rows(m, tracks);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     // Six rows by default, up to eleven with every Music list pinned; all end
@@ -123,7 +123,7 @@ const MUSIC_H: f32 = 56.;
 
 /// Music: the library's lists as menu entries, each with what it holds.
 pub fn music(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, "MUSIC", true);
+    components::status_bar(c, ui, m, "Music", true);
     let rows = ui.rows(m, tracks);
     let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
     for (i, row) in rows.iter().enumerate() {
@@ -171,7 +171,7 @@ pub fn browse(
 ) {
     let count = ui.row_count(m, tracks);
     if count == 0 {
-        components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+        components::status_bar(c, ui, m, &screen_title(m), true);
         return empty(c, ui, m, interactive);
     }
     match m.screen {
@@ -197,7 +197,7 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(m.screen);
     let scroll = components::list_window(m, focus, visible);
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let artists = m.screen == Screen::Artists;
     let queue = m.screen == Screen::Queue;
     // With UI motion one row more on each side slides in as the list scrolls.
@@ -312,7 +312,7 @@ fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus:
 // ---------------------------------------------------------------- album grid
 
 fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let focus_row = focus / 4;
@@ -404,7 +404,7 @@ fn album_page(
     interactive: bool,
 ) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "ALBUM", true);
+    components::status_bar(c, ui, m, "Album", true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let scroll = components::list_window(m, focus, visible_rows_for(Screen::Album));
@@ -562,7 +562,7 @@ fn fly_in(c: &mut Canvas, cover_at: usize, rest_at: usize, t: f32) {
 }
 
 fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, "ARTIST", true);
+    components::status_bar(c, ui, m, "Artist", true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let head = tracks
@@ -640,7 +640,7 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
 // ------------------------------------------------------------------- folders
 
 fn folder_roots(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, "FOLDERS", true);
+    components::status_bar(c, ui, m, "Folders", true);
     let focus = m.navigation.focus;
     for (i, row) in ui.visible_rows(m, tracks, 0, 4).iter().enumerate() {
         let y = 44. + i as f32 * 72.;
@@ -682,7 +682,7 @@ fn folder_roots(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interac
 
 fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, &screen_title(m).to_uppercase(), true);
+    components::status_bar(c, ui, m, &screen_title(m), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(Screen::Folders);

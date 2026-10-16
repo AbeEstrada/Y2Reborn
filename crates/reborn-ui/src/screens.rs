@@ -677,7 +677,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
-        Screen::Theme => "Theme".into(),
+        Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary => "Library".into(),
