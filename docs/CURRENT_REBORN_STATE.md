@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.10 — Y2Linux 1.0 Beta 7.10 (Baseline 73), 2026-10-17 (latest): USB file operations
+## 1.0.0-beta.7.11 — Y2Linux 1.0 Beta 7.11 (Baseline 74), 2026-10-17 (latest): faster copies to the player
+
+- No Reborn code change; the release carries Y2Linux's multi-packet USB receive DMA (copies to the player ≈30 MB/s on
+  Internal Storage instead of ≈10). New songs still reach the library through the existing change detection.
+
+## 1.0.0-beta.7.10 — Y2Linux 1.0 Beta 7.10 (Baseline 73), 2026-10-17: USB file operations
 
 - No Reborn code change; the release carries Y2Linux's musb fix for the zero-length-packet crash and MoveObject/CopyObject
   in the MTP responder. Reborn's library follows moves and copies through the existing durable-change generations.
