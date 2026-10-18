@@ -1,6 +1,12 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.2 — Y2Linux 1.0 Beta 8.2 (Baseline 88), 2026-10-18 (latest): faster updates
+## 1.0.0-beta.8.3 — Y2Linux 1.0 Beta 8.3 (Baseline 89), 2026-10-18 (latest): seconds left
+
+- *Checking the Update* shows the seconds left from the core's check line (`"<percent> check <seconds>"`, Y2Linux
+  8.3, `reborn_platform::client::parse_download`); with an older core it keeps *This takes a few seconds.* The
+  install itself runs in the recovery, whose screen now also shows the seconds left.
+
+## 1.0.0-beta.8.2 — Y2Linux 1.0 Beta 8.2 (Baseline 88), 2026-10-18: faster updates
 
 - No Reborn code change; the release carries Y2Linux's four-core installer and kept rollback copy (OTA-50). The
   update screen's steps are unchanged; the install step now takes about 15 s on the owner's player (was 54 s).
