@@ -223,15 +223,52 @@ pub fn response_db(bands: &[EqBand], frequency: f64, rate: f64) -> f64 {
         .sum()
 }
 
+/// How much louder `new` plays than `old` where it rises most, 20 Hz–20 kHz
+/// (dB; negative when it is quieter everywhere). Each side is a preamp with
+/// its filters, or None for no equalizer. As in the player, a preamp counts
+/// only while one of its filters has a gain. Turning a profile off rises by
+/// its preamp; a bass preset rises by its bass.
+pub fn level_rise_db(old: Option<(f32, &[EqBand])>, new: Option<(f32, &[EqBand])>) -> f64 {
+    const RATE: f64 = 48_000.0;
+    let level = |eq: Option<(f32, &[EqBand])>, f: f64| {
+        eq.filter(|(_, bands)| bands.iter().any(|b| b.gain_db != 0.0))
+            .map_or(0.0, |(preamp, bands)| {
+                f64::from(preamp.min(0.0)) + response_db(bands, f, RATE)
+            })
+    };
+    let points = 600;
+    let mut frequencies: Vec<f64> = (0..=points)
+        .map(|i| 20.0 * 1000f64.powf(f64::from(i) / f64::from(points)))
+        .collect();
+    for (_, bands) in [old, new].into_iter().flatten() {
+        frequencies.extend(bands.iter().map(|b| f64::from(b.frequency_hz)));
+    }
+    frequencies
+        .into_iter()
+        .map(|f| level(new, f) - level(old, f))
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// Source rates the filters run at (the graph filters before resampling).
+/// Hi-res rates warp less near 20 kHz, so a combined peak there can sit up to
+/// 0.45 dB above the 44.1/48 kHz one (Sony WF-1000XM4). Rates below 44.1 kHz
+/// are left out: FFmpeg skips filters above their Nyquist frequency, and
+/// covering that would lower many profiles by several dB for rare files; the
+/// limiter catches those peaks.
+const PEAK_RATES: [f64; 8] = [
+    44_100.0, 48_000.0, 88_200.0, 96_000.0, 176_400.0, 192_000.0, 352_800.0, 384_000.0,
+];
+
 /// The highest point of the combined response from 10 Hz to just below the
-/// Nyquist frequency at 44.1 and 48 kHz (dB; 0 when nothing lifts).
+/// Nyquist frequency at every source rate from 44.1 to 384 kHz (dB; 0 when
+/// nothing lifts).
 pub fn peak_gain_db(bands: &[EqBand]) -> f32 {
     peak_db(bands) as f32
 }
 
 fn peak_db(bands: &[EqBand]) -> f64 {
     let mut peak = 0f64;
-    for rate in [44_100.0, 48_000.0] {
+    for rate in PEAK_RATES {
         let top = rate * 0.4999;
         let points = 1200;
         let mut frequencies: Vec<f64> = (0..=points)
@@ -398,6 +435,74 @@ Filter 10: ON PK Fc 5332 Hz Gain -1.1 dB Q 5.75
             count += 1;
         }
         assert_eq!(count, 47);
+    }
+
+    fn shipped(file: &str) -> EqProfile {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/eq")
+            .join(format!("{file} ParametricEQ.txt"));
+        parse(file, &std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// The filters run at the source rate: the preamp must also cover a
+    /// hi-res file, where the 44.1/48 kHz peak alone was 0.45 dB short.
+    #[test]
+    fn preamp_covers_hi_res_source_rates() {
+        let p = shipped("Sony WF-1000XM4");
+        assert_eq!(p.preamp_db, -8.1);
+        for rate in [44_100.0, 96_000.0, 192_000.0] {
+            for i in 0..=2000 {
+                let f = 10.0 * (rate * 0.4999 / 10.0f64).powf(f64::from(i) / 2000.0);
+                let level = f64::from(p.preamp_db) + response_db(&p.bands, f, rate);
+                assert!(level <= 0.0, "{rate} Hz rate, {f:.0} Hz: {level:+.3} dB");
+            }
+        }
+        // The rounding keeps a written preamp that already covers its filters.
+        assert_eq!(shipped("Sennheiser HD 650").preamp_db, -6.4);
+    }
+
+    #[test]
+    fn level_rise_finds_what_plays_louder() {
+        let hd650 = shipped("Sennheiser HD 650");
+        let profile = Some((hd650.preamp_db, hd650.bands.as_slice()));
+        // Off: the preamp and the profile's deepest cut come back at once.
+        let off = level_rise_db(profile, None);
+        assert!(off > 8.0 && off < 9.0, "{off}");
+        // On: a clip-safe profile is never louder than flat.
+        assert!(level_rise_db(None, profile) <= 1e-9);
+        assert_eq!(level_rise_db(profile, profile), 0.0);
+        let bass = [band(EqKind::Peak, 60., 6., 1.)];
+        let treble = [band(EqKind::Peak, 12_000., 6., 1.)];
+        let rise = level_rise_db(None, Some((0.0, &bass)));
+        assert!((rise - 6.0).abs() < 1e-6, "{rise}");
+        // Moving a boost elsewhere rises there.
+        let moved = level_rise_db(Some((0.0, &bass)), Some((0.0, &treble)));
+        assert!((moved - 6.0).abs() < 0.01, "{moved}");
+        // A preamp without a band with gain does nothing, as in the graph.
+        let flat = [band(EqKind::Peak, 1000., 0., 1.)];
+        assert_eq!(level_rise_db(Some((-12.0, &flat)), None), 0.0);
+    }
+
+    /// Settings re-sanitize the stored preamp at every start: doing it again
+    /// must never step it further down.
+    #[test]
+    fn sanitizing_a_preamp_again_keeps_it() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/eq");
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let file = path.file_name().unwrap().to_string_lossy().into_owned();
+            if let Some(name) = file.strip_suffix(" ParametricEQ.txt") {
+                let p = shipped(name);
+                let again = safe_preamp_db(Some(p.preamp_db), &p.bands);
+                assert_eq!(again, p.preamp_db, "{name}");
+                assert_eq!(safe_preamp_db(Some(again), &p.bands), again, "{name}");
+            }
+        }
+        let cut = [band(EqKind::Peak, 1000., -3., 1.)];
+        for tenths in 0..=600 {
+            let preamp = -(tenths as f32) / 10.0;
+            assert_eq!(safe_preamp_db(Some(preamp), &cut), preamp.max(-60.0));
+        }
     }
 
     #[test]

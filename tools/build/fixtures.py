@@ -127,6 +127,17 @@ def make_precision_flac(temp: Path) -> None:
             str(OUT / f"precision-24-{rate}.flac"))
 
 
+def make_loud_flac(path: Path) -> None:
+    # Near full scale at 40 Hz and 8.8 kHz (where common headphone profiles
+    # boost), 24/96, ReplayGain +6 dB without a peak tag: the graph's net
+    # gain is positive, so only the limiter keeps it below full scale.
+    run("-f", "lavfi", "-i",
+        "aevalsrc=0.6*sin(2*PI*40*t)+0.39*sin(2*PI*8800*t):s=96000:d=1",
+        "-ac", "2", "-c:a", "flac", "-sample_fmt", "s32",
+        "-metadata", "REPLAYGAIN_TRACK_GAIN=+6.00 dB",
+        "-fflags", "+bitexact", str(path))
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reborn-fixtures-") as directory:
@@ -203,6 +214,7 @@ def main() -> None:
 
         gapless = make_gapless(temp)
         make_precision_flac(temp)
+        make_loud_flac(OUT / "loud-24-96000-rg.flac")
 
     # An intentionally malformed ID3 size precedes valid MP3 frames. FFmpeg
     # must preserve the useful stream or return a clean error, never crash.
@@ -234,7 +246,8 @@ def main() -> None:
             "WAV PCM32", "WAV float32", "MP3", "AAC ADTS", "M4A AAC",
             "ALAC", "Vorbis", "Opus", "AIFF PCM24", "APE", "WavPack",
         ],
-        "metadata_cases": ["tagged ReplayGain", "no metadata", "corrupt metadata", "truncated audio"],
+        "metadata_cases": ["tagged ReplayGain", "no metadata", "corrupt metadata", "truncated audio",
+                           "positive ReplayGain without a peak (near full scale)"],
         "artwork_cases": ["embedded JPEG", "embedded PNG", "embedded WebP",
                            "external JPEG", "external PNG", "external WebP"],
         "gapless": gapless,

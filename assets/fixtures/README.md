@@ -3,6 +3,8 @@
 The generated fixtures are deterministic 440 Hz, ramp, artwork, metadata and
 corruption inputs produced locally with FFmpeg 9.0.1 by
 `tools/build/fixtures.py`. Their hashes are recorded in `manifest.json`.
+`loud-24-96000-rg.flac` (2026-10-18, FFmpeg 9.0.2, `make_loud_flac`) is near full scale at 40 Hz and 8.8 kHz with
+ReplayGain +6 dB and no peak tag: with a headphone profile only the limiter keeps it below full scale.
 
 `ape-silence.ape` and `wavpack-silence.wv` are small decoder specimens because
 the host FFmpeg build does not provide APE or WavPack encoders. They were

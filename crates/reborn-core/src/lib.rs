@@ -1022,6 +1022,14 @@ impl Settings {
             _ => None,
         }
     }
+    /// Whether playback asks the platform for its heavy class (a 747.5 MHz
+    /// floor and a 1 ms wake-up limit that keep the CPU out of deep idle):
+    /// only crossfade, which runs two decoders at a track change. An
+    /// equalizer or headphone profile costs a few percent of one core, which
+    /// the governor follows by itself (Beta 8.5 review).
+    pub fn playback_heavy(&self) -> bool {
+        self.crossfade_ms > 0
+    }
     /// Whether the clock's zone is found automatically (Beta 7.1).
     pub fn zone_auto(&self) -> bool {
         self.time_zone_auto.unwrap_or(self.time_zone == "UTC")
@@ -1540,6 +1548,17 @@ mod tests {
         assert_eq!(PcmFormat::S24LE.bytes_per_frame(), 8);
         assert_eq!(PcmFormat::S24LE.physical_bits(), 32);
         assert_eq!(PcmFormat::S24LE.valid_bits(), 24);
+    }
+    #[test]
+    fn only_crossfade_asks_for_the_heavy_playback_class() {
+        let mut s = Settings::default();
+        assert!(!s.playback_heavy());
+        s.eq_enabled = true;
+        s.eq_profile = Some(eq::parse("x", "Filter 1: ON PK Fc 100 Hz Gain 3 dB Q 1\n").unwrap());
+        s.eq_profile_on = true;
+        assert!(s.active_eq().is_some() && !s.playback_heavy());
+        s.crossfade_ms = 4000;
+        assert!(s.playback_heavy());
     }
     #[test]
     fn stale_events_cannot_restart_after_stop() {

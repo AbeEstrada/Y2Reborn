@@ -21,6 +21,13 @@ struct RawParams {
     hp_level_live: c_int,
     level_raised: c_int,
 }
+// Pinned with RbParams in native/audio.c (a _Static_assert there).
+const _: () = assert!(
+    std::mem::size_of::<RawParams>() == 420
+        && std::mem::offset_of!(RawParams, device) == 28
+        && std::mem::offset_of!(RawParams, hp_level_live) == 412
+        && std::mem::offset_of!(RawParams, level_raised) == 416
+);
 unsafe extern "C" {
     fn rb_alsa_logging(callback: extern "C" fn(*const c_char));
     fn rb_alsa_error(e: c_int) -> *const c_char;

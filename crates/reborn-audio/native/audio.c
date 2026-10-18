@@ -4,6 +4,7 @@
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,11 @@ typedef struct {
   int hp_level_live; /* wired: level the stream got (0 Low..2 High), -1 unknown */
   int level_raised;  /* wired: higher than the previous wired stream's level */
 } RbParams;
+/* Pinned with RawParams in src/native.rs. */
+_Static_assert(sizeof(RbParams) == 420 && offsetof(RbParams, device) == 28 &&
+                   offsetof(RbParams, hp_level_live) == 412 &&
+                   offsetof(RbParams, level_raised) == 416,
+               "RbParams layout differs from RawParams");
 typedef struct {
   snd_pcm_t *pcm;
   int lease;

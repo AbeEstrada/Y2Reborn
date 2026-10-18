@@ -187,6 +187,9 @@ struct Runtime {
     pending_reconfiguration: Option<PendingReconfiguration>,
     /// Paused in place since (the open pipeline is held, see `Playback::hold`).
     held_since: Option<Instant>,
+    /// The gain-relevant sound settings of the last load: a load that plays
+    /// louder than it (`dsp_rise_fades`) fades in.
+    loaded_dsp: Option<LoadedDsp>,
     /// Playback restarts once at the model's song and place at this moment
     /// (and only when no start is in progress): seeking with held
     /// Previous/Next, skipping while a song is still starting.
@@ -1225,7 +1228,7 @@ impl Runtime {
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
                 true,
-                self.model.settings.crossfade_ms > 0 || self.model.settings.active_eq().is_some(),
+                self.model.settings.playback_heavy(),
                 false,
             ));
         self.reconfiguration_attempted = true;
@@ -1280,6 +1283,8 @@ impl Runtime {
             )
         };
         let eq = self.model.settings.active_eq();
+        let loaded = (self.model.settings.replay_gain, eq.clone());
+        let fade_in = dsp_rise_fades(self.loaded_dsp.as_ref(), &loaded);
         let dsp = reborn_media::DspConfig {
             volume: self.model.settings.volume,
             replay_gain: self.model.settings.replay_gain,
@@ -1298,6 +1303,7 @@ impl Runtime {
             dsp,
             self.model.settings.gapless_enabled,
             self.log.correlation(),
+            fade_in,
         );
         let log = self.log.clone();
         let correlation = self.log.correlation();
@@ -1351,6 +1357,7 @@ impl Runtime {
                     dsp,
                     gapless_enabled,
                     id,
+                    fade_in,
                 ) = request_parts;
                 playback.begin_start_with_gapless(playback::LoadRequest {
                     track,
@@ -1364,9 +1371,11 @@ impl Runtime {
                     dsp,
                     gapless_enabled,
                     id,
+                    fade_in,
                 })
             },
         )?;
+        self.loaded_dsp = Some(loaded);
         self.model.generation = generation;
         self.model.playback = PlaybackState::Buffering;
         self.active_transport_generation =
@@ -1473,7 +1482,7 @@ impl Runtime {
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
                 true,
-                self.model.settings.crossfade_ms > 0 || self.model.settings.active_eq().is_some(),
+                self.model.settings.playback_heavy(),
                 false,
             ));
         self.playback.hold(false);
@@ -2141,13 +2150,7 @@ impl Runtime {
             }
             Effect::SetReplayGain(mode) => {
                 self.model.settings.replay_gain = mode;
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
-                self.checkpoint();
+                self.reload_dsp()?;
             }
             Effect::SetEqEnabled(enabled) => {
                 if self.model.settings.eq_bands.is_empty() {
@@ -2215,6 +2218,8 @@ impl Runtime {
                 }
                 Err(e) => self.ui.flash(e),
             },
+            // The level in use again: nothing to restart.
+            Effect::SetHpLevel(level) if level == self.model.settings.hp_level => {}
             Effect::SetHpLevel(level) => {
                 let raised = level.index() > self.model.settings.hp_level.index();
                 self.model.settings.hp_level = level;
@@ -2223,7 +2228,6 @@ impl Runtime {
                 // restart wired playback (a higher level fades in); a held
                 // pause gives its stream back, so Play starts a new one.
                 if matches!(self.model.output, AudioOutput::Wired) {
-                    self.release_hold();
                     self.reload_dsp()?;
                 } else {
                     self.checkpoint();
@@ -2269,15 +2273,11 @@ impl Runtime {
                 if !self.headless && self.model.platform.brightness_available {
                     let _ = power::set_brightness(self.model.settings.brightness);
                 }
-                if reload
-                    && matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    )
-                {
-                    self.load()?;
+                if reload {
+                    self.reload_dsp()?;
+                } else {
+                    self.checkpoint();
                 }
-                self.checkpoint();
                 self.ui.flash("Settings reset");
             }
             Effect::ForgetAllWifi => {
@@ -2466,12 +2466,16 @@ impl Runtime {
         Ok(())
     }
     /// Apply typed replies from the platform client.
+    /// Play the changed sound settings: restart what plays; a held pause
+    /// gives its stream back, or Play would continue with the old ones.
     fn reload_dsp(&mut self) -> Result<(), String> {
         if matches!(
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
         ) {
             self.load()?;
+        } else if self.playback.is_held() {
+            self.release_hold();
         }
         self.checkpoint();
         Ok(())
@@ -3668,6 +3672,7 @@ fn run() -> Result<(), String> {
         action_dirty_before: None,
         pending_reconfiguration: None,
         held_since: None,
+        loaded_dsp: None,
         seek_until: None,
         reconfiguration_attempted: false,
         sink_release_started: false,
@@ -4754,7 +4759,7 @@ fn run() -> Result<(), String> {
                         rt.model.playback,
                         PlaybackState::Playing | PlaybackState::Buffering
                     ),
-                    rt.model.settings.crossfade_ms > 0 || rt.model.settings.active_eq().is_some(),
+                    rt.model.settings.playback_heavy(),
                     false, // The scanner owns its independent scoped lease.
                 ));
         }
@@ -5220,17 +5225,42 @@ fn shipped_eq_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Profile files (`*.txt`, not hidden) directly in `dir`.
-fn eq_files_in(dir: &Path, files: &mut Vec<reborn_core::eq::ProfileFile>) {
+/// Normalize Volume's mode and the equalizer (preamp and filters) a load plays.
+type LoadedDsp = (
+    reborn_core::ReplayGainMode,
+    Option<(f32, Vec<reborn_core::EqBand>)>,
+);
+
+/// Whether a load fades in like a raised headphone level: its sound settings
+/// play at least 1 dB louder somewhere than the previous load's (a profile
+/// turned off, a boosting preset), or Normalize changed (its gain comes from
+/// each song's tags, so count it as a rise). Not the first load: that plays
+/// what was saved, as the headphone level does.
+fn dsp_rise_fades(previous: Option<&LoadedDsp>, next: &LoadedDsp) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous == next {
+        return false;
+    }
+    fn eq(dsp: &LoadedDsp) -> Option<(f32, &[reborn_core::EqBand])> {
+        dsp.1
+            .as_ref()
+            .map(|(preamp, bands)| (*preamp, bands.as_slice()))
+    }
+    previous.0 != next.0 || reborn_core::eq::level_rise_db(eq(previous), eq(next)) >= 1.0
+}
+
+/// Profile files (not hidden, name ending in `suffix`, any letter case)
+/// directly in `dir`.
+fn eq_files_in(dir: &Path, suffix: &str, files: &mut Vec<reborn_core::eq::ProfileFile>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with('.')
-            && name
-                .to_ascii_lowercase()
-                .ends_with(reborn_core::eq::FILE_SUFFIX)
+            && name.to_ascii_lowercase().ends_with(suffix)
             && entry.file_type().is_ok_and(|t| t.is_file())
         {
             files.push(reborn_core::eq::ProfileFile {
@@ -5254,11 +5284,12 @@ fn scan_eq_profiles(shipped: &[PathBuf], roots: &[PathBuf]) -> Vec<reborn_core::
             e.file_name().to_string_lossy().eq_ignore_ascii_case("eq")
                 && e.file_type().is_ok_and(|t| t.is_dir())
         }) {
-            eq_files_in(&folder.path(), &mut files);
+            eq_files_in(&folder.path(), reborn_core::eq::FILE_SUFFIX, &mut files);
         }
     }
+    // The shipped folder also holds AutoEq's license and SOURCES.md.
     for dir in shipped {
-        eq_files_in(dir, &mut files);
+        eq_files_in(dir, "parametriceq.txt", &mut files);
     }
     let mut seen = std::collections::HashSet::new();
     files.retain(|f| seen.insert(f.name.to_lowercase()));
@@ -5351,6 +5382,66 @@ mod session_recovery_tests {
     }
 }
 #[cfg(test)]
+mod dsp_rise_tests {
+    use super::{dsp_rise_fades, LoadedDsp};
+    use reborn_core::{EqBand, EqKind, ReplayGainMode};
+
+    #[test]
+    fn a_louder_sound_setting_fades_in_and_the_same_or_quieter_does_not() {
+        let profile = reborn_core::eq::parse(
+            "x",
+            "Preamp: -6 dB\nFilter 1: ON LSC Fc 105 Hz Gain 6 dB Q 0.7\n",
+        )
+        .unwrap();
+        let with = |rg, eq: Option<(f32, Vec<EqBand>)>| -> LoadedDsp { (rg, eq) };
+        let on = with(
+            ReplayGainMode::Off,
+            Some((profile.preamp_db, profile.bands)),
+        );
+        let off = with(ReplayGainMode::Off, None);
+        assert!(
+            !dsp_rise_fades(None, &off),
+            "the first load plays what was saved"
+        );
+        assert!(
+            !dsp_rise_fades(Some(&off), &off),
+            "a new song, same settings"
+        );
+        assert!(
+            !dsp_rise_fades(Some(&off), &on),
+            "a clip-safe profile is never louder"
+        );
+        assert!(
+            dsp_rise_fades(Some(&on), &off),
+            "profile off: its preamp comes back"
+        );
+        let bass = vec![EqBand {
+            frequency_hz: 60.,
+            gain_db: 0.5,
+            q: 1.,
+            kind: EqKind::Peak,
+        }];
+        let small = with(ReplayGainMode::Off, Some((0.0, bass.clone())));
+        assert!(!dsp_rise_fades(Some(&off), &small), "below 1 dB");
+        let mut big = bass;
+        big[0].gain_db = 6.0;
+        assert!(dsp_rise_fades(
+            Some(&small),
+            &with(ReplayGainMode::Off, Some((0.0, big)))
+        ));
+        // Normalize's gain depends on each song: any change counts.
+        assert!(dsp_rise_fades(
+            Some(&off),
+            &with(ReplayGainMode::Track, None)
+        ));
+        assert!(dsp_rise_fades(
+            Some(&with(ReplayGainMode::Album, None)),
+            &off
+        ));
+    }
+}
+
+#[cfg(test)]
 mod eq_profile_file_tests {
     use super::{import_eq_profile, scan_eq_profiles};
     use std::fs;
@@ -5376,6 +5467,7 @@ mod eq_profile_file_tests {
         fs::write(shipped.join("AKG K371 ParametricEQ.txt"), good).unwrap();
         fs::write(shipped.join("Sennheiser HD 650 ParametricEQ.txt"), good).unwrap();
         fs::write(shipped.join("SOURCES.md"), "x").unwrap();
+        fs::write(shipped.join("LICENSE-AutoEq.txt"), "MIT License").unwrap();
         let files = scan_eq_profiles(
             std::slice::from_ref(&shipped),
             &[internal.clone(), sd.clone(), root.join("missing")],
@@ -5398,6 +5490,20 @@ mod eq_profile_file_tests {
             .unwrap_err()
             .contains("gone"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The real shipped folder (installed as is to /usr/share/reborn/eq)
+    /// lists its 47 profiles and nothing else: not the license, not SOURCES.md.
+    #[test]
+    fn the_shipped_folder_lists_exactly_its_profiles() {
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/eq");
+        assert!(shipped.join("LICENSE-AutoEq.txt").is_file());
+        let files = scan_eq_profiles(&[shipped], &[]);
+        assert_eq!(files.len(), 47);
+        assert!(files
+            .iter()
+            .all(|f| !f.name.to_lowercase().contains("license")));
+        assert!(files.iter().all(|f| import_eq_profile(&f.path).is_ok()));
     }
 }
 
@@ -5836,6 +5942,7 @@ mod runtime_reconfiguration_tests {
                     dsp: DspConfig::with_volume(42),
                     gapless_enabled: true,
                     id: 2,
+                    fade_in: false,
                 })
             },
         )

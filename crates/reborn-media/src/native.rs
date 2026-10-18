@@ -81,6 +81,15 @@ struct RawDspConfig {
     crossfade_ms: u32,
     preamp_db: c_double,
 }
+// Pinned with RbDspConfig in native/media.c (a _Static_assert there).
+const _: () = assert!(
+    std::mem::size_of::<RawDspConfig>() == 352
+        && std::mem::offset_of!(RawDspConfig, eq) == 16
+        && std::mem::size_of::<RawEqBand>() == 32
+        && std::mem::offset_of!(RawEqBand, kind) == 24
+        && std::mem::offset_of!(RawDspConfig, crossfade_ms) == 336
+        && std::mem::offset_of!(RawDspConfig, preamp_db) == 344
+);
 
 type CancelNew = unsafe extern "C" fn() -> *mut c_void;
 type CancelFree = unsafe extern "C" fn(*mut c_void);
@@ -1472,6 +1481,57 @@ mod tests {
             decoder.metadata.applied_gain_db,
             decoder.metadata.filters.clone(),
         )
+    }
+    /// A shipped 10-filter profile with positive ReplayGain on a near
+    /// full-scale 24/96 file: the preamp, the filters and +6 dB without a peak
+    /// tag would pass full scale; the limiter must hold every output format
+    /// below it.
+    #[test]
+    fn a_full_profile_with_replaygain_stays_below_full_scale_at_24_and_16_bits() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/eq/Sennheiser HD 650 ParametricEQ.txt");
+        let profile =
+            reborn_core::eq::parse("HD 650", &std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(profile.bands.len(), 10);
+        for (format, full) in [(PcmFormat::S24LE, 8_388_607i64), (PcmFormat::S16LE, 32_767)] {
+            let mut decoder = Decoder::open_with(
+                &fixture("loud-24-96000-rg.flac"),
+                OutputSpec {
+                    rate: 48_000,
+                    format,
+                },
+                DspConfig {
+                    volume: 100,
+                    replay_gain: ReplayGainMode::Track,
+                    eq_enabled: true,
+                    eq_bands: profile.bands.clone(),
+                    crossfade_ms: 0,
+                    preamp_db: profile.preamp_db,
+                },
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let filters = &decoder.metadata.filters;
+            assert!(filters.contains("ReplayGain=track") && filters.contains("preamp=-6.4dB"));
+            assert!(filters.contains("alimiter"), "{filters}");
+            assert!((decoder.metadata.applied_gain_db - (6.0 - 6.4)).abs() < 1e-6);
+            let mut peak = 0i64;
+            while let Some(block) = decoder.read().unwrap() {
+                if format == PcmFormat::S24LE {
+                    for sample in block.data.as_chunks::<4>().0 {
+                        let value = (i32::from_le_bytes(*sample) << 8) >> 8;
+                        peak = peak.max(i64::from(value).abs());
+                    }
+                } else {
+                    for sample in block.data.as_chunks::<2>().0 {
+                        peak = peak.max(i64::from(i16::from_le_bytes(*sample)).abs());
+                    }
+                }
+            }
+            // Loud (the boosts work) but under the 0.98 limit, never clipped.
+            assert!(peak > full * 9 / 10, "{format:?}: {peak}");
+            assert!(peak <= full * 981 / 1000, "{format:?}: {peak}");
+        }
     }
     #[test]
     fn profile_shelves_and_preamp_reach_the_ffmpeg_graph() {

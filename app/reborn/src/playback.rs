@@ -20,6 +20,37 @@ use std::{
 };
 /// Fade-in of the first stream after the headphone level went up.
 const LEVEL_RAISE_FADE_MS: u32 = 2000;
+
+/// The gain a newly opened sink starts with, and the fade it logs: a fresh
+/// fade-in when the headphone level (`raised`) or the DSP (`dsp_rise`) went
+/// up, else the rest of a fade the previous sink did not finish, else the
+/// volume at once.
+fn opening_gain(
+    volume: u8,
+    rate: u32,
+    raised: bool,
+    dsp_rise: bool,
+    carried: Option<(f64, u32)>,
+) -> (VolumeRamp, Option<(&'static str, &'static str, u32)>) {
+    if raised {
+        let message = "headphone level went up: fading in";
+        let ramp = VolumeRamp::fade_in(volume, rate, LEVEL_RAISE_FADE_MS);
+        (
+            ramp,
+            Some(("level_raise_fade", message, LEVEL_RAISE_FADE_MS)),
+        )
+    } else if dsp_rise {
+        let message = "sound settings play louder: fading in";
+        let ramp = VolumeRamp::fade_in(volume, rate, LEVEL_RAISE_FADE_MS);
+        (ramp, Some(("dsp_rise_fade", message, LEVEL_RAISE_FADE_MS)))
+    } else if let Some((fraction, ms)) = carried {
+        let message = "the previous stream's fade-in continues";
+        let ramp = VolumeRamp::fade_in_from(volume, rate, ms, fraction);
+        (ramp, Some(("fade_continued", message, ms)))
+    } else {
+        (VolumeRamp::new(volume, rate), None)
+    }
+}
 /// What keeps a decoder's input valid: a pinned library file, or a radio
 /// station's network transfer (stopped when the decoder is dropped).
 enum Source {
@@ -94,6 +125,8 @@ pub struct LoadRequest {
     pub dsp: DspConfig,
     pub gapless_enabled: bool,
     pub id: u64,
+    /// Fade the new stream in: its DSP plays louder than the last one's.
+    pub fade_in: bool,
 }
 struct Job {
     track: Track,
@@ -127,6 +160,7 @@ enum SinkCommand {
         generation: u64,
         spec: SinkSpec,
         id: u64,
+        fade_in: bool,
         reply: SyncSender<Result<(), String>>,
     },
     Stop(Option<SyncSender<()>>),
@@ -1174,6 +1208,7 @@ impl Playback {
                                 generation: g,
                                 spec,
                                 id,
+                                fade_in,
                                 reply,
                             } => {
                                 if g != se.load(Ordering::Acquire) {
@@ -1185,27 +1220,34 @@ impl Playback {
                                 held = false;
                                 generation = g;
                                 correlation = id;
+                                // An unfinished fade carries over (Next, a seek or another
+                                // rate during it must not jump to full volume).
+                                let carried = gain.fade_progress(rate);
+                                let volume = sink_volume.load(Ordering::Relaxed);
                                 rate = spec.rate;
                                 sink_format = spec.format;
-                                gain = VolumeRamp::new(sink_volume.load(Ordering::Relaxed), rate);
+                                gain = opening_gain(volume, rate, false, false, carried).0;
                                 started = false;
                                 eof = false;
                                 match factory(&spec, al.clone(), id) {
                                     Ok(s) => {
                                         let params = s.parameters();
-                                        if params.level_raised {
-                                            gain = VolumeRamp::fade_in(
-                                                sink_volume.load(Ordering::Relaxed),
-                                                rate,
-                                                LEVEL_RAISE_FADE_MS,
-                                            );
+                                        let (ramp, fade) = opening_gain(
+                                            volume,
+                                            rate,
+                                            params.level_raised,
+                                            fade_in,
+                                            carried,
+                                        );
+                                        gain = ramp;
+                                        if let Some((event, message, ms)) = fade {
                                             al.emit(
                                                 Level::Info,
                                                 "audio",
-                                                "level_raise_fade",
-                                                "headphone level went up: fading in",
+                                                event,
+                                                message,
                                                 Some(id),
-                                                json!({"hp_level":params.hp_level_live,"fade_ms":LEVEL_RAISE_FADE_MS}),
+                                                json!({"hp_level":params.hp_level_live,"fade_ms":ms}),
                                             );
                                         }
                                         if let Ok(mut value) = audio_state.lock() {
@@ -1522,6 +1564,7 @@ impl Playback {
             dsp,
             gapless_enabled: true,
             id,
+            fade_in: false,
         })
     }
     #[cfg(test)]
@@ -1555,6 +1598,7 @@ impl Playback {
             mut dsp,
             gapless_enabled,
             id,
+            fade_in,
         } = request;
         if !(8000..=384_000).contains(&spec.rate) {
             return Err("unsupported PCM rate".into());
@@ -1588,6 +1632,7 @@ impl Playback {
             generation,
             spec,
             id,
+            fade_in,
             reply,
         }) {
             Ok(()) => {}
@@ -1744,6 +1789,28 @@ mod tests {
     use reborn_audio::Parameters;
     use reborn_core::{AudioOutput, PcmFormat};
 
+    #[test]
+    fn an_opened_sink_fades_for_a_rise_and_otherwise_continues_an_unfinished_fade() {
+        let event =
+            |raised, dsp, carried| opening_gain(100, 1000, raised, dsp, carried).1.map(|e| e.0);
+        assert_eq!(event(true, true, None), Some("level_raise_fade"));
+        assert_eq!(event(false, true, Some((0.5, 10))), Some("dsp_rise_fade"));
+        assert_eq!(
+            event(false, false, Some((0.5, 1000))),
+            Some("fade_continued")
+        );
+        assert_eq!(event(false, false, None), None);
+        // A fresh fade starts silent; a continued one where the last one was.
+        let (fresh, _) = opening_gain(100, 1000, true, false, Some((0.5, 1000)));
+        assert_eq!(fresh.fade_progress(1000), Some((0.0, LEVEL_RAISE_FADE_MS)));
+        let (continued, _) = opening_gain(100, 1000, false, false, Some((0.5, 1000)));
+        assert_eq!(continued.fade_progress(1000), Some((0.5, 1000)));
+        assert!(opening_gain(100, 1000, false, false, None)
+            .0
+            .fade_progress(1000)
+            .is_none());
+    }
+
     struct Sink {
         frames: Arc<AtomicU64>,
         fail: bool,
@@ -1862,7 +1929,7 @@ mod tests {
             assert_eq!(actual.position_ms, expected.position_ms, "{name}");
             tested += 1;
         }
-        assert_eq!(tested, 35);
+        assert_eq!(tested, 36);
         let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
         assert!(external_artwork(pinned.path()).is_err());
         for name in [
@@ -2294,6 +2361,7 @@ mod tests {
                 dsp: DspConfig::with_volume(35),
                 gapless_enabled: true,
                 id: 1,
+                fade_in: false,
             })
             .unwrap();
         // The opener is still held behind `release_rx`; reaching this point
@@ -2625,6 +2693,7 @@ mod tests {
                 dsp: DspConfig::with_volume(35),
                 gapless_enabled: true,
                 id: 2,
+                fade_in: false,
             })
             .unwrap_err();
         assert!(second_open_without_release.contains("release acknowledgement"));

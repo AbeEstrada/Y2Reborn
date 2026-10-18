@@ -40,6 +40,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -132,6 +133,13 @@ typedef struct {
   uint32_t crossfade_ms;
   double preamp_db; /* <= 0, before the equalizer */
 } RbDspConfig;
+/* Pinned with RawDspConfig in src/native.rs (same numbers on ARM and x86-64). */
+_Static_assert(sizeof(RbDspConfig) == 352 && offsetof(RbDspConfig, eq) == 16 &&
+                   sizeof(((RbDspConfig *)0)->eq[0]) == 32 &&
+                   offsetof(RbDspConfig, eq[0].kind) == 40 &&
+                   offsetof(RbDspConfig, crossfade_ms) == 336 &&
+                   offsetof(RbDspConfig, preamp_db) == 344,
+               "RbDspConfig layout differs from RawDspConfig");
 
 typedef struct {
   AVFormatContext *f;
@@ -651,12 +659,14 @@ static int make_filter_graph(RbMedia *m) {
   m->graph = avfilter_graph_alloc();
   if (!m->graph)
     return AVERROR(ENOMEM);
-  /* Only equalizer supports slice threads in this audio graph, and there
-   * are at most two canonical channels. Avoid an unused automatic pool. */
+  /* One thread: the biquads' slice threads (one job per channel) cost more in
+   * handoffs than they save. FFmpeg 9.0.2, HD 650 profile, 5 min on the host:
+   * 43 % less CPU with 1152-sample frames, 20 % with 4096; output
+   * bit-identical. The Y2 measured 4.4 % -> 11.7 % of one core with two. */
+  m->graph->nb_threads = 1;
   int active_eq = 0;
   for (uint32_t i = 0; i < m->dsp.eq_count && i < RB_EQ_BANDS; i++)
     active_eq |= m->dsp.eq[i].gain_db != 0.0;
-  m->graph->nb_threads = active_eq ? 2 : 1;
   char args[256];
   snprintf(args, sizeof(args),
            "time_base=1/%d:sample_rate=%d:sample_fmt=fltp:channel_layout=stereo",

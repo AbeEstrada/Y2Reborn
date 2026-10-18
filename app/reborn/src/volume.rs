@@ -9,6 +9,8 @@ pub(crate) struct VolumeRamp {
     step: f64,
     remaining: usize,
     ramp_frames: usize,
+    /// A fade-in is running (it carries over a reopened sink).
+    fading: bool,
 }
 impl VolumeRamp {
     pub(crate) fn new(volume: u8, rate: u32) -> Self {
@@ -19,17 +21,39 @@ impl VolumeRamp {
             step: 0.0,
             remaining: 0,
             ramp_frames: (rate as usize / 200).max(1), // five milliseconds
+            fading: false,
         }
     }
     /// Start from silence and reach `volume` over `ms`: the first stream after
     /// the headphone level went up (hearing safety; a later volume change
     /// takes over with the usual short ramp).
     pub(crate) fn fade_in(volume: u8, rate: u32, ms: u32) -> Self {
+        Self::fade_in_from(volume, rate, ms, 0.0)
+    }
+    /// A fade-in that already reached `fraction` of its volume: the one a
+    /// reopened sink (Next, a seek, another rate) continues instead of
+    /// starting at full volume.
+    pub(crate) fn fade_in_from(volume: u8, rate: u32, ms: u32, fraction: f64) -> Self {
         let mut ramp = Self::new(volume, rate);
-        ramp.gain = 0.0;
+        ramp.gain = ramp.target * fraction.clamp(0.0, 1.0);
         ramp.remaining = ((u64::from(rate) * u64::from(ms) / 1000) as usize).max(1);
-        ramp.step = ramp.target / ramp.remaining as f64;
+        ramp.step = (ramp.target - ramp.gain) / ramp.remaining as f64;
+        ramp.fading = true;
         ramp
+    }
+    /// How far an unfinished fade-in got: the fraction of its volume reached
+    /// and the milliseconds left at `rate`. None when no fade-in runs.
+    pub(crate) fn fade_progress(&self, rate: u32) -> Option<(f64, u32)> {
+        if !self.fading || self.remaining == 0 || rate == 0 {
+            return None;
+        }
+        let fraction = if self.target > 0.0 {
+            self.gain / self.target
+        } else {
+            0.0
+        };
+        let ms = (self.remaining as u64 * 1000 / u64::from(rate)).max(1);
+        Some((fraction, u32::try_from(ms).unwrap_or(u32::MAX)))
     }
     fn gain(volume: u8) -> f64 {
         // Preserve the existing FFmpeg DSP's squared amplitude curve.
@@ -39,6 +63,12 @@ impl VolumeRamp {
         let target = Self::gain(volume);
         if target != self.target {
             self.target = target;
+            if self.fading && self.remaining > 0 && target > self.gain {
+                // Louder during a fade-in: keep fading, towards the new volume.
+                self.step = (target - self.gain) / self.remaining as f64;
+                return;
+            }
+            self.fading = false;
             self.remaining = self.ramp_frames;
             self.step = (target - self.gain) / self.remaining as f64;
         }
@@ -90,6 +120,7 @@ impl VolumeRamp {
     pub(crate) fn advance(&mut self, frames: usize) {
         self.gain = self.at(frames);
         self.remaining = self.remaining.saturating_sub(frames);
+        self.fading &= self.remaining > 0;
     }
 }
 
@@ -120,6 +151,44 @@ mod tests {
             values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
             [2500, 2500]
         );
+    }
+    #[test]
+    fn an_unfinished_fade_continues_in_a_reopened_sink_and_through_volume_up() {
+        // A quarter into the fade, the sink reopens at another rate.
+        let mut ramp = VolumeRamp::fade_in(100, 1000, 2000);
+        ramp.advance(500);
+        let (fraction, ms) = ramp.fade_progress(1000).unwrap();
+        assert!(
+            (fraction - 0.25).abs() < 1e-9 && ms == 1500,
+            "{fraction} {ms}"
+        );
+        let mut ramp = VolumeRamp::fade_in_from(100, 2000, ms, fraction);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [2502, 2502]
+        );
+        ramp.advance(1500);
+        let (fraction, _) = ramp.fade_progress(2000).unwrap();
+        assert!((fraction - 0.625).abs() < 1e-9, "{fraction}");
+        // Volume up keeps the fade's pace (no 5-ms jump to full volume)...
+        let mut up = VolumeRamp::fade_in(50, 1000, 2000);
+        up.advance(1000);
+        up.target(100);
+        up.advance(5);
+        let gain = values(&up.render(&stereo16(10_000, 1), PcmFormat::S16LE))[0];
+        assert!(gain < 2000, "{gain}");
+        up.advance(995);
+        assert_eq!(
+            values(&up.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [10_000, 10_000]
+        );
+        assert!(up.fade_progress(1000).is_none(), "the fade is over");
+        // ...volume down takes effect at once and ends the fade.
+        let mut down = VolumeRamp::fade_in(100, 1000, 2000);
+        down.advance(1000);
+        down.target(10);
+        assert!(down.fade_progress(1000).is_none());
+        assert!(VolumeRamp::new(100, 1000).fade_progress(1000).is_none());
     }
     fn stereo16(sample: i16, frames: usize) -> Vec<u8> {
         sample.to_le_bytes().repeat(frames * 2)

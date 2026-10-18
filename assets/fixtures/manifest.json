@@ -85,6 +85,10 @@
       "bytes": 11429,
       "sha256": "8d29c7734f8e946790af7e003e9bcb2fd9ddd1a824d5bc8082d444eb1875759f"
     },
+    "loud-24-96000-rg.flac": {
+      "bytes": 145823,
+      "sha256": "944fe6b54e2cb62527529c636ee8409922b092892ff39f180cb8c4e619c95f3a"
+    },
     "m4a-aac.m4a": {
       "bytes": 3595,
       "sha256": "cde80d55e49a5dc712601f74fb14168adfccbda53a35abc95f188fb62faaf1b5"
@@ -185,7 +189,8 @@
     "tagged ReplayGain",
     "no metadata",
     "corrupt metadata",
-    "truncated audio"
+    "truncated audio",
+    "positive ReplayGain without a peak (near full scale)"
   ],
   "origin": "deterministic 440 Hz and ramp signals generated locally by FFmpeg 9.0.1",
   "precision": {
