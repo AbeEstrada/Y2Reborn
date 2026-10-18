@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.3 — Y2Linux 1.0 Beta 8.3 (Baseline 89), 2026-10-18 (latest): seconds left
+## 1.0.0-beta.8.4 — Y2Linux 1.0 Beta 8.4 (Baseline 90), 2026-10-18 (latest): restart display fix
+
+- No Reborn code change; the release carries Y2Linux's fix for the dark display after a restart (SMI gates reopened
+  as the last step of a restart). A dark start had made Reborn's first frame time out and an update roll back.
+
+## 1.0.0-beta.8.3 — Y2Linux 1.0 Beta 8.3 (Baseline 89), 2026-10-18: seconds left
 
 - *Checking the Update* shows the seconds left from the core's check line (`"<percent> check <seconds>"`, Y2Linux
   8.3, `reborn_platform::client::parse_download`); with an older core it keeps *This takes a few seconds.* The
