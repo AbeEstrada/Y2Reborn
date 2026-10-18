@@ -211,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 32] = [
+const NORMAL_SCREENS: [Screen; 34] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -233,6 +233,8 @@ const NORMAL_SCREENS: [Screen; 32] = [
     Screen::Output,
     Screen::HeadphoneLevel,
     Screen::DacFilter,
+    Screen::ErrorReports,
+    Screen::ReportTopic,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
     Screen::SettingsSystem,
@@ -3447,4 +3449,125 @@ fn radio_firmware_page_names_the_right_place_and_a_space_refusal() {
     m.platform.snapshot.firmware_no_space = true;
     let text = visible_text(&ui, &m);
     assert!(text.contains("Not Enough Space") && text.contains("SD card"));
+}
+
+#[test]
+fn error_reports_page_switches_sends_and_names_the_last_report() {
+    use reborn_core::platform::{ReportLast, ReportState, ReportTopic};
+    let mut ui = radios();
+    // About & Updates names the state; an older platform has no row.
+    let mut m = app(Screen::Update);
+    m.platform.snapshot.observed = true;
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.label)
+            .collect()
+    };
+    assert!(!labels(&ui, &m).contains(&"Error Reports".to_owned()));
+    m.platform.snapshot.reports = Some(ReportState::default());
+    let row = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .find(|r| r.label == "Error Reports")
+        .unwrap();
+    assert_eq!(row.secondary, "Not Set");
+    assert_eq!(select_key(&mut ui, &mut m, "error_reports"), Effect::None);
+    assert_eq!(m.screen, Screen::ErrorReports);
+    // Off: the switch turns it on; nothing can be sent yet; no ID shown.
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].kind, RowKind::Toggle(false));
+    assert!(
+        !rows
+            .iter()
+            .find(|r| r.key == "report_topic")
+            .unwrap()
+            .enabled
+    );
+    assert!(!rows.iter().any(|r| r.label == "Install ID"));
+    assert!(visible_text(&ui, &m).contains("nothing is collected or sent"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "report_toggle"),
+        Effect::Platform(PlatformTask::ReportEnable(true))
+    );
+    // On, with a queued report.
+    m.platform.snapshot.reports = Some(ReportState {
+        enabled: Some(true),
+        install_id: Some("da2c48ea-218a-40c6-b0fc-144cbff777de".into()),
+        queued: 1,
+        last: Some(ReportLast {
+            trigger: "reborn_crash".into(),
+            state: "queued".into(),
+            ..Default::default()
+        }),
+    });
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].kind, RowKind::Toggle(true));
+    assert_eq!(
+        rows.iter()
+            .find(|r| r.label == "Install ID")
+            .unwrap()
+            .secondary,
+        "DA2C48EA"
+    );
+    assert!(visible_text(&ui, &m).contains("player app crash"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "report_toggle"),
+        Effect::Platform(PlatformTask::ReportEnable(false))
+    );
+    assert_eq!(select_key(&mut ui, &mut m, "report_info"), Effect::None);
+    let text = visible_text(&ui, &m);
+    assert!(
+        text.contains("Never your music") && text.contains("kept 180 days") && !text.contains('…')
+    );
+    m.navigation.filter.clear();
+    // A new ID is confirmed first.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "confirm:report_new_id"),
+        Effect::None
+    );
+    assert_eq!(
+        m.navigation.modal,
+        Some(Modal::Confirm(ConfirmAction::Platform(
+            PlatformTask::ReportNewId
+        )))
+    );
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::ReportNewId)
+    );
+    // Send Report Now: a topic, then back to the page, which shows the progress.
+    assert_eq!(select_key(&mut ui, &mut m, "report_topic"), Effect::None);
+    assert_eq!(m.screen, Screen::ReportTopic);
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), ReportTopic::ALL.len());
+    assert_eq!(
+        select_key(&mut ui, &mut m, "report_send:sound"),
+        Effect::Platform(PlatformTask::ReportSend(ReportTopic::Sound))
+    );
+    assert_eq!(m.screen, Screen::ErrorReports);
+    m.platform.busy = Some(PlatformTask::ReportSend(ReportTopic::Sound));
+    assert!(visible_text(&ui, &m).contains("Preparing the Report"));
+}
+
+#[test]
+fn the_error_report_question_records_no_as_well_as_yes() {
+    let mut ui = radios();
+    for (step, expected) in [(0, false), (1, true)] {
+        let mut m = app(Screen::Home);
+        m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ReportsQuestion));
+        m.navigation.modal_focus = 0;
+        let rows = ui.modal_rows_public(&m, &[]);
+        let labels: Vec<_> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["No Thanks", "Send Reports"]);
+        assert!(ui.modal_copy(&m).0.contains("Help Improve Y2Linux"));
+        for _ in 0..step {
+            ui.model_action(&mut m, Action::WheelClockwise(1));
+        }
+        assert_eq!(
+            ui.model_action(&mut m, Action::Select),
+            Effect::Platform(PlatformTask::ReportEnable(expected))
+        );
+        assert_eq!(m.navigation.modal, None);
+    }
 }

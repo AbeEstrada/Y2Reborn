@@ -160,6 +160,8 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Output => output(ui, m),
         Screen::HeadphoneLevel => headphone_level(m),
         Screen::DacFilter => dac_filter(m),
+        Screen::ErrorReports => error_reports(m),
+        Screen::ReportTopic => report_topic(m),
         Screen::Theme => theme(ui, m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
@@ -1423,6 +1425,20 @@ pub fn short_version(version: &str) -> String {
 /// About & Updates: the update status first, then the facts an owner may want.
 fn update(m: &AppModel) -> Page {
     let mut page = update_status(m);
+    if let Some(reports) = &m.platform.snapshot.reports {
+        page.rows.push(
+            row(
+                "Error Reports",
+                "error_reports",
+                match reports.enabled {
+                    Some(true) => "On",
+                    Some(false) => "Off",
+                    None => "Not Set",
+                },
+            )
+            .with_kind(RowKind::Chevron),
+        );
+    }
     page.rows.push(row(
         "Version",
         "version",
@@ -1431,6 +1447,111 @@ fn update(m: &AppModel) -> Page {
     page.rows
         .push(row("Reset Settings", "confirm:reset_settings", "").with_kind(RowKind::Chevron));
     page
+}
+
+fn report_preparing(m: &AppModel) -> Option<Page> {
+    matches!(m.platform.busy, Some(PlatformTask::ReportSend(_))).then(|| {
+        Page::hero(
+            "Preparing the Report…",
+            "The player collects its logs and removes personal details. This takes about half a minute.",
+        )
+    })
+}
+
+/// About & Updates > Error Reports (Y2Linux ERROR-REPORTS-PLAN): the switch,
+/// what is sent, a report now, the install ID and the last report.
+fn error_reports(m: &AppModel) -> Page {
+    if m.navigation.filter == "info" {
+        return Page::hero(
+            "What Is Sent",
+            "The player's logs, settings and hardware details. Never your music, names, Wi-Fi, \
+             Bluetooth or accounts. Sent encrypted over Wi-Fi, kept 180 days.",
+        );
+    }
+    if let Some(page) = report_preparing(m) {
+        return page;
+    }
+    let Some(r) = &m.platform.snapshot.reports else {
+        let mut page = Page::rows(vec![
+            row("What Is Sent", "report_info", "").with_kind(RowKind::Chevron)
+        ]);
+        page.status = Some("Checking…".into());
+        return page;
+    };
+    let on = r.enabled == Some(true);
+    let idle = m.platform.busy.is_none();
+    let mut rows = vec![
+        disabled(
+            row("Send Error Reports", "report_toggle", "").with_kind(RowKind::Toggle(on)),
+            idle,
+        ),
+        row("What Is Sent", "report_info", "").with_kind(RowKind::Chevron),
+        disabled(
+            row("Send Report Now", "report_topic", "").with_kind(RowKind::Chevron),
+            on && idle,
+        ),
+    ];
+    if let Some(id) = r.short_id().filter(|_| on) {
+        rows.push(disabled(
+            row("Install ID", "confirm:report_new_id", id),
+            idle,
+        ));
+    }
+    let mut page = Page::rows(rows);
+    page.status = Some(match (&r.last, on) {
+        (_, false) => "Off: nothing is collected or sent.".into(),
+        (None, true) => "On: a report is made when something goes wrong.".into(),
+        (Some(last), true) => {
+            let what = report_trigger_label(&last.trigger);
+            match last.state.as_str() {
+                "sent" => format!("Last report ({what}) sent."),
+                "failed" => format!("Last report ({what}) couldn't be sent yet."),
+                _ if r.queued > 1 => {
+                    format!("Last report ({what}) waiting to send, {} in all.", r.queued)
+                }
+                _ => format!("Last report ({what}) waiting to send."),
+            }
+        }
+    });
+    page
+}
+
+/// What an automatic or manual report was about, in plain words.
+fn report_trigger_label(trigger: &str) -> &'static str {
+    match trigger {
+        "manual" => "sent by you",
+        "kernel_crash" => "system crash",
+        "kernel_warning" => "system warning",
+        "unclean_restart" => "unexpected restart",
+        "reborn_crash" => "player app crash",
+        "reborn_failure" => "player app problem",
+        "update_failure" => "update problem",
+        "sleep_failure" => "sleep problem",
+        "radio_failure" => "Wi-Fi or Bluetooth problem",
+        "display_failure" => "display problem",
+        "storage_error" => "storage problem",
+        _ => "problem",
+    }
+}
+
+/// Send Report Now: what it is about (the report itself has the logs).
+fn report_topic(m: &AppModel) -> Page {
+    if let Some(page) = report_preparing(m) {
+        return page;
+    }
+    // Seven topics fill the picker: no status line below them.
+    Page::rows(
+        reborn_core::platform::ReportTopic::ALL
+            .into_iter()
+            .map(|topic| {
+                row(
+                    topic.label(),
+                    &format!("report_send:{}", topic.argument()),
+                    "",
+                )
+            })
+            .collect(),
+    )
 }
 
 fn update_status(m: &AppModel) -> Page {

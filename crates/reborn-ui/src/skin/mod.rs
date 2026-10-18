@@ -563,6 +563,8 @@ pub const LAYOUTS: &[&str] = &[
     "output",
     "headphone_level",
     "dac_filter",
+    "error_reports",
+    "report_topic",
     "theme",
     "time_zone",
     "home_menu",

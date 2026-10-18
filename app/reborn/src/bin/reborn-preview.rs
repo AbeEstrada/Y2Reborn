@@ -651,6 +651,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         m.platform.snapshot.update.can_download = true;
     });
+    case!("33b-error-reports", at(Screen::ErrorReports, ""), |_, m| {
+        m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+            enabled: Some(true),
+            install_id: Some("da2c48ea-218a-40c6-b0fc-144cbff777de".into()),
+            queued: 1,
+            last: Some(reborn_core::platform::ReportLast {
+                trigger: "manual".into(),
+                state: "queued".into(),
+                ..Default::default()
+            }),
+        });
+    });
+    case!("33c-error-reports-info", at(Screen::ErrorReports, "info"));
+    case!("33g-about-error-reports", at(Screen::Update, ""), |_, m| {
+        m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+            enabled: Some(true),
+            ..Default::default()
+        });
+        m.navigation.focus = 1;
+    });
+    case!("33d-error-report-question", at(Screen::Home, ""), |_, m| {
+        m.navigation.modal = Some(reborn_core::Modal::Confirm(
+            reborn_core::ConfirmAction::ReportsQuestion,
+        ));
+    });
+    case!("33e-report-topic", at(Screen::ReportTopic, ""), |_, m| {
+        m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+            enabled: Some(true),
+            ..Default::default()
+        });
+    });
+    case!(
+        "33f-report-preparing",
+        at(Screen::ErrorReports, ""),
+        |_, m| {
+            m.platform.busy = Some(reborn_core::PlatformTask::ReportSend(
+                reborn_core::platform::ReportTopic::Sound,
+            ));
+        }
+    );
     case!("35-about-up-to-date", at(Screen::Update, ""), |_, m| m
         .navigation
         .focus =

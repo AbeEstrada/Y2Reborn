@@ -9,9 +9,9 @@
 use reborn_core::{
     platform::{
         BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, InternalSetup,
-        LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, SbcQuality,
-        SdCard, SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
-        UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
+        LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, ReportLast,
+        ReportState, SbcQuality, SdCard, SleepPhase, SleepProblem, SleepState, StorageState,
+        UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
 };
@@ -42,6 +42,8 @@ pub enum Reply {
     Operation(PlatformTask, Result<OperationResult, String>),
     Failed(PlatformTask, String),
     Sleep(Result<SleepState, String>),
+    /// An error report task and the state after it.
+    Reports(PlatformTask, Result<ReportState, String>),
 }
 
 pub struct Client {
@@ -174,7 +176,12 @@ fn execute(task: PlatformTask) -> Reply {
                 call(&["capabilities"], 10).and_then(|v| schema(v, CAPABILITIES_SCHEMA));
             return match (status, capabilities) {
                 (Ok(status), Ok(capabilities)) => {
-                    Reply::Snapshot(Box::new(snapshot(&status, &capabilities)))
+                    let mut snapshot = snapshot(&status, &capabilities);
+                    // An older platform without error reports answers an error.
+                    snapshot.reports = call(&["report", "status"], 10)
+                        .ok()
+                        .and_then(|v| report_state(&v));
+                    Reply::Snapshot(Box::new(snapshot))
                 }
                 (Err(error), _) | (_, Err(error)) => Reply::Failed(task, friendly_error(&error)),
             };
@@ -255,6 +262,9 @@ fn execute(task: PlatformTask) -> Reply {
         ),
         // Passive IP/route/DNS readiness only; never pings an external host.
         NetworkCheck => call(&["status", "wifi"], 25).and_then(|v| schema(v, STATUS_SCHEMA)),
+        ReportEnable(_) | ReportNewId | ReportSend(_) => {
+            return Reply::Reports(task, reports(task))
+        }
     };
     Reply::Operation(
         task,
@@ -262,6 +272,54 @@ fn execute(task: PlatformTask) -> Reply {
             .map(|v| operation(&v))
             .map_err(|e| friendly_error(&e)),
     )
+}
+
+/// Run an error report task, then read the state it left.
+fn reports(task: PlatformTask) -> Result<ReportState, String> {
+    use PlatformTask::*;
+    let answer = match task {
+        ReportEnable(true) => call(&["report", "enable"], 30)?,
+        ReportEnable(false) => call(&["report", "disable"], 30)?,
+        ReportNewId => call(&["report", "new-id"], 10)?,
+        // Building a report reads every log: about 40 s on the Y2.
+        ReportSend(topic) => call(&["report", "send", "--topic", topic.argument()], 180)?,
+        _ => return Err("not_a_report_task".into()),
+    };
+    if answer["queued"] == false {
+        return Err(match answer["reason"].as_str() {
+            Some("not_enabled") => "Turn on Error Reports first.",
+            Some("daily_limit") => "Enough reports for today. Try again tomorrow.",
+            _ => "The report couldn't be made. Please try again.",
+        }
+        .into());
+    }
+    let status = if matches!(task, ReportSend(_)) {
+        call(&["report", "status"], 10)?
+    } else {
+        answer
+    };
+    report_state(&status).ok_or_else(|| "incompatible_platform_version".into())
+}
+
+/// `y2-platform report status` (schema 1) as the core type.
+pub fn report_state(value: &Value) -> Option<ReportState> {
+    if value["schema"] != 1 {
+        return None;
+    }
+    let text = |v: &Value| v.as_str().map(str::to_owned);
+    let last = &value["last"];
+    Some(ReportState {
+        enabled: value["enabled"].as_bool(),
+        install_id: text(&value["install_id"]),
+        queued: value["queued"].as_array().map_or(0, Vec::len),
+        last: last.is_object().then(|| ReportLast {
+            report_id: text(&last["report_id"]).unwrap_or_default(),
+            trigger: text(&last["trigger"]).unwrap_or_default(),
+            state: text(&last["state"]).unwrap_or_default(),
+            created_utc: text(&last["created_utc"]).unwrap_or_default(),
+            bytes: last["bytes"].as_u64().unwrap_or(0),
+        }),
+    })
 }
 
 /// User-language text for a platform failure code. Raw service text is never
@@ -636,6 +694,7 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         update: update(status, ota),
         health: HealthLevel::Unknown,
         diagnostics: diagnostics(status, caps),
+        reports: None,
         enabled,
     }
 }
@@ -1279,6 +1338,27 @@ pub fn unobserved() -> PlatformSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_status_is_read_from_the_platform_record() {
+        let state = report_state(&json!({"schema": 1, "enabled": null, "install_id": null,
+            "queued": [], "last": null}))
+        .unwrap();
+        assert_eq!(state, ReportState::default());
+        let state = report_state(&json!({"schema": 1, "enabled": true,
+            "install_id": "da2c48ea-218a-40c6-b0fc-144cbff777de",
+            "queued": ["a.tar.gz", "b.tar.gz"],
+            "last": {"report_id": "r", "trigger": "manual", "state": "queued",
+                     "created_utc": "2026-10-18T21:23:43+00:00", "bytes": 409177}}))
+        .unwrap();
+        assert_eq!(state.enabled, Some(true));
+        assert_eq!(state.queued, 2);
+        assert_eq!(state.short_id().as_deref(), Some("DA2C48EA"));
+        assert_eq!(state.last.unwrap().bytes, 409177);
+        // Another schema is an older or newer platform: no state, no screen.
+        assert!(report_state(&json!({"schema": 2})).is_none());
+        assert!(report_state(&json!({"failure": "report_failed"})).is_none());
+    }
 
     fn status() -> Value {
         json!({"schema":STATUS_SCHEMA,

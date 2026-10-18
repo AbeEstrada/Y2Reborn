@@ -738,6 +738,10 @@ pub enum Screen {
     LastFm,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
+    /// About & Updates > Error Reports; filter "info": what is sent.
+    ErrorReports,
+    /// Send Report Now: what the report is about.
+    ReportTopic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -787,6 +791,8 @@ pub enum ConfirmAction {
     ClearCache,
     DeletePlaylist,
     Platform(PlatformTask),
+    /// The one-time question after the update: send error reports or not.
+    ReportsQuestion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -811,6 +817,12 @@ pub enum PlatformTask {
     NetworkCheck,
     /// Set up Internal Storage over the old storage the platform reported waiting (erases it).
     InternalStorageSetup,
+    /// Error reports on (true) or off; off also drops the waiting reports.
+    ReportEnable(bool),
+    /// A new random install ID.
+    ReportNewId,
+    /// Build a report now (takes about half a minute) and queue it.
+    ReportSend(platform::ReportTopic),
 }
 
 /// Presented platform state. Owned and filled by the application from the

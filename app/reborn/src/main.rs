@@ -129,6 +129,8 @@ struct Runtime {
     announced_update: Option<String>,
     /// "Internal Storage is ready" was said this start.
     announced_setup: bool,
+    /// The error report question was shown this start.
+    asked_reports: bool,
     /// Remaining frames of the first-frame fade from the boot mark into the UI.
     boot_fade: u8,
     thumbs: Option<artwork::Worker>,
@@ -2578,6 +2580,26 @@ impl Runtime {
                         _ => {}
                     }
                 }
+                // Error reports (ERROR-REPORTS-PLAN): asked once, after the
+                // update that brought them; "No Thanks" is an answer too.
+                if p.snapshot
+                    .reports
+                    .as_ref()
+                    .is_some_and(|r| r.enabled.is_none())
+                    && !self.asked_reports
+                    && self.model.navigation.modal.is_none()
+                    && !matches!(
+                        p.snapshot.internal_setup,
+                        reborn_core::platform::InternalSetup::Waiting { .. }
+                    )
+                {
+                    self.asked_reports = true;
+                    self.model.navigation.modal = Some(reborn_core::Modal::Confirm(
+                        reborn_core::ConfirmAction::ReportsQuestion,
+                    ));
+                    self.model.navigation.modal_focus = 0;
+                    self.dirty.mark_both();
+                }
                 p.snapshot.diagnostics.extend(health_section);
                 if let reborn_core::platform::UpdatePhase::Available { version } =
                     &p.snapshot.update.phase
@@ -2590,6 +2612,30 @@ impl Runtime {
                 }
                 if p.busy == Some(reborn_core::PlatformTask::Refresh) {
                     p.busy = None;
+                }
+            }
+            client::Reply::Reports(task, result) => {
+                use reborn_core::PlatformTask::*;
+                p.busy = None;
+                match result {
+                    Ok(state) => {
+                        let enabled = state.enabled;
+                        p.snapshot.reports = Some(state);
+                        p.failure = None;
+                        self.ui.flash(match task {
+                            ReportEnable(true) => "Error reports are on",
+                            ReportEnable(false) => "Error reports are off",
+                            ReportNewId => "New install ID",
+                            ReportSend(_) if enabled == Some(true) => {
+                                "Report saved · waiting to send"
+                            }
+                            _ => "Done",
+                        });
+                    }
+                    Err(error) => {
+                        self.ui.flash(error.clone());
+                        p.failure = Some(error);
+                    }
                 }
             }
             client::Reply::Health(level, section) => {
@@ -3193,6 +3239,8 @@ fn platform_backed(screen: Screen) -> bool {
             | Screen::About
             | Screen::Diagnostics
             | Screen::DiagnosticSection
+            | Screen::ErrorReports
+            | Screen::ReportTopic
     )
 }
 
@@ -3619,6 +3667,7 @@ fn run() -> Result<(), String> {
         platform_observed: false,
         announced_update: None,
         announced_setup: false,
+        asked_reports: false,
         boot_fade: reborn_ui::BOOT_FADE_FRAMES,
         thumbs: if headless {
             None

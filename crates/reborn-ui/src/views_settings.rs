@@ -28,7 +28,13 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             equalizer(c, ui, m, &page, focus, interactive)
         }
         Screen::Equalizer => group_page(c, ui, m, &page, focus, interactive, 38.),
-        Screen::Crossfade | Screen::ScreenTimeout | Screen::HeadphoneLevel | Screen::DacFilter => {
+        Screen::Crossfade
+        | Screen::ScreenTimeout
+        | Screen::HeadphoneLevel
+        | Screen::DacFilter
+        | Screen::ReportTopic
+            if page.hero.is_none() =>
+        {
             picker(c, ui, &page, focus, interactive)
         }
         Screen::Theme => themes(c, ui, m, &page, focus, interactive),

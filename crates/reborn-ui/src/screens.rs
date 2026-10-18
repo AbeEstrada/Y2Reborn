@@ -81,6 +81,8 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::LastFm
+        | Screen::ErrorReports
+        | Screen::ReportTopic
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
@@ -134,6 +136,8 @@ fn native_screen(
         | Screen::SettingsDisplay
         | Screen::Storage
         | Screen::LastFm
+        | Screen::ErrorReports
+        | Screen::ReportTopic
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(c, ui, m, tracks, has_art, interactive)
@@ -196,6 +200,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Output => keys!("output"),
         Screen::HeadphoneLevel => keys!("headphone_level"),
         Screen::DacFilter => keys!("dac_filter"),
+        Screen::ErrorReports => keys!("error_reports"),
+        Screen::ReportTopic => keys!("report_topic"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
         Screen::HomeMenu => keys!("home_menu"),
@@ -698,6 +704,8 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Output => "Output".into(),
         Screen::HeadphoneLevel => "Headphone Level".into(),
         Screen::DacFilter => "DAC Filter".into(),
+        Screen::ErrorReports => "Error Reports".into(),
+        Screen::ReportTopic => "Send Report".into(),
         Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::HomeMenu => "Home Menu".into(),

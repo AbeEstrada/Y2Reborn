@@ -1414,6 +1414,10 @@ impl Ui {
                     Item::new("Cancel", "cancel"),
                     Item::new(confirm_label(action), "confirm"),
                 ];
+                if action == ConfirmAction::ReportsQuestion {
+                    // A real answer either way, so the question is not asked again.
+                    rows[0] = Item::new("No Thanks", "decline");
+                }
                 if let ConfirmAction::Platform(task) = action {
                     let u = &m.platform.snapshot.update;
                     let idle = m.platform.busy.is_none();
@@ -1803,6 +1807,22 @@ impl Ui {
         }
         if let Some(name) = key.strip_prefix("task:") {
             return Effect::Platform(platform_task(name));
+        }
+        if key == "report_toggle" {
+            let on = m.platform.snapshot.reports.as_ref().and_then(|r| r.enabled) == Some(true);
+            return Effect::Platform(PlatformTask::ReportEnable(!on));
+        }
+        if key == "report_info" {
+            Self::go(m, Screen::ErrorReports, "info");
+            return Effect::None;
+        }
+        if let Some(topic) = key
+            .strip_prefix("report_send:")
+            .and_then(reborn_core::platform::ReportTopic::from_argument)
+        {
+            // Back to the Error Reports page: it shows the progress, then the result.
+            Self::go(m, Screen::ErrorReports, "");
+            return Effect::Platform(PlatformTask::ReportSend(topic));
         }
         if let Some(index) = key
             .strip_prefix("eq_band:")
@@ -2373,6 +2393,9 @@ impl Ui {
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
                     ConfirmAction::Platform(task) => Effect::Platform(task),
+                    ConfirmAction::ReportsQuestion => {
+                        Effect::Platform(PlatformTask::ReportEnable(key == "confirm"))
+                    }
                 }
             }
             Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),
@@ -2909,6 +2932,8 @@ fn route(key: &str) -> Option<Screen> {
         "diagnostics" => Screen::Diagnostics,
         "radio" => Screen::Radio,
         "lastfm" => Screen::LastFm,
+        "error_reports" => Screen::ErrorReports,
+        "report_topic" => Screen::ReportTopic,
         _ => return None,
     })
 }
@@ -2958,6 +2983,7 @@ fn confirm_action(name: &str) -> Option<ConfirmAction> {
         "clear_cache" => ConfirmAction::ClearCache,
         "update_apply" | "update_cancel" | "update_rollback" | "storage_benchmark"
         | "library_benchmark" | "internal_setup" => ConfirmAction::Platform(platform_task(name)),
+        "report_new_id" => ConfirmAction::Platform(PlatformTask::ReportNewId),
         _ => return None,
     })
 }
@@ -2983,6 +3009,8 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => "Cancel Update",
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => "Restore",
         ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => "Set Up Now",
+        ConfirmAction::Platform(PlatformTask::ReportNewId) => "New ID",
+        ConfirmAction::ReportsQuestion => "Send Reports",
         ConfirmAction::Platform(_) => "Run",
     }
 }
@@ -3042,6 +3070,14 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => (
             "Set Up Internal Storage?",
             "You get 5.4 GB for music. The old Innioasis storage and every file on it are erased: copy them to a computer first (the Old Storage drive). The player restarts afterwards.",
+        ),
+        ConfirmAction::Platform(PlatformTask::ReportNewId) => (
+            "Make a New Install ID?",
+            "Reports from now on can't be linked to the ones this player sent before.",
+        ),
+        ConfirmAction::ReportsQuestion => (
+            "Help Improve Y2Linux?",
+            "If something goes wrong, the player can send a report over Wi-Fi: logs and technical details, never your music, names or accounts. Change it in About & Updates.",
         ),
         ConfirmAction::Platform(_) => (
             "Run This Check?",

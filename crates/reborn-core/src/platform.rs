@@ -475,6 +475,9 @@ pub struct PlatformSnapshot {
     /// Capability keys whose platform flag is `enabled`.
     pub enabled: Vec<String>,
     pub diagnostics: Vec<DiagnosticSection>,
+    /// Opt-in error reports (`y2-platform report status`); None on a platform
+    /// without them.
+    pub reports: Option<ReportState>,
 }
 impl PlatformSnapshot {
     pub fn enabled(&self, capability: &str) -> bool {
@@ -608,5 +611,88 @@ mod tests {
             false
         ));
         assert!(automatic_sleep_due(true, Some(60), 60, None, false, false));
+    }
+}
+
+/// Opt-in error reports (Y2Linux docs/planning/ERROR-REPORTS-PLAN.md).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReportState {
+    /// None: the owner has not been asked yet.
+    pub enabled: Option<bool>,
+    /// Random, made on the player; links reports from one player.
+    pub install_id: Option<String>,
+    /// Reports waiting to be sent.
+    pub queued: usize,
+    pub last: Option<ReportLast>,
+}
+impl ReportState {
+    /// The install ID as shown: its first eight characters, upper case.
+    pub fn short_id(&self) -> Option<String> {
+        self.install_id.as_deref().map(|id| {
+            id.chars()
+                .filter(|c| *c != '-')
+                .take(8)
+                .collect::<String>()
+                .to_uppercase()
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReportLast {
+    pub report_id: String,
+    /// "manual" or the automatic trigger (kernel_crash, reborn_crash, …).
+    pub trigger: String,
+    /// queued, sent or failed.
+    pub state: String,
+    pub created_utc: String,
+    pub bytes: u64,
+}
+
+/// What a report sent with *Send Report Now* is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportTopic {
+    Sound,
+    Display,
+    Battery,
+    Bluetooth,
+    Wifi,
+    Crash,
+    Other,
+}
+impl ReportTopic {
+    pub const ALL: [Self; 7] = [
+        Self::Sound,
+        Self::Display,
+        Self::Battery,
+        Self::Bluetooth,
+        Self::Wifi,
+        Self::Crash,
+        Self::Other,
+    ];
+    pub const fn argument(self) -> &'static str {
+        match self {
+            Self::Sound => "sound",
+            Self::Display => "display",
+            Self::Battery => "battery",
+            Self::Bluetooth => "bluetooth",
+            Self::Wifi => "wifi",
+            Self::Crash => "crash",
+            Self::Other => "other",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Sound => "Sound",
+            Self::Display => "Display",
+            Self::Battery => "Battery or Sleep",
+            Self::Bluetooth => "Bluetooth",
+            Self::Wifi => "Wi-Fi",
+            Self::Crash => "Crash or Freeze",
+            Self::Other => "Something Else",
+        }
+    }
+    pub fn from_argument(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.argument() == value)
     }
 }
