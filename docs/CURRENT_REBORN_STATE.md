@@ -1,5 +1,34 @@
 # Current Reborn state on the Y2
 
+## Unreleased — audio playback review after Beta 8.5 (2026-10-18, latest)
+
+Host-tested only; no test build yet. Findings and answers: Y2Linux `docs/planning/NEXT-SESSION-HANDOFF.md`
+(START HERE, audio review) and audit AUDIO-REVIEW-8.5.
+
+- **Fades:** an unfinished fade-in carries into a reopened sink (Next, a seek, another rate: `opening_gain`,
+  `VolumeRamp::fade_in_from`, `fade_progress`), and volume up during a fade keeps fading towards the new volume
+  (volume down still acts at once). A load whose sound settings play ≥ 1 dB louder somewhere than the previous
+  load's fades in over 2 s too (`dsp_rise_fades`, `reborn_core::eq::level_rise_db`, `LoadRequest::fade_in`,
+  event `dsp_rise_fade`): a profile turned off (its preamp and cuts come back), a boosting preset, any Normalize
+  change. Not the first load after start (it plays what was saved, as the level does).
+- **Held pause:** every sound-settings change (`reload_dsp`, now also Normalize and Reset Settings) releases a held
+  pause, so Play starts with the new settings instead of the old level/EQ. Choosing the Headphone Level already in
+  use does nothing (it restarted the song).
+- **Battery:** an equalizer or profile no longer asks for `PlaybackHeavy` (747.5 MHz floor, 1 ms wake-up limit
+  that blocks deep idle); only crossfade does (`Settings::playback_heavy`). The FFmpeg graph uses one thread
+  (`media.c`): host, FFmpeg 9.0.2, HD 650, 5 min: 43 % (1152-sample frames) / 20 % (4096) less CPU,
+  bit-identical output. Device mA and CPU owed.
+- **Profiles:** the clip-safe preamp now covers source rates 44.1–384 kHz (filters run before resampling): six
+  shipped profiles 0.1–0.4 dB lower (Sony WF-1000XM4 −7.7 → −8.1, HD 650 unchanged −6.4); a stored profile is
+  re-sanitized at start. Rates below 44.1 kHz stay out (FFmpeg skips filters above Nyquist; covering them would
+  lower many profiles by up to 6 dB); the limiter covers them. The shipped folder lists only `*ParametricEQ.txt`
+  (the license file appeared as a profile "LICENSE-AutoEq").
+- **Tests:** layout of `RawDspConfig`/`RawParams` pinned on both sides (`_Static_assert` + `const` assert),
+  sanitize idempotence over all shipped profiles, `preamp_covers_hi_res_source_rates`, a full HD 650 profile with
+  ReplayGain +6 dB on the new near-full-scale fixture `loud-24-96000-rg.flac` at S24 and S16 (limiter holds
+  ≤ 0.981, mutation without the limiter clips), the real shipped-folder scan (47, no license), fade/opening
+  gain, DSP rise. 539 tests, fmt, strict Clippy.
+
 ## 1.0.0-beta.8.5 — Y2Linux 1.0 Beta 8.5 (Baseline 93), 2026-10-18 (latest): headphone level, headphone profiles, DAC filter
 
 - Needs Y2Linux's `HP Output Level` kernel control (older kernels: Master stays −24 dB) and FFmpeg's
