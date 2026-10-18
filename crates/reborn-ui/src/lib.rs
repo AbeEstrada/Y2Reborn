@@ -2123,6 +2123,11 @@ impl Ui {
                 let pinned = m.settings.home_pins.iter().any(|p| p == key);
                 Effect::SetHomePin(key.into(), !pinned)
             }
+            "output_set:wired" => Effect::Output(AudioOutput::Wired),
+            k if k.starts_with("output_set:") => Effect::BluetoothDevice {
+                path: k["output_set:".len()..].into(),
+                operation: "output".into(),
+            },
             k if k.starts_with("hp_level_set:") => {
                 Effect::SetHpLevel(reborn_core::HpLevel::from_key(&k["hp_level_set:".len()..])?)
             }
@@ -2887,6 +2892,7 @@ fn route(key: &str) -> Option<Screen> {
         "playback" => Screen::SettingsPlayback,
         "crossfade" => Screen::Crossfade,
         "screen_timeout" => Screen::ScreenTimeout,
+        "output_page" => Screen::Output,
         "hp_level" => Screen::HeadphoneLevel,
         "dac_filter" => Screen::DacFilter,
         "theme" => Screen::Theme,

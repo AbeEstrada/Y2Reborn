@@ -211,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 31] = [
+const NORMAL_SCREENS: [Screen; 32] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -230,6 +230,7 @@ const NORMAL_SCREENS: [Screen; 31] = [
     Screen::SettingsPlayback,
     Screen::Crossfade,
     Screen::ScreenTimeout,
+    Screen::Output,
     Screen::HeadphoneLevel,
     Screen::DacFilter,
     Screen::SettingsLibrary,
@@ -784,11 +785,22 @@ fn sound_pickers_set_exact_values_and_show_the_current_one() {
 #[test]
 fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
     let mut ui = radios();
-    let m = app(Screen::SettingsAudio);
+    // Sound fits one screen: the jack's settings sit on the Output page.
+    let mut m = app(Screen::SettingsAudio);
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 5);
+    assert_eq!(pages::jack_summary(&m), "Level Low · Filter Fast");
+    assert_eq!(select_key(&mut ui, &mut m, "output_page"), Effect::None);
+    assert_eq!(m.screen, Screen::Output);
     let rows = ui.rows(&m, &m.library.tracks);
     let row = |label: &str| rows.iter().find(|r| r.label == label).unwrap().clone();
+    assert_eq!(row("Headphone Jack").kind, RowKind::Check(true));
     assert_eq!(row("Headphone Level").secondary, "Low");
     assert_eq!(row("DAC Filter").secondary, "Fast");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "output_set:wired"),
+        Effect::Output(AudioOutput::Wired)
+    );
     let mut m = app(Screen::HeadphoneLevel);
     m.settings.hp_level = reborn_core::HpLevel::Medium;
     let checked: Vec<_> = ui

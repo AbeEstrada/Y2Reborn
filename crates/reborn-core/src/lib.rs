@@ -694,7 +694,9 @@ pub enum Screen {
     Crossfade,
     /// Screen-off delay picker.
     ScreenTimeout,
-    /// Wired headphone output level picker (Settings > Sound).
+    /// Where music plays, and the headphone jack's settings (Settings > Sound).
+    Output,
+    /// Wired headphone output level picker (Settings > Sound > Output).
     HeadphoneLevel,
     /// DAC interpolation filter picker (Settings > Sound).
     DacFilter,

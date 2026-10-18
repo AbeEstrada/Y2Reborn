@@ -568,14 +568,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 5;
         }
     );
-    case!(
-        "27b-sound-headphone",
-        at(Screen::SettingsAudio, ""),
-        |_, m| {
-            m.settings.hp_level = reborn_core::HpLevel::Medium;
-            m.navigation.focus = 5;
-        }
-    );
+    case!("27b-output", at(Screen::Output, ""), |_, m| {
+        m.settings.hp_level = reborn_core::HpLevel::Medium;
+        m.navigation.focus = 2;
+    });
+    case!("27c-sound-wired", at(Screen::SettingsAudio, ""), |_, m| {
+        m.settings.hp_level = reborn_core::HpLevel::Medium;
+        m.navigation.focus = 4;
+    });
     case!(
         "29b-headphone-level",
         at(Screen::HeadphoneLevel, ""),

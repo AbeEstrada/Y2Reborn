@@ -23,6 +23,7 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::Wifi => radio(c, ui, m, &page, focus, interactive, Radio::Wifi),
         Screen::Bluetooth => radio(c, ui, m, &page, focus, interactive, Radio::Bluetooth),
         Screen::SettingsAudio => sound(c, ui, m, &page, focus, interactive),
+        Screen::Output => output(c, ui, &page, focus, interactive),
         Screen::Equalizer if m.navigation.filter.is_empty() => {
             equalizer(c, ui, m, &page, focus, interactive)
         }
@@ -474,25 +475,17 @@ fn radio(
 // -------------------------------------------------------------- sound etc.
 
 fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
-    // Rows 0–3 playback, 4 the output card, 5– the headphone settings. Those
-    // do not fit under the output card: once the focus reaches them the page
-    // scrolls the playback group away, as Display does with its card.
-    let bottom = if focus >= 5 {
-        28.
-    } else {
-        group(
-            c,
-            ui,
-            &page.rows[..4.min(page.rows.len())],
-            0,
-            focus,
-            interactive,
-            38.,
-        )
-    };
-    if page.rows.len() > 5 {
-        group(c, ui, &page.rows[5..], 5, focus, interactive, bottom + 106.);
-    }
+    // Rows 0–3 playback, 4 the output card (its page holds the jack's
+    // level and DAC filter).
+    let bottom = group(
+        c,
+        ui,
+        &page.rows[..4.min(page.rows.len())],
+        0,
+        focus,
+        interactive,
+        38.,
+    );
     components::section_label(c, 28., bottom + 24., "Output");
     if let Some(row) = page.rows.get(4) {
         let y = bottom + 38.;
@@ -503,7 +496,7 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
         }
         c.text_mid(28., y + 21., 340., &row.secondary, Face::S15, color::TEXT);
         let detail = match &m.output {
-            reborn_core::AudioOutput::Wired => "Headphone Jack".to_owned(),
+            reborn_core::AudioOutput::Wired => pages::jack_summary(m),
             reborn_core::AudioOutput::Bluetooth(address) => ui
                 .bluetooth
                 .devices
@@ -515,6 +508,32 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
         };
         c.text_mid(28., y + 40., 340., &detail, Face::R11, color::MUTED);
         components::chevron(c, WIDTH - 22., y + 28.);
+    }
+}
+
+/// The Output page: the outputs (current one checked), then the headphone
+/// jack's level and DAC filter. With many Bluetooth outputs the jack group
+/// does not fit under them: once the focus reaches it the outputs scroll
+/// away, as on Display.
+fn output(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
+    let jack = page.rows.len().saturating_sub(2);
+    let fits = 38. + jack as f32 * 50. + 4. + 34. + 104. <= HEIGHT - 4.;
+    let top = if fits || focus < jack {
+        group(c, ui, &page.rows[..jack], 0, focus, interactive, 38.) + 10.
+    } else {
+        28.
+    };
+    if fits || focus >= jack {
+        components::section_label(c, 28., top + 14., "Headphone Jack");
+        group(
+            c,
+            ui,
+            &page.rows[jack..],
+            jack,
+            focus,
+            interactive,
+            top + 28.,
+        );
     }
 }
 

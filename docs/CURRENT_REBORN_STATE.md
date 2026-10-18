@@ -4,13 +4,13 @@
 
 - Not built into an image and not run on a player. Needs a Y2Linux kernel with the `HP Output Level` control
   (Y2Linux `docs/HEADPHONE-OUTPUT.md`, audit HP-LEVEL-EQ) and FFmpeg's `lowshelf`/`highshelf`.
-- **Headphone Level** (Settings → Sound): `Settings::hp_level` (Low default = stock level, Medium, High), passed to
+- **Headphone Level** (Settings → Sound → Output): `Settings::hp_level` (Low default = stock level, Medium, High), passed to
   `reborn_audio::wired_configure` at startup and on a change. `rb_sink_open` sets the kernel controls before
   the stream starts, sets Master to −19.5 dB with the control (−24 dB without it) and reads `HP Output Level Live`
   after the pin switch. A higher level fades in over 2 s (`VolumeRamp::fade_in`, `Parameters::level_raised`,
   `rb_wired_note_live`; also when the rise was chosen with no stream since boot). A change restarts wired
   playback and releases a held pause.
-- **DAC Filter** (Settings → Sound): `Settings::dac_filter` (Fast, Fast/Slow phase compensated, Slow,
+- **DAC Filter** (Settings → Sound → Output): `Settings::dac_filter` (Fast, Fast/Slow phase compensated, Slow,
   Nonoversampling), set live through the upstream controls.
 - **Headphone Profile** (Settings → Sound → Equalizer): `reborn_core::eq` parses AutoEQ / Equalizer APO
   `ParametricEQ.txt` (PK, LSC, HSC with Q, OFF lines and comments skipped, anything else refused, ≤ 10 filters).
@@ -20,8 +20,11 @@
   Engine: `EqBand::kind`, 10 bands across the FFI, `DspConfig::preamp_db` in the gain stage before the filters,
   `equalizer`/`lowshelf`/`highshelf` in the graph, limiter unchanged. The equalizer curve shows the profile's
   response.
-- Screens `HeadphoneLevel`, `DacFilter` (pickers, skin layouts `headphone_level`, `dac_filter`); the Sound page
-  scrolls to its headphone group. Previews 27-sound, 27b, 28-equalizer, 28b, 28c, 29b, 29c. 529 tests, strict
+- Sound stays one screen (owner chose layout C of three): Equalizer, Normalize, Gapless, Crossfade and the
+  Output card ("Level Low · Filter Fast" for the jack). The card opens `Screen::Output`: the outputs (current one
+  checked, replacing the output modal there) and a Headphone Jack group with Level and DAC Filter (pickers
+  `HeadphoneLevel`, `DacFilter`; skin layouts `output`, `headphone_level`, `dac_filter`). Settings → Sound names an
+  active profile. Previews 27-sound, 27b-output, 27c-sound-wired, 28-equalizer, 28b, 28c, 29b, 29c. 529 tests, strict
   Clippy.
 
 ## 1.0.0-beta.8.4 — Y2Linux 1.0 Beta 8.4 (Baseline 90), 2026-10-18 (latest): restart display fix

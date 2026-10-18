@@ -157,6 +157,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Equalizer => equalizer(ui, m),
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
+        Screen::Output => output(ui, m),
         Screen::HeadphoneLevel => headphone_level(m),
         Screen::DacFilter => dac_filter(m),
         Screen::Theme => theme(ui, m),
@@ -237,10 +238,10 @@ pub fn output_name(ui: &Ui, m: &AppModel) -> String {
 }
 
 fn settings(ui: &Ui, m: &AppModel) -> Page {
-    let eq = if m.settings.eq_enabled {
-        eq_preset_name(m)
+    let eq = if m.settings.eq_enabled || m.settings.eq_profile_on {
+        eq_summary(m)
     } else {
-        "Equalizer off"
+        "Equalizer off".to_owned()
     };
     let storage = free_text(&m.platform.snapshot.storage.internal)
         .map(|t| t.split(" free").next().unwrap_or("").to_owned() + " free")
@@ -387,10 +388,42 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
             crate::crossfade_label(m.settings.crossfade_ms),
         )
         .with_kind(RowKind::Chevron),
-        row("Output", "output", output_name(ui, m)).with_kind(RowKind::Chevron),
-        row("Headphone Level", "hp_level", m.settings.hp_level.label()).with_kind(RowKind::Chevron),
-        row("DAC Filter", "dac_filter", m.settings.dac_filter.label()).with_kind(RowKind::Chevron),
+        row("Output", "output_page", output_name(ui, m)).with_kind(RowKind::Chevron),
     ])
+}
+
+/// The Output card's second line for the headphone jack.
+pub(crate) fn jack_summary(m: &AppModel) -> String {
+    format!(
+        "Level {} · Filter {}",
+        m.settings.hp_level.label(),
+        match m.settings.dac_filter {
+            reborn_core::DacFilter::Fast => "Fast",
+            reborn_core::DacFilter::FastPhaseCompensated => "Fast PC",
+            reborn_core::DacFilter::Slow => "Slow",
+            reborn_core::DacFilter::SlowPhaseCompensated => "Slow PC",
+            reborn_core::DacFilter::Nos => "NOS",
+        }
+    )
+}
+
+/// Where music plays (the current one checked), then the headphone jack's
+/// own settings, which only matter for wired playback.
+fn output(ui: &Ui, m: &AppModel) -> Page {
+    let mut rows = vec![row("Headphone Jack", "output_set:wired", "")
+        .with_kind(RowKind::Check(m.output == reborn_core::AudioOutput::Wired))];
+    rows.extend(ui.bluetooth.devices.iter().filter(|d| d.usable_audio()).map(|d| {
+        let current = matches!(&m.output, reborn_core::AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&d.address));
+        row(&d.name, &format!("output_set:{}", d.path), "Bluetooth")
+            .with_kind(RowKind::Check(current))
+    }));
+    rows.push(
+        row("Headphone Level", "hp_level", m.settings.hp_level.label()).with_kind(RowKind::Chevron),
+    );
+    rows.push(
+        row("DAC Filter", "dac_filter", m.settings.dac_filter.label()).with_kind(RowKind::Chevron),
+    );
+    Page::rows(rows)
 }
 
 fn headphone_level(m: &AppModel) -> Page {

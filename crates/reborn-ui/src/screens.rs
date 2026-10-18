@@ -72,6 +72,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Equalizer
         | Screen::Crossfade
         | Screen::ScreenTimeout
+        | Screen::Output
         | Screen::HeadphoneLevel
         | Screen::DacFilter
         | Screen::Theme
@@ -124,6 +125,7 @@ fn native_screen(
         | Screen::Equalizer
         | Screen::Crossfade
         | Screen::ScreenTimeout
+        | Screen::Output
         | Screen::HeadphoneLevel
         | Screen::DacFilter
         | Screen::Theme
@@ -191,6 +193,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
         Screen::ScreenTimeout => keys!("screen_off"),
+        Screen::Output => keys!("output"),
         Screen::HeadphoneLevel => keys!("headphone_level"),
         Screen::DacFilter => keys!("dac_filter"),
         Screen::Theme => keys!("theme"),
@@ -692,6 +695,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
+        Screen::Output => "Output".into(),
         Screen::HeadphoneLevel => "Headphone Level".into(),
         Screen::DacFilter => "DAC Filter".into(),
         Screen::Theme => "Skin".into(),
