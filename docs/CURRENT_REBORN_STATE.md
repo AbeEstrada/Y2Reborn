@@ -1,5 +1,22 @@
 # Current Reborn state on the Y2
 
+## Unreleased — error reports screens (2026-10-18, latest; on the owner's player as test build 98)
+
+Reborn `8ba33b3` and `fbecb77` (versions 1.0.0-beta.8.8 test builds 97–98, not published). Plan: Y2Linux
+`docs/planning/ERROR-REPORTS-PLAN.md`.
+
+- About & Updates → **Error Reports** (`Screen::ErrorReports`, filter `info` for What Is Sent): the switch
+  (`PlatformTask::ReportEnable`), Send Report Now (`Screen::ReportTopic`, seven `ReportTopic`s →
+  `PlatformTask::ReportSend`), the install ID (`ReportState::short_id`, New ID confirm → `ReportNewId`), the last
+  report's state. The row is hidden on platforms without `y2-platform report`.
+- The platform refresh also reads `y2-platform report status` (`client::report_state`, `PlatformSnapshot::reports`);
+  report tasks answer `client::Reply::Reports`. One observation runs 20 s after start on any screen.
+- One-time question `ConfirmAction::ReportsQuestion` ("No Thanks" / "Send Reports", both recorded), opened by
+  `ask_about_reports()` only on a lit screen, with no other dialog and 5 s without a button press.
+- Previews 33b–33g; tests `error_reports_page_switches_sends_and_names_the_last_report`,
+  `the_error_report_question_records_no_as_well_as_yes`, `report_status_is_read_from_the_platform_record`.
+  542 tests, strict Clippy.
+
 ## 1.0.0-beta.8.7 — Y2Linux 1.0 Beta 8.7 (Baseline 95), 2026-10-18 (latest): identity only
 
 Published as `baseline-95` (Reborn `82fe089`, sequence 6900). No Reborn change: the release identifies GC9503V
