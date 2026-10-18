@@ -70,20 +70,32 @@ int rb_wired_device(char *out, int n) {
   return r < 0 ? r : -ENODEV;
 }
 
+/* True when the JSON array after `section` holds `token` as a whole element,
+ * quoted ("S16_LE") or bare (44100): 8000 must not match inside 48000. */
 static int profile_section_has(const char *json, const char *section,
                                const char *token) {
   const char *start = strstr(json, section);
   if (!start)
     return 0;
+  start = strchr(start + strlen(section), '[');
+  if (!start)
+    return 0;
   const char *end = strchr(start, ']');
   if (!end)
     return 0;
-  char quoted[32];
-  snprintf(quoted, sizeof(quoted), "\"%s\"", token);
-  const char *found = strstr(start, quoted);
-  if (!found)
-    found = strstr(start, token);
-  return found && found < end;
+  size_t length = strlen(token);
+  for (const char *p = start + 1; p < end;) {
+    while (p < end && (*p == ' ' || *p == ',' || *p == '"' || *p == '\n' ||
+                       *p == '\t' || *p == '\r'))
+      p++;
+    const char *item = p;
+    while (p < end && *p != ',' && *p != '"' && *p != ' ' && *p != '\n' &&
+           *p != '\t' && *p != '\r')
+      p++;
+    if ((size_t)(p - item) == length && !strncmp(item, token, length))
+      return 1;
+  }
+  return 0;
 }
 static int wired_profile_allows(int format, unsigned rate) {
   FILE *file = fopen("/etc/y2linux/audio-enabled.json", "rb");
