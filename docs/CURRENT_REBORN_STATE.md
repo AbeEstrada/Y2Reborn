@@ -1,6 +1,18 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.7.11 — Y2Linux 1.0 Beta 7.11 (Baseline 74), 2026-10-17 (latest): faster copies to the player
+## 1.0.0-beta.8.0 — Y2Linux 1.0 Beta 8.0 (Baseline 75), 2026-10-18 (latest): 1.0 review fixes
+
+- Library: a supported file FFmpeg cannot open is counted (`ScanMetrics::unreadable`, `ScanSummary::unreadable`,
+  Settings → Library *N can't be read*), keeps its row through `DbCommand::Retain` and no longer makes the scan
+  incomplete, so deleted songs are pruned again and `library.error` stays clear; failures are remembered per process
+  (`Unreadable` set), a rebuild retries them. Before, one such file rolled every Y2Linux update back (V1 review B3/B4).
+- `rebornctl status`: `healthy` and `health_reasons` (graphics, database, stuck workers; not scan completeness), which
+  Y2Linux's update health check now reads (R7).
+- A refused session is kept as `session.json.rejected-<time>`; `recover_settings` keeps every setting this version
+  understands (B7). Wired audio profile matches whole rates (R4). 517 tests. Device: OTA-installed and acknowledged on
+  the owner's player with a broken file on Internal Storage.
+
+## 1.0.0-beta.7.11 — Y2Linux 1.0 Beta 7.11 (Baseline 74), 2026-10-17: faster copies to the player
 
 - No Reborn code change; the release carries Y2Linux's multi-packet USB receive DMA (copies to the player ≈30 MB/s on
   Internal Storage instead of ≈10). New songs still reach the library through the existing change detection.
