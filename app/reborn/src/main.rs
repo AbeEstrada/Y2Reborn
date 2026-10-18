@@ -32,7 +32,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 /// A pause held in place gives its sink back after this long (Bluetooth
 /// headphones and the wired codec may then rest).
@@ -2818,7 +2818,13 @@ impl Runtime {
     }
 
     fn status(&self) -> Value {
-        json!({"version":reborn_core::BUILD_LABEL,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
+        let (healthy, reasons) = update_health(
+            self.headless,
+            self.graphics.is_some(),
+            self.log.uptime(),
+            &self.log.health(),
+        );
+        json!({"healthy":healthy,"health_reasons":reasons,"version":reborn_core::BUILD_LABEL,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
     }
     fn snapshot(&self) -> Value {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":self.kernel_events.lock().map(|v|v.clone()).unwrap_or_default()})
@@ -3336,15 +3342,29 @@ fn run() -> Result<(), String> {
         Ok(model) => model,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => AppModel::default(),
         Err(error) => {
+            // Keep the refused file (a newer Reborn may read it again after the
+            // update is installed once more) and every setting this one knows.
+            let settings = recover_settings(&session_path);
+            let kept = session_path.with_file_name(format!(
+                "session.json.rejected-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            ));
+            let quarantined = fs::rename(&session_path, &kept).is_ok();
             log.emit(
                 Level::Warn,
                 "core",
                 "restore_failed",
-                "Saved session was rejected; starting with a clean session",
+                "Saved session was rejected; starting with its readable settings",
                 None,
-                json!({"path":session_path,"error":error.to_string()}),
+                json!({"path":session_path,"error":error.to_string(),"settings_recovered":settings.is_some(),"kept":quarantined.then_some(&kept)}),
             );
-            AppModel::default()
+            AppModel {
+                settings: settings.unwrap_or_default(),
+                ..AppModel::default()
+            }
         }
     };
     startup_phase(&log, process_started, "model_restored");
@@ -4206,10 +4226,14 @@ fn run() -> Result<(), String> {
                             discovered: stats.discovered,
                             reused: stats.reused,
                             elapsed_ms: stats.elapsed_ms,
+                            unreadable: stats.unreadable,
                         }));
-                    rt.ui.flash(match stats.discovered {
-                        _ if stats.rescanned > 0 && stats.discovered > 1 => {
-                            format!("{} new songs added", stats.rescanned.min(stats.discovered))
+                    // Files that could not be read are counted on Settings →
+                    // Library, not announced after every start.
+                    let songs = stats.discovered.saturating_sub(stats.unreadable);
+                    rt.ui.flash(match songs {
+                        _ if stats.rescanned > 0 && songs > 1 => {
+                            format!("{} new songs added", stats.rescanned.min(songs))
                         }
                         0 => "Scan finished. No music found.".to_owned(),
                         1 => "Scan finished. 1 song in your library.".to_owned(),
@@ -5063,6 +5087,69 @@ fn install_refusal(error: &str) -> String {
     }
 }
 
+/// What can be kept of a session `AppModel::restore` refused (for example one
+/// an update newer than this Reborn wrote, read again after a rollback): every
+/// saved setting this version understands, field by field; the rest keeps its
+/// default. The queue is not recovered.
+fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
+    use reborn_core::{Settings, BRIGHTNESS_LEVELS, SESSION_MAX_BYTES};
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(SESSION_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let saved = value
+        .get("model")
+        .unwrap_or(&value)
+        .get("settings")?
+        .as_object()?;
+    let mut merged = serde_json::to_value(Settings::default()).ok()?;
+    for (key, field) in saved {
+        let mut candidate = merged.clone();
+        candidate[key.as_str()] = field.clone();
+        if serde_json::from_value::<Settings>(candidate.clone()).is_ok() {
+            merged = candidate;
+        }
+    }
+    let mut settings: Settings = serde_json::from_value(merged).ok()?;
+    settings.volume = settings.volume.min(100);
+    settings.crossfade_ms = settings.crossfade_ms.min(30_000);
+    settings.eq_bands.truncate(8);
+    settings.brightness = settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
+    Some(settings)
+}
+
+/// The verdict Y2Linux's update health check reads (`healthy` in `rebornctl
+/// status`): Reborn is drawing, its database works and no worker is stuck.
+/// A library scan that could not read some files is not a reason: one broken
+/// song must never roll an update back.
+fn update_health(
+    headless: bool,
+    graphics: bool,
+    uptime: u64,
+    health: &Value,
+) -> (bool, Vec<String>) {
+    let mut reasons = Vec::new();
+    if !headless && !graphics {
+        reasons.push("graphics unavailable".to_owned());
+    }
+    if uptime < 10 {
+        reasons.push("starting".to_owned());
+    }
+    if let Some(subsystems) = health["subsystems"].as_object() {
+        for (name, entry) in subsystems {
+            let failed = entry["state"] == "failed" && entry["required"] == true;
+            if failed && (name == "database" || name.starts_with("worker_")) {
+                reasons.push(format!("{name} failed"));
+            }
+        }
+    }
+    (reasons.is_empty(), reasons)
+}
+
 fn main() {
     if let Err(error) = run() {
         let record = json!({"level":"ERROR","subsystem":"startup","event":"fatal","message":error});
@@ -5072,6 +5159,60 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod session_recovery_tests {
+    use super::recover_settings;
+    use reborn_core::{AppModel, CodecPreference, SESSION_SCHEMA_VERSION};
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn settings_survive_a_session_from_a_newer_reborn() {
+        let path = std::env::temp_dir().join(format!("reborn-newer-{}.json", std::process::id()));
+        let mut model = AppModel::default();
+        model.settings.volume = 62;
+        model.settings.theme = "classic".into();
+        let mut value = serde_json::to_value(&model).unwrap();
+        value["settings"]["codec_preference"] = "Opus-Future".into();
+        value["settings"]["a_later_setting"] = true.into();
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"schema": SESSION_SCHEMA_VERSION + 1, "model": value}))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(AppModel::restore(&path).is_err());
+        let settings = recover_settings(&path).unwrap();
+        assert_eq!(settings.volume, 62);
+        assert_eq!(settings.theme, "classic");
+        assert_eq!(settings.codec_preference, CodecPreference::Auto);
+        fs::remove_file(path).unwrap();
+    }
+}
+#[cfg(test)]
+mod update_health_tests {
+    use super::update_health;
+    use serde_json::json;
+
+    #[test]
+    fn an_incomplete_scan_is_healthy_and_a_failed_database_is_not() {
+        let scanner = json!({"subsystems":{"scanner":{"state":"degraded","required":true,"detail":"scan incomplete"}}});
+        assert_eq!(update_health(false, true, 30, &scanner), (true, vec![]));
+        let database =
+            json!({"subsystems":{"database":{"state":"failed","required":true,"detail":"x"}}});
+        assert_eq!(
+            update_health(false, true, 30, &database).1,
+            vec!["database failed"]
+        );
+        let stuck = json!({"subsystems":{"worker_scanner":{"state":"failed","required":true,"detail":"x"}}});
+        assert!(!update_health(false, true, 30, &stuck).0);
+        assert_eq!(
+            update_health(false, false, 5, &json!({})).1,
+            vec!["graphics unavailable", "starting"]
+        );
+        assert!(update_health(true, false, 30, &json!({})).0);
+    }
+}
 #[cfg(test)]
 mod artwork_presentation_tests {
     use super::artwork_matches_current;

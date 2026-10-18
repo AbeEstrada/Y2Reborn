@@ -9,6 +9,7 @@ use rusqlite::{params, Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    collections::HashSet,
     fs,
     os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
@@ -35,6 +36,11 @@ pub struct ScanMetrics {
     #[serde(default)]
     pub removed: u64,
     pub failures: u64,
+    /// Supported files FFmpeg could not open. Their rows (if any) are kept and
+    /// they do not make a scan incomplete: one broken file must not stop
+    /// pruning of the files that were really deleted.
+    #[serde(default)]
+    pub unreadable: u64,
     pub elapsed_ms: u64,
     pub tracks_per_sec: f64,
     pub complete: bool,
@@ -72,6 +78,7 @@ enum DbCommand {
         SyncSender<Result<Vec<bool>, String>>,
     ),
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
+    Retain(String, i64, Vec<PathBuf>, SyncSender<Result<(), String>>),
     Finish(Source, i64, bool, SyncSender<Result<ScanFinish, String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
     #[cfg(test)]
@@ -361,6 +368,21 @@ fn retire_pre_cid_copy(c: &Connection, source: &Source) -> Result<u64, String> {
     )
     .map(|n| n as u64)
     .map_err(err)
+}
+/// Rows of files that are present but could not be read stay in the library:
+/// they count as seen, so a complete scan prunes only files that are gone.
+fn retain(c: &mut Connection, source: &str, paths: &[PathBuf]) -> Result<(), String> {
+    let tx = c.transaction().map_err(err)?;
+    {
+        let mut q = tx
+            .prepare_cached("INSERT OR IGNORE INTO scan_seen SELECT id FROM tracks WHERE source_id=?1 AND path=?2")
+            .map_err(err)?;
+        for path in paths {
+            q.execute(params![source, path.to_string_lossy()])
+                .map_err(err)?;
+        }
+    }
+    tx.commit().map_err(err)
 }
 fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<ScanFinish, String> {
     let prune = complete && source_identity_is_current(source);
@@ -836,6 +858,15 @@ impl Database {
                             let _ = reply.try_send(r.clone());
                             r
                         }
+                        DbCommand::Retain(source, token, paths, reply) => {
+                            let r = if active_scan.as_ref() == Some(&(source.clone(), token)) {
+                                retain(&mut c, &source, &paths)
+                            } else {
+                                Err("scan superseded".into())
+                            };
+                            let _ = reply.try_send(r.clone());
+                            r
+                        }
                         DbCommand::Finish(source, token, complete, reply) => {
                             let r = if active_scan.as_ref() == Some(&(source.id.clone(), token)) {
                                 finish(&mut c, &source, complete)
@@ -1072,6 +1103,7 @@ impl Scanner {
         thread::Builder::new()
             .name("scanner".into())
             .spawn(move || {
+                let mut unreadable = Unreadable::default();
                 while !stop.load(Ordering::Relaxed) {
                     log.heartbeat("scanner", 30);
                     let (sources, reuse) = match rx.recv_timeout(Duration::from_secs(1)) {
@@ -1086,6 +1118,7 @@ impl Scanner {
                         &stop,
                         source_identity_is_current,
                         reuse,
+                        &mut unreadable,
                     );
                     let _ = rt.try_send(result);
                     running.fetch_sub(1, Ordering::AcqRel);
@@ -1150,6 +1183,16 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
         && before.ctime() == after.ctime()
         && before.ctime_nsec() == after.ctime_nsec()
 }
+/// Files (source, path, size, mtime) that FFmpeg could not open during this
+/// process: an incremental scan does not open them again until they change.
+/// A rebuild retries every file.
+type Unreadable = HashSet<(String, PathBuf, u64, i64)>;
+enum Decoded {
+    Track(Box<Track>),
+    /// The file changed while it was read: try again on the next scan.
+    Changed,
+    Unreadable,
+}
 struct ScanBatch<'a> {
     db: &'a Database,
     source: &'a Source,
@@ -1161,6 +1204,7 @@ struct ScanBatch<'a> {
     log: &'a Observer,
     id: u64,
     stop: &'a AtomicBool,
+    unreadable: &'a mut Unreadable,
 }
 impl ScanBatch<'_> {
     fn process(&mut self, files: Vec<FileStamp>) -> Result<(), String> {
@@ -1173,6 +1217,7 @@ impl ScanBatch<'_> {
         )?;
         self.stats.db_us += started.elapsed().as_micros() as u64;
         let mut changes = Vec::new();
+        let mut retained = Vec::new();
         for (file, reuse) in files.into_iter().zip(reused) {
             if self.stop.load(Ordering::Relaxed) {
                 return Err("scan cancelled".into());
@@ -1181,14 +1226,49 @@ impl ScanBatch<'_> {
                 self.stats.reused += 1;
                 continue;
             }
+            let key = (
+                self.source.id.clone(),
+                file.path.clone(),
+                file.size,
+                file.mtime,
+            );
+            if self.reuse && self.unreadable.contains(&key) {
+                self.stats.unreadable += 1;
+                retained.push(file.path);
+                continue;
+            }
             let path = self.pinned_root.join(
                 file.path
                     .strip_prefix(&self.source.root)
                     .map_err(|e| e.to_string())?,
             );
-            if let Some(track) = self.decode(&path, &file)? {
-                changes.push(track);
+            match self.decode(&path, &file)? {
+                Decoded::Track(track) => {
+                    self.unreadable.remove(&key);
+                    changes.push(*track);
+                }
+                Decoded::Changed => {}
+                Decoded::Unreadable => {
+                    self.stats.unreadable += 1;
+                    self.unreadable.insert(key);
+                    retained.push(file.path);
+                }
             }
+        }
+        if !retained.is_empty() {
+            let (reply, result) = sync_channel(1);
+            self.db
+                .tx
+                .send(DbCommand::Retain(
+                    self.source.id.clone(),
+                    self.token,
+                    retained,
+                    reply,
+                ))
+                .map_err(|e| e.to_string())?;
+            result
+                .recv_timeout(Duration::from_secs(15))
+                .map_err(|e| e.to_string())??;
         }
         if !changes.is_empty() {
             // Decoder reads may outlive media removal. Recheck immediately
@@ -1211,7 +1291,7 @@ impl ScanBatch<'_> {
         }
         Ok(())
     }
-    fn decode(&mut self, path: &Path, file: &FileStamp) -> Result<Option<Track>, String> {
+    fn decode(&mut self, path: &Path, file: &FileStamp) -> Result<Decoded, String> {
         let logical_path = &file.path;
         let size = file.size;
         let mtime = file.mtime;
@@ -1230,7 +1310,7 @@ impl ScanBatch<'_> {
                 }) {
                     *self.complete = false;
                     self.stats.failures += 1;
-                    return Ok(None);
+                    return Ok(Decoded::Changed);
                 }
                 self.stats.rescanned += 1;
                 let filename = logical_path
@@ -1266,8 +1346,6 @@ impl ScanBatch<'_> {
                 }
             }
             Err(e) => {
-                *self.complete = false;
-                self.stats.failures += 1;
                 self.log.add("library_scan_errors", 1.);
                 self.log.emit(
                     Level::Warn,
@@ -1277,10 +1355,10 @@ impl ScanBatch<'_> {
                     Some(self.id),
                     json!({"path":logical_path,"recovery":"retain_source_rows"}),
                 );
-                return Ok(None);
+                return Ok(Decoded::Unreadable);
             }
         };
-        Ok(Some(track))
+        Ok(Decoded::Track(Box::new(track)))
     }
 }
 #[cfg(test)]
@@ -1291,7 +1369,15 @@ fn scan_sources_with_identity(
     stop: &AtomicBool,
     identity_is_current: impl Fn(&Source) -> bool,
 ) -> Result<ScanMetrics, String> {
-    scan_sources_with_identity_and_reuse(db, sources, log, stop, identity_is_current, true)
+    scan_sources_with_identity_and_reuse(
+        db,
+        sources,
+        log,
+        stop,
+        identity_is_current,
+        true,
+        &mut Unreadable::default(),
+    )
 }
 fn scan_sources_with_identity_and_reuse(
     db: &Database,
@@ -1300,6 +1386,7 @@ fn scan_sources_with_identity_and_reuse(
     stop: &AtomicBool,
     identity_is_current: impl Fn(&Source) -> bool,
     reuse: bool,
+    unreadable: &mut Unreadable,
 ) -> Result<ScanMetrics, String> {
     let mut workload = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::LibraryScan,
@@ -1455,6 +1542,7 @@ fn scan_sources_with_identity_and_reuse(
                     log,
                     id,
                     stop,
+                    unreadable: &mut *unreadable,
                 }
                 .process(std::mem::take(&mut batch_items))?;
             }
@@ -1472,6 +1560,7 @@ fn scan_sources_with_identity_and_reuse(
                     log,
                     id,
                     stop,
+                    unreadable: &mut *unreadable,
                 }
                 .process(batch_items)?;
             } else {
@@ -2320,12 +2409,20 @@ mod scan_safety_tests {
             &stop,
             |_| true,
             true,
+            &mut Unreadable::default(),
         )
         .unwrap();
         assert_eq!(scan.reused, 1);
-        let rebuild =
-            scan_sources_with_identity_and_reuse(&db, &[source], &log, &stop, |_| true, false)
-                .unwrap();
+        let rebuild = scan_sources_with_identity_and_reuse(
+            &db,
+            &[source],
+            &log,
+            &stop,
+            |_| true,
+            false,
+            &mut Unreadable::default(),
+        )
+        .unwrap();
         assert_eq!(rebuild.reused, 0);
         // A file that cannot be re-read keeps its prior row: rebuild is not a wipe.
         assert_eq!(tracks(&db)[0].title, "Indexed");
@@ -2345,8 +2442,10 @@ mod scan_safety_tests {
             scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
                 .unwrap();
 
-        assert!(!stats.complete);
-        assert!(stats.failures > 0);
+        // Unreadable is not incomplete (B3): the row stays, the scan completes.
+        assert!(stats.complete);
+        assert_eq!(stats.failures, 0);
+        assert_eq!(stats.unreadable, 1);
         let rows = tracks(&db);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "Prior Valid Row");
@@ -2463,6 +2562,63 @@ mod scan_safety_tests {
         .unwrap();
         assert_eq!(unchanged.removed, 0);
         assert_eq!(unchanged.rescanned, 0);
+        db.stop();
+    }
+
+    #[test]
+    fn unreadable_file_keeps_its_row_and_deleted_files_are_still_pruned() {
+        let root = root("unreadable-prune");
+        let source = source("internal", &root);
+        let broken = root.join("broken.mp3");
+        let removed = root.join("removed.flac");
+        fs::write(&broken, b"this is not audio").unwrap();
+        let (db, log) = database(&root);
+        seed(&db, &source, &broken);
+        seed(&db, &source, &removed);
+
+        let stats = scan_sources_with_identity(
+            &db,
+            std::slice::from_ref(&source),
+            &log,
+            &AtomicBool::new(false),
+            |_| true,
+        )
+        .unwrap();
+
+        assert!(stats.complete);
+        assert_eq!(stats.unreadable, 1);
+        assert_eq!(stats.removed, 1);
+        let rows = tracks(&db);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, broken);
+
+        // Within one process the failure is remembered: not opened again.
+        let mut unreadable = Unreadable::default();
+        let stop = AtomicBool::new(false);
+        let first = scan_sources_with_identity_and_reuse(
+            &db,
+            std::slice::from_ref(&source),
+            &log,
+            &stop,
+            |_| true,
+            true,
+            &mut unreadable,
+        )
+        .unwrap();
+        let again = scan_sources_with_identity_and_reuse(
+            &db,
+            std::slice::from_ref(&source),
+            &log,
+            &stop,
+            |_| true,
+            true,
+            &mut unreadable,
+        )
+        .unwrap();
+        assert_eq!((first.unreadable, again.unreadable), (1, 1));
+        assert_eq!(unreadable.len(), 1);
+        assert!(again.complete);
+        assert_eq!(tracks(&db).len(), 1);
         db.stop();
     }
 
@@ -2670,7 +2826,8 @@ mod ingest_regression_tests {
         fs::write(&file, b"bad media").unwrap();
         fs::copy(fixture("tone.flac"), root.join("good.flac")).unwrap();
         let metrics = scan();
-        assert_eq!(metrics.failures, 1);
+        assert_eq!((metrics.failures, metrics.unreadable), (0, 1));
+        assert!(metrics.complete);
         assert_eq!(metrics.rescanned, 1);
         assert_eq!(rows().len(), 1);
         db.shutdown(Duration::from_secs(5)).unwrap();
@@ -2793,7 +2950,7 @@ mod ingest_regression_tests {
         let result = scan();
         assert_eq!(result.reused, 1);
         assert_eq!(result.rescanned, 0);
-        assert_eq!(result.failures, 1);
+        assert_eq!((result.failures, result.unreadable), (0, 1));
         db.shutdown(Duration::from_secs(5)).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

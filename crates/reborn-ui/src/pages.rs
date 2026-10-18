@@ -885,7 +885,13 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
     } else if m.library.error.is_some() {
         "Last scan was interrupted. Existing music was kept".into()
     } else if let Some(scan) = &m.library.last_scan {
-        format!("Last scan: {}", songs(scan.discovered as usize))
+        match scan.unreadable {
+            0 => format!("Last scan: {}", songs(scan.discovered as usize)),
+            n => format!(
+                "Last scan: {} · {n} can't be read",
+                songs(scan.discovered.saturating_sub(n) as usize)
+            ),
+        }
     } else {
         "Find music added from a computer".into()
     };

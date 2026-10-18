@@ -742,6 +742,9 @@ pub struct ScanSummary {
     pub discovered: u64,
     pub reused: u64,
     pub elapsed_ms: u64,
+    /// Supported files that could not be read (kept, never an error).
+    #[serde(default)]
+    pub unreadable: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -1517,6 +1520,7 @@ mod tests {
             discovered: 12,
             reused: 4,
             elapsed_ms: 50,
+            unreadable: 0,
         }));
         assert!(!m.library.scanning);
         assert_eq!(m.library.last_scan.as_ref().map(|s| s.discovered), Some(12));
