@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.1 — Y2Linux 1.0 Beta 8.1 (Baseline 86), 2026-10-18 (latest): panel power-down
+## 1.0.0-beta.8.2 — Y2Linux 1.0 Beta 8.2 (Baseline 88), 2026-10-18 (latest): faster updates
+
+- No Reborn code change; the release carries Y2Linux's four-core installer and kept rollback copy (OTA-50). The
+  update screen's steps are unchanged; the install step now takes about 15 s on the owner's player (was 54 s).
+
+## 1.0.0-beta.8.1 — Y2Linux 1.0 Beta 8.1 (Baseline 86), 2026-10-18: panel power-down
 
 - No Reborn code change; the release carries Y2Linux's panel power-down at screen-off (#45) for the ST7701S panel.
   Screen-on after a screen-off now includes the panel's stock initialization (≈0.5 s).
