@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.0 — Y2Linux 1.0 Beta 8.0 (Baseline 75), 2026-10-18 (latest): 1.0 review fixes
+## 1.0.0-beta.8.1 — Y2Linux 1.0 Beta 8.1 (Baseline 86), 2026-10-18 (latest): panel power-down
+
+- No Reborn code change; the release carries Y2Linux's panel power-down at screen-off (#45) for the ST7701S panel.
+  Screen-on after a screen-off now includes the panel's stock initialization (≈0.5 s).
+
+## 1.0.0-beta.8.0 — Y2Linux 1.0 Beta 8.0 (Baseline 75), 2026-10-18: 1.0 review fixes
 
 - Library: a supported file FFmpeg cannot open is counted (`ScanMetrics::unreadable`, `ScanSummary::unreadable`,
   Settings → Library *N can't be read*), keeps its row through `DbCommand::Retain` and no longer makes the scan
