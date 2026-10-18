@@ -21,6 +21,16 @@ impl VolumeRamp {
             ramp_frames: (rate as usize / 200).max(1), // five milliseconds
         }
     }
+    /// Start from silence and reach `volume` over `ms`: the first stream after
+    /// the headphone level went up (hearing safety; a later volume change
+    /// takes over with the usual short ramp).
+    pub(crate) fn fade_in(volume: u8, rate: u32, ms: u32) -> Self {
+        let mut ramp = Self::new(volume, rate);
+        ramp.gain = 0.0;
+        ramp.remaining = ((u64::from(rate) * u64::from(ms) / 1000) as usize).max(1);
+        ramp.step = ramp.target / ramp.remaining as f64;
+        ramp
+    }
     fn gain(volume: u8) -> f64 {
         // Preserve the existing FFmpeg DSP's squared amplitude curve.
         (f64::from(volume.min(100)) / 100.0).powi(2)
@@ -86,6 +96,31 @@ impl VolumeRamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fade_in_starts_silent_rises_steadily_and_yields_to_a_volume_change() {
+        let mut ramp = VolumeRamp::fade_in(100, 1000, 2000); // 2000 frames
+        let first = values(&ramp.render(&stereo16(10_000, 4), PcmFormat::S16LE));
+        assert_eq!(first, [5, 5, 10, 10, 15, 15, 20, 20]);
+        ramp.advance(1000);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [5005, 5005]
+        );
+        ramp.advance(1000);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [10_000, 10_000]
+        );
+        // Turning the volume down mid-fade uses the short ramp from where it is.
+        let mut ramp = VolumeRamp::fade_in(100, 48_000, 2000);
+        ramp.advance(48_000);
+        ramp.target(50);
+        ramp.advance(240);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [2500, 2500]
+        );
+    }
     fn stereo16(sample: i16, frames: usize) -> Vec<u8> {
         sample.to_le_bytes().repeat(frames * 2)
     }

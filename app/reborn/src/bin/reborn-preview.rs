@@ -535,6 +535,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("29-crossfade", at(Screen::Crossfade, ""), |_, m| {
         m.navigation.focus = 2;
     });
+    case!(
+        "28b-eq-profiles",
+        at(Screen::Equalizer, "profile"),
+        |ui, m| {
+            ui.eq_profiles = ["Moondrop Aria", "Sennheiser HD 650", "Sony WH-1000XM4"]
+                .into_iter()
+                .map(|name| reborn_core::eq::ProfileFile {
+                    name: name.into(),
+                    path: format!("/media/internal/music/EQ/{name} ParametricEQ.txt").into(),
+                })
+                .collect();
+            m.settings.eq_profile = reborn_core::eq::parse(
+                "Sennheiser HD 650",
+                "Preamp: -6.1 dB\nFilter 1: ON LSC Fc 105 Hz Gain 6.4 dB Q 0.70\n",
+            )
+            .ok();
+            m.settings.eq_profile_on = true;
+            m.navigation.focus = 1;
+        }
+    );
+    case!(
+        "28c-equalizer-profile-on",
+        at(Screen::Equalizer, ""),
+        |_, m| {
+            m.settings.eq_profile = reborn_core::eq::parse(
+                "Sennheiser HD 650",
+                "Filter 1: ON LSC Fc 105 Hz Gain 6.4 dB Q 0.70\n",
+            )
+            .ok();
+            m.settings.eq_profile_on = true;
+            m.navigation.focus = 5;
+        }
+    );
+    case!(
+        "27b-sound-headphone",
+        at(Screen::SettingsAudio, ""),
+        |_, m| {
+            m.settings.hp_level = reborn_core::HpLevel::Medium;
+            m.navigation.focus = 5;
+        }
+    );
+    case!(
+        "29b-headphone-level",
+        at(Screen::HeadphoneLevel, ""),
+        |_, m| {
+            m.settings.hp_level = reborn_core::HpLevel::Low;
+            m.navigation.focus = 2;
+        }
+    );
+    case!("29c-dac-filter", at(Screen::DacFilter, ""), |_, m| {
+        m.navigation.focus = 3;
+    });
     case!("30-display", at(Screen::SettingsDisplay, ""));
     case!("30b-time-zone", at(Screen::TimeZone, ""), |ui, m| {
         m.settings.time_zone = "Europe/Berlin".into();

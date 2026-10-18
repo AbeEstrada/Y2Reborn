@@ -72,6 +72,8 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Equalizer
         | Screen::Crossfade
         | Screen::ScreenTimeout
+        | Screen::HeadphoneLevel
+        | Screen::DacFilter
         | Screen::Theme
         | Screen::TimeZone
         | Screen::HomeMenu
@@ -122,6 +124,8 @@ fn native_screen(
         | Screen::Equalizer
         | Screen::Crossfade
         | Screen::ScreenTimeout
+        | Screen::HeadphoneLevel
+        | Screen::DacFilter
         | Screen::Theme
         | Screen::TimeZone
         | Screen::HomeMenu
@@ -187,6 +191,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
         Screen::ScreenTimeout => keys!("screen_off"),
+        Screen::HeadphoneLevel => keys!("headphone_level"),
+        Screen::DacFilter => keys!("dac_filter"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
         Screen::HomeMenu => keys!("home_menu"),
@@ -686,6 +692,8 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),
+        Screen::HeadphoneLevel => "Headphone Level".into(),
+        Screen::DacFilter => "DAC Filter".into(),
         Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::HomeMenu => "Home Menu".into(),

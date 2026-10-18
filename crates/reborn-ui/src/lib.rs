@@ -429,6 +429,8 @@ pub struct Ui {
     pub skin: Option<std::rc::Rc<skin::Skin>>,
     /// Installed skins, as last scanned for the picker.
     pub themes: Vec<skin::SkinInfo>,
+    /// Headphone profile files, as last scanned for the profile list.
+    pub eq_profiles: Vec<reborn_core::eq::ProfileFile>,
 }
 
 /// A dialog the player raises by itself.
@@ -1829,6 +1831,23 @@ impl Ui {
             Self::go(m, Screen::Equalizer, "custom");
             return Effect::None;
         }
+        if key == "eq_profile_saved" {
+            return Effect::None; // already playing; its file is gone
+        }
+        if key == "eq_profile" {
+            // The list shows what is on the storage now (files arrive over MTP).
+            Self::go(m, Screen::Equalizer, "profile");
+            return Effect::ScanEqProfiles;
+        }
+        if let Some(index) = key
+            .strip_prefix("eq_profile_file:")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            return self
+                .eq_profiles
+                .get(index)
+                .map_or(Effect::None, |f| Effect::ImportEqProfile(f.path.clone()));
+        }
         if key == "time_zone" {
             // Open at the choice in use.
             Self::go(m, Screen::TimeZone, "");
@@ -2104,6 +2123,12 @@ impl Ui {
                 let pinned = m.settings.home_pins.iter().any(|p| p == key);
                 Effect::SetHomePin(key.into(), !pinned)
             }
+            k if k.starts_with("hp_level_set:") => {
+                Effect::SetHpLevel(reborn_core::HpLevel::from_key(&k["hp_level_set:".len()..])?)
+            }
+            k if k.starts_with("dac_filter_set:") => Effect::SetDacFilter(
+                reborn_core::DacFilter::from_key(&k["dac_filter_set:".len()..])?,
+            ),
             k if k.starts_with("eq_preset:") => {
                 let name = &k["eq_preset:".len()..];
                 let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;
@@ -2862,6 +2887,8 @@ fn route(key: &str) -> Option<Screen> {
         "playback" => Screen::SettingsPlayback,
         "crossfade" => Screen::Crossfade,
         "screen_timeout" => Screen::ScreenTimeout,
+        "hp_level" => Screen::HeadphoneLevel,
+        "dac_filter" => Screen::DacFilter,
         "theme" => Screen::Theme,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,

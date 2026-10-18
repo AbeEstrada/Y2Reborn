@@ -1,5 +1,5 @@
 mod native;
-pub use native::{initialize_logging, wired_device, AlsaSink};
+pub use native::{initialize_logging, wired_configure, wired_device, AlsaSink};
 use reborn_core::{AudioOutput, BluetoothPcm, PcmFormat};
 use serde::Serialize;
 #[derive(Debug, Clone, Serialize, Default)]
@@ -13,6 +13,10 @@ pub struct Parameters {
     pub device: String,
     pub fallback: bool,
     pub fallback_reason: String,
+    /// Wired: the headphone level the stream got (0 Low, 1 Medium, 2 High).
+    pub hp_level_live: Option<u8>,
+    /// Wired: louder than the previous wired stream (playback fades in).
+    pub level_raised: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct SinkSpec {

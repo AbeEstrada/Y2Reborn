@@ -867,7 +867,7 @@ impl Runtime {
         }
         self.dirty.mark_render();
     }
-    /// Internal Storage and online SD cards, where Themes and Radio live.
+    /// Internal Storage and online SD cards, where Themes, Radio and EQ live.
     fn storage_roots(&self) -> Vec<PathBuf> {
         let mut roots = vec![self.model.settings.music_directory.clone()];
         roots.extend(
@@ -1042,6 +1042,33 @@ impl Runtime {
         Ok(())
     }
 
+    /// Send the wired level and DAC filter to the audio layer (kept for every
+    /// wired stream; applied now where the amplifier is down).
+    fn configure_wired(&self) {
+        if self.headless {
+            return;
+        }
+        let s = &self.model.settings;
+        match reborn_audio::wired_configure(s.hp_level, s.dac_filter) {
+            Ok(levels) => self.log.emit(
+                Level::Info,
+                "audio",
+                "wired_configured",
+                "wired headphone level and DAC filter",
+                None,
+                json!({"hp_level":s.hp_level,"dac_filter":s.dac_filter,"level_control":levels}),
+            ),
+            Err(e) => self.log.emit(
+                Level::Warn,
+                "audio",
+                "wired_configure_failed",
+                &e,
+                None,
+                json!({"hp_level":s.hp_level,"dac_filter":s.dac_filter}),
+            ),
+        }
+    }
+
     /// Folders skins are installed in: the shipped ones first, then Skins (or
     /// Themes, its name before Beta 7.5) on Internal Storage and on the SD
     /// card (any letter case), as seen over MTP.
@@ -1051,15 +1078,7 @@ impl Runtime {
             roots.push(PathBuf::from(dev));
         }
         roots.push(PathBuf::from("/usr/share/reborn/skins"));
-        let mut storage = vec![self.model.settings.music_directory.clone()];
-        storage.extend(
-            self.model
-                .sources
-                .iter()
-                .filter(|s| s.online && matches!(s.kind, reborn_core::MediaSource::SdCard(_)))
-                .map(|s| s.root.clone()),
-        );
-        for dir in storage {
+        for dir in self.storage_roots() {
             let Ok(entries) = fs::read_dir(&dir) else {
                 continue;
             };
@@ -1206,7 +1225,7 @@ impl Runtime {
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
                 true,
-                self.model.settings.crossfade_ms > 0 || self.model.settings.eq_enabled,
+                self.model.settings.crossfade_ms > 0 || self.model.settings.active_eq().is_some(),
                 false,
             ));
         self.reconfiguration_attempted = true;
@@ -1260,11 +1279,13 @@ impl Runtime {
                     .collect(),
             )
         };
+        let eq = self.model.settings.active_eq();
         let dsp = reborn_media::DspConfig {
             volume: self.model.settings.volume,
             replay_gain: self.model.settings.replay_gain,
-            eq_enabled: self.model.settings.eq_enabled,
-            eq_bands: self.model.settings.eq_bands.clone(),
+            eq_enabled: eq.is_some(),
+            preamp_db: eq.as_ref().map_or(0.0, |(preamp, _)| *preamp),
+            eq_bands: eq.map(|(_, bands)| bands).unwrap_or_default(),
             crossfade_ms: self.model.settings.crossfade_ms,
         };
         let request_parts = (
@@ -1452,7 +1473,7 @@ impl Runtime {
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
                 true,
-                self.model.settings.crossfade_ms > 0 || self.model.settings.eq_enabled,
+                self.model.settings.crossfade_ms > 0 || self.model.settings.active_eq().is_some(),
                 false,
             ));
         self.playback.hold(false);
@@ -2133,6 +2154,7 @@ impl Runtime {
                     self.model.settings.eq_bands = reborn_core::flat_eq_bands();
                 }
                 self.model.settings.eq_enabled = enabled;
+                self.model.settings.eq_profile_on = false;
                 self.reload_dsp()?;
             }
             Effect::SetEqBandGain { index, gain_db } => {
@@ -2147,7 +2169,9 @@ impl Runtime {
                     .filter(|_| index < 8)
                     .ok_or("That equalizer band has changed")?;
                 band.gain_db = f32::from(gain_db.clamp(-12, 12));
-                if self.model.settings.eq_enabled {
+                // Editing the bands means listening to them, not the profile.
+                if self.model.settings.eq_enabled || self.model.settings.eq_profile_on {
+                    self.model.settings.eq_profile_on = false;
                     self.reload_dsp()?;
                 } else {
                     self.checkpoint();
@@ -2160,11 +2184,58 @@ impl Runtime {
                 }
                 self.model.settings.eq_bands = bands;
                 self.model.settings.eq_enabled = gains.iter().any(|g| *g != 0);
+                self.model.settings.eq_profile_on = false;
                 self.reload_dsp()?;
             }
             Effect::ResetEq => {
                 self.model.settings.eq_bands = reborn_core::flat_eq_bands();
                 self.reload_dsp()?;
+            }
+            Effect::ScanEqProfiles => {
+                self.ui.eq_profiles = scan_eq_profiles(&self.storage_roots());
+                self.dirty.mark_render();
+            }
+            Effect::ImportEqProfile(path) => match import_eq_profile(&path) {
+                Ok(profile) => {
+                    let name = profile.name.clone();
+                    let preamp = profile.preamp_db;
+                    self.log.emit(
+                        Level::Info,
+                        "audio",
+                        "eq_profile_imported",
+                        "headphone profile imported",
+                        None,
+                        json!({"name":name,"filters":profile.bands.len(),"preamp_db":preamp}),
+                    );
+                    self.model.settings.eq_profile = Some(profile);
+                    self.model.settings.eq_profile_on = true;
+                    self.ui
+                        .flash(format!("Playing {name} · Preamp {preamp:+.1} dB"));
+                    self.reload_dsp()?;
+                }
+                Err(e) => self.ui.flash(e),
+            },
+            Effect::SetHpLevel(level) => {
+                let raised = level.index() > self.model.settings.hp_level.index();
+                self.model.settings.hp_level = level;
+                self.configure_wired();
+                // The amplifier takes a new level only when it powers up:
+                // restart wired playback (a higher level fades in); a held
+                // pause gives its stream back, so Play starts a new one.
+                if matches!(self.model.output, AudioOutput::Wired) {
+                    self.release_hold();
+                    self.reload_dsp()?;
+                } else {
+                    self.checkpoint();
+                }
+                if raised {
+                    self.ui.flash("Higher level · Music fades in");
+                }
+            }
+            Effect::SetDacFilter(filter) => {
+                self.model.settings.dac_filter = filter;
+                self.configure_wired();
+                self.checkpoint();
             }
             Effect::SetBrightness(percent) => {
                 self.model.settings.brightness = percent.clamp(10, 100);
@@ -2185,10 +2256,13 @@ impl Runtime {
                 };
                 let reload = self.model.settings.gapless_enabled != defaults.gapless_enabled
                     || self.model.settings.eq_enabled
+                    || self.model.settings.eq_profile_on
+                    || self.model.settings.hp_level != defaults.hp_level
                     || self.model.settings.replay_gain != defaults.replay_gain
                     || self.model.settings.crossfade_ms != defaults.crossfade_ms
                     || self.model.settings.repeat != defaults.repeat;
                 self.model.settings = defaults;
+                self.configure_wired();
                 if self.ui.skin.is_some() {
                     let _ = self.apply_theme("", false);
                 }
@@ -3376,6 +3450,19 @@ fn run() -> Result<(), String> {
             let _ = power::set_brightness(model.settings.brightness);
         }
         model.platform.battery = power::battery(&power::status());
+        // The wired level and DAC filter, before anything plays.
+        if let Err(e) =
+            reborn_audio::wired_configure(model.settings.hp_level, model.settings.dac_filter)
+        {
+            log.emit(
+                Level::Warn,
+                "audio",
+                "wired_configure_failed",
+                &e,
+                None,
+                json!({}),
+            );
+        }
     }
     // Open the display as soon as the process is alive. The first bounded
     // frame below hands KMS to Reborn while storage and library workers start.
@@ -4667,7 +4754,7 @@ fn run() -> Result<(), String> {
                         rt.model.playback,
                         PlaybackState::Playing | PlaybackState::Buffering
                     ),
-                    rt.model.settings.crossfade_ms > 0 || rt.model.settings.eq_enabled,
+                    rt.model.settings.crossfade_ms > 0 || rt.model.settings.active_eq().is_some(),
                     false, // The scanner owns its independent scoped lease.
                 ));
         }
@@ -5118,8 +5205,61 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
     settings.volume = settings.volume.min(100);
     settings.crossfade_ms = settings.crossfade_ms.min(30_000);
     settings.eq_bands.truncate(8);
+    settings.sanitize_eq_profile();
     settings.brightness = settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
     Some(settings)
+}
+
+/// `ParametricEQ.txt` files in an `EQ` folder (any letter case) on each
+/// storage root, sorted by name.
+fn scan_eq_profiles(roots: &[PathBuf]) -> Vec<reborn_core::eq::ProfileFile> {
+    let mut files = vec![];
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for folder in entries.flatten().filter(|e| {
+            e.file_name().to_string_lossy().eq_ignore_ascii_case("eq")
+                && e.file_type().is_ok_and(|t| t.is_dir())
+        }) {
+            let Ok(inner) = fs::read_dir(folder.path()) else {
+                continue;
+            };
+            for entry in inner.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.starts_with('.')
+                    && name
+                        .to_ascii_lowercase()
+                        .ends_with(reborn_core::eq::FILE_SUFFIX)
+                    && entry.file_type().is_ok_and(|t| t.is_file())
+                {
+                    files.push(reborn_core::eq::ProfileFile {
+                        name: reborn_core::eq::profile_name(&name),
+                        path: entry.path(),
+                    });
+                }
+            }
+        }
+    }
+    files.sort_by_key(|f| f.name.to_lowercase());
+    files
+}
+
+/// Read and check one profile file; the error is a message for the screen.
+fn import_eq_profile(path: &Path) -> Result<reborn_core::eq::EqProfile, String> {
+    let size = fs::metadata(path)
+        .map_err(|_| "That profile file is gone".to_owned())?
+        .len();
+    if size > reborn_core::eq::MAX_FILE_BYTES {
+        return Err("That file is too large for an equalizer profile".into());
+    }
+    let text = fs::read(path).map_err(|_| "That profile file could not be read".to_owned())?;
+    let text = String::from_utf8_lossy(&text);
+    let name = path
+        .file_name()
+        .map(|n| reborn_core::eq::profile_name(&n.to_string_lossy()))
+        .unwrap_or_else(|| "Profile".into());
+    reborn_core::eq::parse(&name, &text)
 }
 
 /// The verdict Y2Linux's update health check reads (`healthy` in `rebornctl
@@ -5189,6 +5329,46 @@ mod session_recovery_tests {
         fs::remove_file(path).unwrap();
     }
 }
+#[cfg(test)]
+mod eq_profile_file_tests {
+    use super::{import_eq_profile, scan_eq_profiles};
+    use std::fs;
+
+    #[test]
+    fn eq_folders_on_every_storage_are_listed_and_files_checked_on_import() {
+        let root = std::env::temp_dir().join(format!("reborn-eq-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (internal, sd) = (root.join("internal"), root.join("sd"));
+        fs::create_dir_all(internal.join("EQ")).unwrap();
+        fs::create_dir_all(sd.join("eq")).unwrap();
+        fs::create_dir_all(internal.join("Music")).unwrap();
+        let good = "Preamp: -3.2 dB\nFilter 1: ON LSC Fc 105 Hz Gain 3 dB Q 0.7\nFilter 2: ON PK Fc 2000 Hz Gain -2 dB Q 2\n";
+        fs::write(internal.join("EQ/Sennheiser HD 650 ParametricEQ.txt"), good).unwrap();
+        fs::write(sd.join("eq/aria.TXT"), "GraphicEQ: 20 0\n").unwrap();
+        fs::write(internal.join("EQ/.hidden.txt"), good).unwrap();
+        fs::write(internal.join("EQ/readme.pdf"), "x").unwrap();
+        fs::write(internal.join("Music/elsewhere.txt"), good).unwrap();
+        fs::write(sd.join("eq/huge.txt"), "#".repeat(70 * 1024)).unwrap();
+        let files = scan_eq_profiles(&[internal.clone(), sd.clone(), root.join("missing")]);
+        let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["aria", "huge", "Sennheiser HD 650"]);
+        let profile = import_eq_profile(&files[2].path).unwrap();
+        assert_eq!(profile.name, "Sennheiser HD 650");
+        assert_eq!(profile.bands.len(), 2);
+        assert!(profile.preamp_db <= -3.2);
+        assert!(import_eq_profile(&files[0].path)
+            .unwrap_err()
+            .contains("Line 1"));
+        assert!(import_eq_profile(&files[1].path)
+            .unwrap_err()
+            .contains("too large"));
+        assert!(import_eq_profile(&root.join("gone.txt"))
+            .unwrap_err()
+            .contains("gone"));
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
 #[cfg(test)]
 mod update_health_tests {
     use super::update_health;
@@ -5449,6 +5629,8 @@ mod runtime_reconfiguration_tests {
                 device: "transaction-test".into(),
                 fallback: false,
                 fallback_reason: String::new(),
+                hp_level_live: None,
+                level_raised: false,
             }
         }
         fn write(&mut self, pcm: &[u8]) -> Result<usize, String> {

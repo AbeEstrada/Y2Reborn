@@ -38,6 +38,8 @@ typedef struct {
   int hardware_mixer_gain_cdb;
   char device[128];
   char fallback_reason[256];
+  int hp_level_live; /* wired: level the stream got (0 Low..2 High), -1 unknown */
+  int level_raised;  /* wired: higher than the previous wired stream's level */
 } RbParams;
 typedef struct {
   snd_pcm_t *pcm;
@@ -48,6 +50,125 @@ typedef struct {
   int restore;
 } RbSink;
 const char *rb_alsa_error(int e) { return snd_strerror(e); }
+
+/* Y2Linux wired output controls: the headphone level ("HP Output Level",
+ * full scale 1.0/1.41/1.73 Vrms) and the DAC filter. The kernel writes the
+ * level only while the amplifier is down (DS1155F2), so it is set before a
+ * stream starts and "HP Output Level Live" says what the stream got. Master
+ * is -19.5 dB with the level control (Low then plays 0.26 dB below the
+ * earlier 1.73 Vrms at -24 dB) and stays -24 dB on kernels without it. */
+#define RB_MASTER_CDB_LEGACY -2400
+#define RB_MASTER_CDB_LEVELS -1950
+static int wired_level, wired_slow, wired_phase, wired_nos;
+static int wired_live = -1; /* level of the previous wired stream */
+/* A higher level was chosen (not the startup setting): the next wired stream
+ * fades in even when none has played since boot. */
+static int wired_configured, wired_raise_pending;
+static int ctl_id(snd_ctl_t *ctl, const char *name, snd_ctl_elem_id_t *id,
+                  snd_ctl_elem_info_t *info) {
+  snd_ctl_elem_id_set_interface(id, SND_CTL_ELEM_IFACE_MIXER);
+  snd_ctl_elem_id_set_name(id, name);
+  snd_ctl_elem_info_set_id(info, id);
+  return snd_ctl_elem_info(ctl, info);
+}
+static int ctl_set(snd_ctl_t *ctl, const char *name, unsigned value) {
+  snd_ctl_elem_id_t *id;
+  snd_ctl_elem_info_t *info;
+  snd_ctl_elem_value_t *v;
+  snd_ctl_elem_id_alloca(&id);
+  snd_ctl_elem_info_alloca(&info);
+  snd_ctl_elem_value_alloca(&v);
+  int r = ctl_id(ctl, name, id, info);
+  if (r < 0)
+    return r;
+  snd_ctl_elem_value_set_id(v, id);
+  switch (snd_ctl_elem_info_get_type(info)) {
+  case SND_CTL_ELEM_TYPE_ENUMERATED:
+    if (value >= snd_ctl_elem_info_get_items(info))
+      return -EINVAL;
+    snd_ctl_elem_value_set_enumerated(v, 0, value);
+    break;
+  case SND_CTL_ELEM_TYPE_BOOLEAN:
+    for (unsigned i = 0; i < snd_ctl_elem_info_get_count(info); i++)
+      snd_ctl_elem_value_set_boolean(v, i, value != 0);
+    break;
+  default:
+    return -EINVAL;
+  }
+  return snd_ctl_elem_write(ctl, v);
+}
+static int ctl_enum(snd_ctl_t *ctl, const char *name) {
+  snd_ctl_elem_id_t *id;
+  snd_ctl_elem_info_t *info;
+  snd_ctl_elem_value_t *v;
+  snd_ctl_elem_id_alloca(&id);
+  snd_ctl_elem_info_alloca(&info);
+  snd_ctl_elem_value_alloca(&v);
+  int r = ctl_id(ctl, name, id, info);
+  if (r < 0)
+    return r;
+  if (snd_ctl_elem_info_get_type(info) != SND_CTL_ELEM_TYPE_ENUMERATED)
+    return -EINVAL;
+  snd_ctl_elem_value_set_id(v, id);
+  if ((r = snd_ctl_elem_read(ctl, v)) < 0)
+    return r;
+  return (int)snd_ctl_elem_value_get_enumerated(v, 0);
+}
+/* 1: the level control exists and took the level; 0: an older kernel. The
+ * filter controls are upstream ones, set where they exist. */
+static int wired_apply(snd_ctl_t *ctl) {
+  int r = ctl_set(ctl, "HP Output Level",
+                  (unsigned)__atomic_load_n(&wired_level, __ATOMIC_RELAXED));
+  (void)ctl_set(ctl, "PCM Filter Speed",
+                (unsigned)__atomic_load_n(&wired_slow, __ATOMIC_RELAXED));
+  (void)ctl_set(ctl, "PCM Phase Compensation",
+                (unsigned)__atomic_load_n(&wired_phase, __ATOMIC_RELAXED));
+  (void)ctl_set(ctl, "PCM Nonoversample Emulate",
+                (unsigned)__atomic_load_n(&wired_nos, __ATOMIC_RELAXED));
+  if (r == -ENOENT)
+    return 0;
+  return r < 0 ? r : 1;
+}
+/* Remember the wired settings and apply them now; a level chosen during
+ * playback reaches the output when its next stream starts. */
+int rb_wired_configure(int level, int slow, int phase, int nos) {
+  if (level < 0 || level > 2)
+    return -EINVAL;
+  int previous = __atomic_exchange_n(&wired_level, level, __ATOMIC_RELAXED);
+  if (__atomic_exchange_n(&wired_configured, 1, __ATOMIC_RELAXED) && level > previous)
+    __atomic_store_n(&wired_raise_pending, 1, __ATOMIC_RELAXED);
+  __atomic_store_n(&wired_slow, slow != 0, __ATOMIC_RELAXED);
+  __atomic_store_n(&wired_phase, phase != 0, __ATOMIC_RELAXED);
+  __atomic_store_n(&wired_nos, nos != 0, __ATOMIC_RELAXED);
+  snd_ctl_t *ctl = NULL;
+  int r = snd_ctl_open(&ctl, "hw:Y2Audio", 0);
+  if (r < 0)
+    return r;
+  r = wired_apply(ctl);
+  snd_ctl_close(ctl);
+  return r;
+}
+/* A wired stream started at `live`: 1 when it is louder than the previous
+ * wired stream, or a higher level was chosen since (playback fades in). */
+int rb_wired_note_live(int live) {
+  int chosen = __atomic_exchange_n(&wired_raise_pending, 0, __ATOMIC_RELAXED);
+  int raised = (wired_live >= 0 && live > wired_live) || (chosen && live > 0);
+  wired_live = live;
+  return raised;
+}
+/* The Master level a wired stream uses on this kernel. */
+static int wired_master_cdb(void) {
+  snd_ctl_t *ctl = NULL;
+  if (snd_ctl_open(&ctl, "hw:Y2Audio", 0) < 0)
+    return RB_MASTER_CDB_LEGACY;
+  snd_ctl_elem_id_t *id;
+  snd_ctl_elem_info_t *info;
+  snd_ctl_elem_id_alloca(&id);
+  snd_ctl_elem_info_alloca(&info);
+  int present = ctl_id(ctl, "HP Output Level", id, info) >= 0;
+  snd_ctl_close(ctl);
+  return present ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY;
+}
 
 int rb_wired_device(char *out, int n) {
   int card = -1, r;
@@ -214,7 +335,8 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   params->channels = 2;
   params->period = 512;
   params->buffer = 4096;
-  params->hardware_mixer_gain_cdb = wired ? -2400 : INT32_MIN;
+  params->hardware_mixer_gain_cdb = wired ? wired_master_cdb() : INT32_MIN;
+  params->hp_level_live = -1;
   params->fallback = selected != preferred_format;
   if (params->fallback)
     snprintf(params->fallback_reason, sizeof(params->fallback_reason),
@@ -276,6 +398,19 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
       r = -EBUSY;
       goto fail;
     }
+  }
+  /* The level must be in place before the stream powers the amplifier. */
+  int levels = 0;
+  params->hp_level_live = -1;
+  if (wired) {
+    snd_ctl_t *ctl = NULL;
+    if ((r = snd_ctl_open(&ctl, "hw:Y2Audio", 0)) < 0)
+      goto fail;
+    r = wired_apply(ctl);
+    snd_ctl_close(ctl);
+    if (r < 0)
+      goto fail;
+    levels = r;
   }
   if ((r = snd_pcm_open(&s->pcm, name, SND_PCM_STREAM_PLAYBACK,
                         SND_PCM_NONBLOCK)) < 0)
@@ -340,17 +475,29 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
                                                  &s->sw)) < 0)
       goto fail;
     s->restore = 1;
-    if ((r = snd_mixer_selem_set_playback_dB_all(m, -2400, 0)) < 0)
+    int master = levels ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY;
+    if ((r = snd_mixer_selem_set_playback_dB_all(m, master, 0)) < 0)
       goto fail;
     if ((r = snd_mixer_selem_set_playback_switch_all(h, 1)) < 0)
       goto fail;
+    /* The pin completes the path: the amplifier is up now, at this level. */
+    snd_ctl_t *ctl = NULL;
+    if (levels && snd_ctl_open(&ctl, "hw:Y2Audio", 0) >= 0) {
+      int live = ctl_enum(ctl, "HP Output Level Live");
+      snd_ctl_close(ctl);
+      if (live >= 0 && live <= 2) {
+        params->hp_level_live = live;
+        params->level_raised = rb_wired_note_live(live);
+      }
+    }
   }
   params->rate = actual;
   params->period = period;
   params->buffer = buffer;
   params->format = format;
   params->channels = 2;
-  params->hardware_mixer_gain_cdb = wired ? -2400 : INT32_MIN;
+  params->hardware_mixer_gain_cdb =
+      wired ? (levels ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY) : INT32_MIN;
   snprintf(params->device, sizeof(params->device), "%s", name);
   *out = s;
   return 0;

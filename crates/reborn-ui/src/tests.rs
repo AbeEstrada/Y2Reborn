@@ -211,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 29] = [
+const NORMAL_SCREENS: [Screen; 31] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -230,6 +230,8 @@ const NORMAL_SCREENS: [Screen; 29] = [
     Screen::SettingsPlayback,
     Screen::Crossfade,
     Screen::ScreenTimeout,
+    Screen::HeadphoneLevel,
+    Screen::DacFilter,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
     Screen::SettingsSystem,
@@ -777,6 +779,94 @@ fn sound_pickers_set_exact_values_and_show_the_current_one() {
     assert_eq!(pages::eq_preset_name(&m), "Bass Boost");
     m.settings.eq_bands[2].gain_db = 1.;
     assert_eq!(pages::eq_preset_name(&m), "Custom");
+}
+
+#[test]
+fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
+    let mut ui = radios();
+    let m = app(Screen::SettingsAudio);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let row = |label: &str| rows.iter().find(|r| r.label == label).unwrap().clone();
+    assert_eq!(row("Headphone Level").secondary, "Low");
+    assert_eq!(row("DAC Filter").secondary, "Fast");
+    let mut m = app(Screen::HeadphoneLevel);
+    m.settings.hp_level = reborn_core::HpLevel::Medium;
+    let checked: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .filter(|r| r.kind == RowKind::Check(true))
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(checked, ["Medium"]);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_level_set:high"),
+        Effect::SetHpLevel(reborn_core::HpLevel::High)
+    );
+    let mut m = app(Screen::DacFilter);
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels.len(), 5);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "dac_filter_set:slow_phase"),
+        Effect::SetDacFilter(reborn_core::DacFilter::SlowPhaseCompensated)
+    );
+}
+
+#[test]
+fn headphone_profiles_are_listed_imported_and_shown_instead_of_presets() {
+    let mut ui = radios();
+    let mut m = app(Screen::Equalizer);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "eq_profile"),
+        Effect::ScanEqProfiles
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Equalizer, "profile")
+    );
+    ui.eq_profiles = vec![
+        reborn_core::eq::ProfileFile {
+            name: "HD 650".into(),
+            path: "/m/EQ/HD 650 ParametricEQ.txt".into(),
+        },
+        reborn_core::eq::ProfileFile {
+            name: "Aria".into(),
+            path: "/m/EQ/Aria.txt".into(),
+        },
+    ];
+    assert_eq!(
+        select_key(&mut ui, &mut m, "eq_profile_file:1"),
+        Effect::ImportEqProfile("/m/EQ/Aria.txt".into())
+    );
+    // Playing a profile: checked in the list, named on Sound, presets clear.
+    let profile =
+        reborn_core::eq::parse("HD 650", "Filter 1: ON PK Fc 100 Hz Gain 3 dB Q 1\n").unwrap();
+    m.settings.eq_profile = Some(profile);
+    m.settings.eq_profile_on = true;
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].kind, RowKind::Check(true));
+    assert_eq!(rows[1].kind, RowKind::Check(false));
+    assert_eq!(pages::eq_summary(&m), "HD 650");
+    // Its file removed: still listed as saved.
+    ui.eq_profiles.clear();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(
+        (rows[0].label.as_str(), rows[0].secondary.as_str()),
+        ("HD 650", "Saved")
+    );
+    m.navigation.filter.clear();
+    let rows = ui.rows(&m, &m.library.tracks);
+    let checked: Vec<_> = rows
+        .iter()
+        .filter(|r| r.kind == RowKind::Check(true))
+        .map(|r| r.label.as_str())
+        .collect();
+    assert_eq!(checked, ["Headphone Profile"]);
+    m.settings.eq_profile_on = false;
+    assert_eq!(pages::eq_summary(&m), "Flat");
 }
 
 #[test]
@@ -1405,8 +1495,8 @@ fn only_preferences_and_session_survive_serialization() {
 fn custom_equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
     let mut ui = radios();
     let mut m = app(Screen::Equalizer);
-    // Presets first; Custom opens the five bands.
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 5);
+    // Presets first, then Custom (the five bands) and Headphone Profile.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 6);
     select_key(&mut ui, &mut m, "eq_custom");
     assert_eq!(m.navigation.filter, "custom");
     let rows = ui.rows(&m, &m.library.tracks);

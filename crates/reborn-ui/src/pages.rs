@@ -154,9 +154,11 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
         Screen::LastFm => lastfm(ui, m),
-        Screen::Equalizer => equalizer(m),
+        Screen::Equalizer => equalizer(ui, m),
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
+        Screen::HeadphoneLevel => headphone_level(m),
+        Screen::DacFilter => dac_filter(m),
         Screen::Theme => theme(ui, m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
@@ -363,10 +365,19 @@ pub(crate) fn eq_preset_name(m: &AppModel) -> &'static str {
         .map_or("Custom", |(name, _, _)| name)
 }
 
+/// What the Equalizer row says: the headphone profile when it plays, else
+/// the preset.
+pub(crate) fn eq_summary(m: &AppModel) -> String {
+    match &m.settings.eq_profile {
+        Some(p) if m.settings.eq_profile_on => p.name.clone(),
+        _ => eq_preset_name(m).into(),
+    }
+}
+
 fn sound(ui: &Ui, m: &AppModel) -> Page {
     let normalise = m.settings.replay_gain != reborn_core::ReplayGainMode::Off;
     Page::rows(vec![
-        row("Equalizer", "equalizer", eq_preset_name(m)).with_kind(RowKind::Chevron),
+        row("Equalizer", "equalizer", eq_summary(m)).with_kind(RowKind::Chevron),
         row("Normalize Volume", "replay_gain", "").with_kind(RowKind::Toggle(normalise)),
         row("Gapless Playback", "gapless", "")
             .with_kind(RowKind::Toggle(m.settings.gapless_enabled)),
@@ -377,7 +388,46 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
         )
         .with_kind(RowKind::Chevron),
         row("Output", "output", output_name(ui, m)).with_kind(RowKind::Chevron),
+        row("Headphone Level", "hp_level", m.settings.hp_level.label()).with_kind(RowKind::Chevron),
+        row("DAC Filter", "dac_filter", m.settings.dac_filter.label()).with_kind(RowKind::Chevron),
     ])
+}
+
+fn headphone_level(m: &AppModel) -> Page {
+    let mut page = Page::rows(
+        reborn_core::HpLevel::ALL
+            .into_iter()
+            .map(|level| {
+                row(level.label(), &format!("hp_level_set:{}", level.key()), "")
+                    .with_kind(RowKind::Check(m.settings.hp_level == level))
+            })
+            .collect(),
+    );
+    page.status = Some(
+        "Low suits earphones, High hard-to-drive headphones. Changing it restarts the \
+         music; a higher level fades in."
+            .into(),
+    );
+    page
+}
+
+fn dac_filter(m: &AppModel) -> Page {
+    let mut page = Page::rows(
+        reborn_core::DacFilter::ALL
+            .into_iter()
+            .map(|filter| {
+                row(
+                    filter.label(),
+                    &format!("dac_filter_set:{}", filter.key()),
+                    "",
+                )
+                .with_kind(RowKind::Check(m.settings.dac_filter == filter))
+            })
+            .collect(),
+    );
+    page.status =
+        Some("How the headphone DAC filters between samples. Fast is the usual choice.".into());
+    page
 }
 
 fn crossfade(m: &AppModel) -> Page {
@@ -1054,7 +1104,42 @@ pub(crate) fn eq_frequency(hz: f32) -> String {
     }
 }
 
-fn equalizer(m: &AppModel) -> Page {
+/// The headphone profiles on the storage, the one playing checked; a saved
+/// profile whose file is gone stays listed.
+fn eq_profiles(ui: &Ui, m: &AppModel) -> Page {
+    let playing = m
+        .settings
+        .eq_profile
+        .as_ref()
+        .filter(|_| m.settings.eq_profile_on)
+        .map(|p| p.name.as_str());
+    let mut rows: Vec<Item> = ui
+        .eq_profiles
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            row(&file.name, &format!("eq_profile_file:{index}"), "")
+                .with_kind(RowKind::Check(playing == Some(file.name.as_str())))
+        })
+        .collect();
+    if let Some(name) = playing.filter(|n| !ui.eq_profiles.iter().any(|f| f.name == *n)) {
+        rows.insert(
+            0,
+            row(name, "eq_profile_saved", "Saved").with_kind(RowKind::Check(true)),
+        );
+    }
+    let mut page = Page::rows(rows);
+    page.status = Some(
+        "Put AutoEQ ParametricEQ.txt files in an EQ folder on Internal Storage or the SD card."
+            .into(),
+    );
+    page
+}
+
+fn equalizer(ui: &Ui, m: &AppModel) -> Page {
+    if m.navigation.filter == "profile" {
+        return eq_profiles(ui, m);
+    }
     if m.navigation.filter == "custom" {
         let defaults = reborn_core::flat_eq_bands();
         let bands = if m.settings.eq_bands.is_empty() {
@@ -1073,7 +1158,8 @@ fn equalizer(m: &AppModel) -> Page {
         rows.push(Item::new("Reset to Flat", "eq_reset"));
         return Page::rows(rows);
     }
-    let current = eq_preset_name(m);
+    let profile = m.settings.eq_profile_on && m.settings.eq_profile.is_some();
+    let current = if profile { "" } else { eq_preset_name(m) };
     let mut rows: Vec<Item> = EQ_PRESETS
         .iter()
         .map(|(name, key, _)| {
@@ -1082,6 +1168,13 @@ fn equalizer(m: &AppModel) -> Page {
         .collect();
     rows.push(
         row("Custom", "eq_custom", "").with_kind(if current == "Custom" {
+            RowKind::Check(true)
+        } else {
+            RowKind::Chevron
+        }),
+    );
+    rows.push(
+        row("Headphone Profile", "eq_profile", "").with_kind(if profile {
             RowKind::Check(true)
         } else {
             RowKind::Chevron

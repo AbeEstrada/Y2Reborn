@@ -68,6 +68,8 @@ struct RawEqBand {
     frequency_hz: c_double,
     gain_db: c_double,
     q: c_double,
+    /// 0 peaking, 1 low shelf, 2 high shelf.
+    kind: u32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -75,8 +77,9 @@ struct RawDspConfig {
     replay_gain_mode: c_int,
     volume: u32,
     eq_count: u32,
-    eq: [RawEqBand; 8],
+    eq: [RawEqBand; reborn_core::eq::MAX_BANDS],
     crossfade_ms: u32,
+    preamp_db: c_double,
 }
 
 type CancelNew = unsafe extern "C" fn() -> *mut c_void;
@@ -461,6 +464,9 @@ pub struct DspConfig {
     pub eq_enabled: bool,
     pub eq_bands: Vec<EqBand>,
     pub crossfade_ms: u32,
+    /// Gain before the equalizer (dB, ≤ 0): a headphone profile's preamp.
+    #[serde(default)]
+    pub preamp_db: f32,
 }
 impl DspConfig {
     pub fn with_volume(volume: u8) -> Self {
@@ -474,9 +480,13 @@ impl DspConfig {
             frequency_hz: 0.0,
             gain_db: 0.0,
             q: 1.0,
-        }; 8];
+            kind: 0,
+        }; reborn_core::eq::MAX_BANDS];
         let bands = if self.eq_enabled {
-            self.eq_bands.iter().take(8).collect::<Vec<_>>()
+            self.eq_bands
+                .iter()
+                .take(reborn_core::eq::MAX_BANDS)
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -486,6 +496,11 @@ impl DspConfig {
                 frequency_hz: src.frequency_hz as c_double,
                 gain_db: src.gain_db as c_double,
                 q: src.q as c_double,
+                kind: match src.kind {
+                    reborn_core::EqKind::Peak => 0,
+                    reborn_core::EqKind::LowShelf => 1,
+                    reborn_core::EqKind::HighShelf => 2,
+                },
             };
         }
         RawDspConfig {
@@ -498,6 +513,11 @@ impl DspConfig {
             eq_count,
             eq,
             crossfade_ms: self.crossfade_ms.min(30_000),
+            preamp_db: if self.eq_enabled {
+                c_double::from(self.preamp_db.clamp(-60.0, 0.0))
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -1342,8 +1362,10 @@ mod tests {
                     frequency_hz: 1000.0,
                     gain_db: 3.0,
                     q: 1.0,
+                    kind: reborn_core::EqKind::Peak,
                 }],
                 crossfade_ms: 0,
+                preamp_db: 0.0,
             },
             Cancel::new().unwrap(),
         )
@@ -1401,6 +1423,7 @@ mod tests {
                     frequency_hz: 100.0,
                     gain_db: -2.0,
                     q: 1.0,
+                    kind: reborn_core::EqKind::Peak,
                 }],
                 ..Default::default()
             },
@@ -1408,6 +1431,69 @@ mod tests {
         )
         .unwrap();
         assert!(eq.metadata.filters.contains("alimiter"));
+    }
+    /// Decode the fixture with one filter and the given preamp; return the
+    /// largest sample and the reported gain stage.
+    fn shaped(
+        kind: reborn_core::EqKind,
+        frequency_hz: f32,
+        gain_db: f32,
+        preamp_db: f32,
+    ) -> (i64, f64, String) {
+        let mut decoder = Decoder::open_with(
+            &fixture("flac-16-44100.flac"),
+            OutputSpec {
+                rate: 44_100,
+                format: PcmFormat::S32LE,
+            },
+            DspConfig {
+                volume: 100,
+                eq_enabled: true,
+                eq_bands: vec![EqBand {
+                    frequency_hz,
+                    gain_db,
+                    q: 0.7,
+                    kind,
+                }],
+                preamp_db,
+                ..Default::default()
+            },
+            Cancel::new().unwrap(),
+        )
+        .unwrap();
+        let mut peak = 0i64;
+        while let Some(block) = decoder.read().unwrap() {
+            for sample in block.data.as_chunks::<4>().0 {
+                peak = peak.max(i32::from_le_bytes(*sample).unsigned_abs() as i64);
+            }
+        }
+        (
+            peak,
+            decoder.metadata.applied_gain_db,
+            decoder.metadata.filters.clone(),
+        )
+    }
+    #[test]
+    fn profile_shelves_and_preamp_reach_the_ffmpeg_graph() {
+        use reborn_core::EqKind::{HighShelf, LowShelf, Peak};
+        // Each shape is a different FFmpeg filter: a -20 dB shelf below or
+        // above 1 kHz removes different parts of the same music.
+        let (low, _, _) = shaped(LowShelf, 1000., -20., 0.);
+        let (high, _, _) = shaped(HighShelf, 1000., -20., 0.);
+        let (peak, _, _) = shaped(Peak, 1000., -20., 0.);
+        assert!(
+            low != high && high != peak && low != peak,
+            "{low} {high} {peak}"
+        );
+        // The preamp is part of the gain stage before the filters.
+        let (quiet, applied, filters) = shaped(LowShelf, 100., 6., -6.4);
+        assert!((applied + 6.4).abs() < 1e-6, "{applied}");
+        assert!(filters.contains("preamp=-6.4dB"), "{filters}");
+        let (loud, _, _) = shaped(LowShelf, 100., 6., 0.);
+        assert!(quiet < loud, "{quiet} {loud}");
+        // A preamp without an active band does nothing.
+        let (_, applied, _) = shaped(Peak, 1000., 0., -6.4);
+        assert_eq!(applied, 0.0);
     }
     #[test]
     fn folder_artwork_names_priority_and_single_image_fallback() {

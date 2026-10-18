@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod clock;
 mod countries;
+pub mod eq;
 pub mod platform;
 pub mod playlist;
 pub mod scrobble;
@@ -192,11 +193,23 @@ pub enum ReplayGainMode {
     Track,
     Album,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The shape of one equalizer filter (RBJ cookbook biquads, as FFmpeg's
+/// `equalizer`, `lowshelf` and `highshelf` with a Q width).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EqKind {
+    #[default]
+    Peak,
+    LowShelf,
+    HighShelf,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EqBand {
     pub frequency_hz: f32,
     pub gain_db: f32,
     pub q: f32,
+    #[serde(default)]
+    pub kind: EqKind,
 }
 impl Default for EqBand {
     fn default() -> Self {
@@ -204,6 +217,95 @@ impl Default for EqBand {
             frequency_hz: 1000.0,
             gain_db: 0.0,
             q: 1.0,
+            kind: EqKind::Peak,
+        }
+    }
+}
+
+/// Headphone output level: the DAC's full-scale voltage (Y2Linux kernel
+/// control "HP Output Level"). Low is the stock headphone level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HpLevel {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+impl HpLevel {
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+    /// The level's index in the kernel control.
+    pub fn index(self) -> u32 {
+        self as u32
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.key() == key)
+    }
+}
+/// The DAC's interpolation filter (CS43131 PCM Filter Option).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DacFilter {
+    /// Fast roll-off, low latency: the chip's and stock's default.
+    #[default]
+    Fast,
+    FastPhaseCompensated,
+    Slow,
+    SlowPhaseCompensated,
+    /// Nonoversampling emulation (no interpolation filter).
+    Nos,
+}
+impl DacFilter {
+    pub const ALL: [Self; 5] = [
+        Self::Fast,
+        Self::FastPhaseCompensated,
+        Self::Slow,
+        Self::SlowPhaseCompensated,
+        Self::Nos,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast",
+            Self::FastPhaseCompensated => "Fast, Phase Compensated",
+            Self::Slow => "Slow",
+            Self::SlowPhaseCompensated => "Slow, Phase Compensated",
+            Self::Nos => "Nonoversampling",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::FastPhaseCompensated => "fast_phase",
+            Self::Slow => "slow",
+            Self::SlowPhaseCompensated => "slow_phase",
+            Self::Nos => "nos",
+        }
+    }
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.key() == key)
+    }
+    /// (slow, phase compensated, nonoversampling) for the three kernel controls.
+    pub fn switches(self) -> (bool, bool, bool) {
+        match self {
+            Self::Fast => (false, false, false),
+            Self::FastPhaseCompensated => (false, true, false),
+            Self::Slow => (true, false, false),
+            Self::SlowPhaseCompensated => (true, true, false),
+            Self::Nos => (false, false, true),
         }
     }
 }
@@ -218,6 +320,7 @@ pub fn flat_eq_bands() -> Vec<EqBand> {
             frequency_hz: *hz as f32,
             gain_db: 0.,
             q: 1.,
+            kind: EqKind::Peak,
         })
         .collect()
 }
@@ -591,6 +694,10 @@ pub enum Screen {
     Crossfade,
     /// Screen-off delay picker.
     ScreenTimeout,
+    /// Wired headphone output level picker (Settings > Sound).
+    HeadphoneLevel,
+    /// DAC interpolation filter picker (Settings > Sound).
+    DacFilter,
     /// Skin picker: the built-in look and the installed skins.
     Theme,
     /// Time zone picker (Settings > Display).
@@ -803,6 +910,18 @@ pub struct Settings {
     /// The one-time "Set Up Internal Storage?" question was shown.
     #[serde(default)]
     pub internal_setup_asked: bool,
+    /// Wired headphone output level.
+    #[serde(default)]
+    pub hp_level: HpLevel,
+    /// Wired DAC interpolation filter.
+    #[serde(default)]
+    pub dac_filter: DacFilter,
+    /// The imported headphone profile (kept when the file is removed).
+    #[serde(default)]
+    pub eq_profile: Option<eq::EqProfile>,
+    /// The profile plays instead of the five-band equalizer.
+    #[serde(default)]
+    pub eq_profile_on: bool,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -872,10 +991,35 @@ impl Default for Settings {
             lastfm_scrobble: true,
             lastfm_now_playing: true,
             internal_setup_asked: false,
+            hp_level: HpLevel::Low,
+            dac_filter: DacFilter::Fast,
+            eq_profile: None,
+            eq_profile_on: false,
         }
     }
 }
 impl Settings {
+    /// Keep a stored profile within what the engine plays: at most ten
+    /// filters and a preamp that still covers them; drop an empty one.
+    pub fn sanitize_eq_profile(&mut self) {
+        if let Some(p) = &mut self.eq_profile {
+            p.bands.truncate(eq::MAX_BANDS);
+            p.preamp_db = eq::safe_preamp_db(Some(p.preamp_db), &p.bands);
+        }
+        if self.eq_profile.as_ref().is_none_or(|p| p.bands.is_empty()) {
+            self.eq_profile = None;
+            self.eq_profile_on = false;
+        }
+    }
+    /// The filters and preamp playback uses: the headphone profile when it is
+    /// on, else the five-band equalizer (no preamp; the limiter catches peaks).
+    pub fn active_eq(&self) -> Option<(f32, Vec<EqBand>)> {
+        match &self.eq_profile {
+            Some(p) if self.eq_profile_on => Some((p.preamp_db, p.bands.clone())),
+            _ if self.eq_enabled => Some((0.0, self.eq_bands.clone())),
+            _ => None,
+        }
+    }
     /// Whether the clock's zone is found automatically (Beta 7.1).
     pub fn zone_auto(&self) -> bool {
         self.time_zone_auto.unwrap_or(self.time_zone == "UTC")
@@ -989,6 +1133,12 @@ pub enum Effect {
     ResetEq,
     /// Gains in dB for the five equalizer bands; all zero turns the equalizer off.
     SetEqPreset([i8; 5]),
+    /// Read a `ParametricEQ.txt` and play it instead of the five bands.
+    ImportEqProfile(PathBuf),
+    /// Look for profile files again (the profile list opened).
+    ScanEqProfiles,
+    SetHpLevel(HpLevel),
+    SetDacFilter(DacFilter),
     SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),
@@ -1305,6 +1455,7 @@ impl AppModel {
         m.settings.volume = m.settings.volume.min(100);
         m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
         m.settings.eq_bands.truncate(8);
+        m.settings.sanitize_eq_profile();
         m.settings.brightness = m.settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
         Ok(m)
     }

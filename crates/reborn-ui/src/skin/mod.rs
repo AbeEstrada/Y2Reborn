@@ -560,6 +560,8 @@ pub const LAYOUTS: &[&str] = &[
     "playback",
     "crossfade",
     "screen_off",
+    "headphone_level",
+    "dac_filter",
     "theme",
     "time_zone",
     "home_menu",

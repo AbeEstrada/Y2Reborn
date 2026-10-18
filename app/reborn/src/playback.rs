@@ -18,6 +18,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// Fade-in of the first stream after the headphone level went up.
+const LEVEL_RAISE_FADE_MS: u32 = 2000;
 /// What keeps a decoder's input valid: a pinned library file, or a radio
 /// station's network transfer (stopped when the decoder is dropped).
 enum Source {
@@ -1191,6 +1193,21 @@ impl Playback {
                                 match factory(&spec, al.clone(), id) {
                                     Ok(s) => {
                                         let params = s.parameters();
+                                        if params.level_raised {
+                                            gain = VolumeRamp::fade_in(
+                                                sink_volume.load(Ordering::Relaxed),
+                                                rate,
+                                                LEVEL_RAISE_FADE_MS,
+                                            );
+                                            al.emit(
+                                                Level::Info,
+                                                "audio",
+                                                "level_raise_fade",
+                                                "headphone level went up: fading in",
+                                                Some(id),
+                                                json!({"hp_level":params.hp_level_live,"fade_ms":LEVEL_RAISE_FADE_MS}),
+                                            );
+                                        }
                                         if let Ok(mut value) = audio_state.lock() {
                                             if let Some(object) = value.as_object_mut() {
                                                 object.insert(
@@ -1745,6 +1762,8 @@ mod tests {
                 device: "test".into(),
                 fallback: false,
                 fallback_reason: String::new(),
+                hp_level_live: None,
+                level_raised: false,
             }
         }
         fn write(&mut self, s: &[u8]) -> Result<usize, String> {
@@ -2380,6 +2399,8 @@ mod tests {
                 device: "test".into(),
                 fallback: false,
                 fallback_reason: String::new(),
+                hp_level_live: None,
+                level_raised: false,
             }
         }
         fn write(&mut self, _pcm: &[u8]) -> Result<usize, String> {
@@ -2466,6 +2487,8 @@ mod tests {
                     device: "test".into(),
                     fallback: false,
                     fallback_reason: String::new(),
+                    hp_level_live: None,
+                    level_raised: false,
                 }
             }
             fn write(&mut self, s: &[u8]) -> Result<usize, String> {

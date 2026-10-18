@@ -18,6 +18,8 @@ struct RawParams {
     hardware_mixer_gain_cdb: c_int,
     device: [c_char; 128],
     fallback_reason: [c_char; 256],
+    hp_level_live: c_int,
+    level_raised: c_int,
 }
 unsafe extern "C" {
     fn rb_alsa_logging(callback: extern "C" fn(*const c_char));
@@ -41,6 +43,9 @@ unsafe extern "C" {
         out: *mut *mut c_void,
         params: *mut RawParams,
     ) -> c_int;
+    fn rb_wired_configure(level: c_int, slow: c_int, phase: c_int, nos: c_int) -> c_int;
+    #[cfg(test)]
+    fn rb_wired_note_live(live: c_int) -> c_int;
     fn rb_sink_close(p: *mut c_void);
     fn rb_sink_write(p: *mut c_void, b: *const u8, frames: c_int) -> c_int;
     fn rb_sink_wait(p: *mut c_void, ms: c_int) -> c_int;
@@ -114,7 +119,32 @@ fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Result<Parameters,
             .map(|s| s.fallback_reason.clone())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| text(&raw.fallback_reason)),
+        hp_level_live: u8::try_from(raw.hp_level_live).ok(),
+        level_raised: raw.level_raised != 0,
     })
+}
+/// Choose the wired headphone level and DAC filter (Y2Linux kernel controls).
+/// Remembered for every wired stream; applied now where the amplifier is
+/// down. Ok(false): the kernel has no level control (older Y2Linux).
+pub fn wired_configure(
+    level: reborn_core::HpLevel,
+    filter: reborn_core::DacFilter,
+) -> Result<bool, String> {
+    let (slow, phase, nos) = filter.switches();
+    // SAFETY: plain integers; the C side opens and closes its own handle.
+    let r = unsafe {
+        rb_wired_configure(
+            level.index() as c_int,
+            c_int::from(slow),
+            c_int::from(phase),
+            c_int::from(nos),
+        )
+    };
+    if r < 0 {
+        Err(error(r))
+    } else {
+        Ok(r > 0)
+    }
 }
 pub fn wired_device() -> Result<String, String> {
     let mut b = [0; 128];
@@ -599,6 +629,38 @@ pub fn initialize_logging(log: Observer) {
     if LOGGER.set(log).is_ok() {
         // SAFETY: callback has process lifetime and is registered once.
         unsafe { rb_alsa_logging(alsa_log) }
+    }
+}
+
+#[cfg(test)]
+mod wired_level_tests {
+    use super::*;
+    use reborn_core::{DacFilter, HpLevel};
+
+    /// The only test that touches the process-wide wired state. There is no
+    /// Y2Audio card on the host, so configuring reports an error but still
+    /// remembers the choice, as on the player before the card appears.
+    #[test]
+    fn a_louder_stream_or_a_chosen_rise_fades_in_but_the_startup_level_does_not() {
+        let fades = |live| unsafe { rb_wired_note_live(live) } != 0;
+        // Startup: the saved level (High) is the baseline, not a rise.
+        let _ = wired_configure(HpLevel::High, DacFilter::Fast);
+        assert!(!fades(2), "first stream after boot at the saved level");
+        assert!(!fades(2));
+        let _ = wired_configure(HpLevel::Low, DacFilter::Fast);
+        assert!(!fades(0), "lower is never faded");
+        // Chosen higher: the next stream fades, even when the comparison with
+        // the previous stream alone could not tell (none since boot).
+        let _ = wired_configure(HpLevel::Medium, DacFilter::Slow);
+        assert!(fades(1));
+        assert!(!fades(1), "only once");
+        // A stream louder than the last one fades without a choice too.
+        assert!(fades(2));
+        // A rise chosen and then taken back before any stream: no fade at Low.
+        let _ = wired_configure(HpLevel::High, DacFilter::Fast);
+        let _ = wired_configure(HpLevel::Low, DacFilter::Fast);
+        assert!(!fades(0));
+        assert!(wired_configure(HpLevel::Low, DacFilter::Nos).is_err());
     }
 }
 

@@ -118,6 +118,7 @@ typedef struct {
   uint32_t info_runs;
 } RbMetadata;
 
+#define RB_EQ_BANDS 10
 typedef struct {
   int replay_gain_mode;
   uint32_t volume;
@@ -126,8 +127,10 @@ typedef struct {
     double frequency_hz;
     double gain_db;
     double q;
-  } eq[8];
+    uint32_t kind; /* 0 peaking, 1 low shelf, 2 high shelf */
+  } eq[RB_EQ_BANDS];
   uint32_t crossfade_ms;
+  double preamp_db; /* <= 0, before the equalizer */
 } RbDspConfig;
 
 typedef struct {
@@ -651,7 +654,7 @@ static int make_filter_graph(RbMedia *m) {
   /* Only equalizer supports slice threads in this audio graph, and there
    * are at most two canonical channels. Avoid an unused automatic pool. */
   int active_eq = 0;
-  for (uint32_t i = 0; i < m->dsp.eq_count && i < 8; i++)
+  for (uint32_t i = 0; i < m->dsp.eq_count && i < RB_EQ_BANDS; i++)
     active_eq |= m->dsp.eq[i].gain_db != 0.0;
   m->graph->nb_threads = active_eq ? 2 : 1;
   char args[256];
@@ -701,27 +704,35 @@ static int make_filter_graph(RbMedia *m) {
   double headroom = 0.0;
   if (peak > 0.0 && rg + 20.0 * log10(peak) > -0.1)
     headroom = -0.1 - rg - 20.0 * log10(peak);
-  double applied = rg + user + headroom;
+  /* A headphone profile's preamp: an attenuation the profile's own filters
+   * give back, so it is part of the gain stage before them. */
+  double preamp = active_eq && m->dsp.preamp_db < 0.0 ? m->dsp.preamp_db : 0.0;
+  double applied = rg + user + headroom + preamp;
   m->applied_gain_db = applied;
   m->headroom_db = headroom;
-  char chain[1024];
+  char chain[2048];
   int used = snprintf(chain, sizeof(chain),
                       "aformat=sample_fmts=fltp:channel_layouts=stereo");
   if (used < 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
-  if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0) {
+  if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0 || preamp != 0.0) {
     double linear = pow(10.0, applied / 20.0);
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
                      ",volume=volume=%.12f", linear);
   }
-  for (uint32_t i = 0; i < m->dsp.eq_count && i < 8; i++) {
+  static const char *const eq_filter[] = {"equalizer", "lowshelf", "highshelf"};
+  for (uint32_t i = 0; i < m->dsp.eq_count && i < RB_EQ_BANDS; i++) {
     if (m->dsp.eq[i].gain_db == 0.0)
       continue;
+    if (m->dsp.eq[i].kind > 2 || (size_t)used >= sizeof(chain))
+      return AVERROR(EINVAL);
     double q = m->dsp.eq[i].q > 0.01 ? m->dsp.eq[i].q : 1.0;
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
-                     ",equalizer=f=%.9g:t=q:w=%.9g:g=%.9g",
+                     ",%s=f=%.9g:t=q:w=%.9g:g=%.9g", eq_filter[m->dsp.eq[i].kind],
                      m->dsp.eq[i].frequency_hz, q, m->dsp.eq[i].gain_db);
   }
+  if ((size_t)used >= sizeof(chain))
+    return AVERROR(EINVAL);
   /* The limiter is also an FFmpeg graph stage so EQ peaks cannot wrap during
    * the final integer conversion. It is only needed when this graph can raise
    * a peak: an active EQ band, or a net positive gain (ReplayGain without a
@@ -737,8 +748,8 @@ static int make_filter_graph(RbMedia *m) {
   if (used <= 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
   snprintf(m->filter_description, sizeof(m->filter_description),
-           "ReplayGain=%s,volume=%u,EQ=%s,%s,acrossfade=%ums",
-           rg_name, m->dsp.volume, m->dsp.eq_count ? "configured" : "off",
+           "ReplayGain=%s,volume=%u,EQ=%s,preamp=%.1fdB,%s,acrossfade=%ums",
+           rg_name, m->dsp.volume, m->dsp.eq_count ? "configured" : "off", preamp,
            limiter ? "alimiter" : "no-limiter", m->dsp.crossfade_ms);
   AVFilterInOut *inputs = NULL, *outputs = NULL;
   r = avfilter_graph_parse2(m->graph, chain, &inputs, &outputs);

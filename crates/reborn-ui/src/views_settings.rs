@@ -27,7 +27,9 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             equalizer(c, ui, m, &page, focus, interactive)
         }
         Screen::Equalizer => group_page(c, ui, m, &page, focus, interactive, 38.),
-        Screen::Crossfade | Screen::ScreenTimeout => picker(c, ui, &page, focus, interactive),
+        Screen::Crossfade | Screen::ScreenTimeout | Screen::HeadphoneLevel | Screen::DacFilter => {
+            picker(c, ui, &page, focus, interactive)
+        }
         Screen::Theme => themes(c, ui, m, &page, focus, interactive),
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
         Screen::Storage => storage(c, m, &page, focus, interactive),
@@ -472,15 +474,25 @@ fn radio(
 // -------------------------------------------------------------- sound etc.
 
 fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
-    let bottom = group(
-        c,
-        ui,
-        &page.rows[..4.min(page.rows.len())],
-        0,
-        focus,
-        interactive,
-        38.,
-    );
+    // Rows 0–3 playback, 4 the output card, 5– the headphone settings. Those
+    // do not fit under the output card: once the focus reaches them the page
+    // scrolls the playback group away, as Display does with its card.
+    let bottom = if focus >= 5 {
+        28.
+    } else {
+        group(
+            c,
+            ui,
+            &page.rows[..4.min(page.rows.len())],
+            0,
+            focus,
+            interactive,
+            38.,
+        )
+    };
+    if page.rows.len() > 5 {
+        group(c, ui, &page.rows[5..], 5, focus, interactive, bottom + 106.);
+    }
     components::section_label(c, 28., bottom + 24., "Output");
     if let Some(row) = page.rows.get(4) {
         let y = bottom + 38.;
@@ -598,32 +610,46 @@ fn picker(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool)
 
 fn equalizer(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
     let accent = ui.accent();
+    // Six rows (presets, Custom, Headphone Profile) above the curve card.
+    let pitch = 38.;
     for (i, row) in page.rows.iter().enumerate() {
-        let y = 38. + i as f32 * 44.;
+        let y = 38. + i as f32 * pitch;
         let selected = interactive && i == focus;
         if selected {
-            components::focus_row(c, 10., y, WIDTH - 20., 40.);
+            components::focus_row(c, 10., y, WIDTH - 20., pitch - 4.);
         }
         let face = if selected { Face::S15 } else { Face::R15 };
-        c.text_mid(26., y + 20., 330., &row.label, face, color::TEXT);
+        let mid = y + (pitch - 4.) / 2.;
+        c.text_mid(26., mid, 330., &row.label, face, color::TEXT);
         match row.kind {
-            RowKind::Check(true) => components::check(c, WIDTH - 32., y + 20., accent),
-            RowKind::Chevron => components::chevron(c, WIDTH - 22., y + 20.),
+            RowKind::Check(true) => components::check(c, WIDTH - 32., mid, accent),
+            RowKind::Chevron => components::chevron(c, WIDTH - 22., mid),
             _ => {}
         }
     }
-    // A live curve of the focused preset (or the current settings).
+    // A live curve of the focused preset (or the current settings); the
+    // headphone profile shows its filters' response (without the preamp, as
+    // AutoEQ draws it) at the five band frequencies.
     let focused = page.rows.get(focus).map(|r| r.key.as_str()).unwrap_or("");
-    let gains = pages::EQ_PRESETS
-        .iter()
-        .find(|(_, key, _)| focused == format!("eq_preset:{key}"))
-        .map(|(_, _, g)| *g)
-        .unwrap_or_else(|| pages::eq_gains(m));
+    let profile = m.settings.eq_profile.as_ref().filter(|_| {
+        focused == "eq_profile" || (m.settings.eq_profile_on && !focused.starts_with("eq_preset:"))
+    });
+    let gains: [f32; 5] = match profile {
+        Some(p) => reborn_core::EQ_FREQUENCIES.map(|hz| {
+            reborn_core::eq::response_db(&p.bands, f64::from(hz), 48_000.).clamp(-12., 12.) as f32
+        }),
+        None => pages::EQ_PRESETS
+            .iter()
+            .find(|(_, key, _)| focused == format!("eq_preset:{key}"))
+            .map(|(_, _, g)| *g)
+            .unwrap_or_else(|| pages::eq_gains(m))
+            .map(f32::from),
+    };
     components::card(c, 10., 266., WIDTH - 20., 76.);
     let xs: Vec<f32> = (0..5)
         .map(|i| 34. + i as f32 * ((WIDTH - 68.) / 4.))
         .collect();
-    let ys: Vec<f32> = gains.iter().map(|g| 304. - f32::from(*g) * 2.6).collect();
+    let ys: Vec<f32> = gains.iter().map(|g| 304. - g * 2.6).collect();
     for x in &xs {
         c.rect(x.round(), 276., 1., 56., color::RULE);
     }
