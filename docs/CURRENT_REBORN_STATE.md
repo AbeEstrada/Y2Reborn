@@ -17,6 +17,9 @@
   The clip-safe preamp is min(file preamp, −peak of the combined RBJ response from 10 Hz to Nyquist at 44.1/48 kHz),
   rounded down to 0.1 dB. Files come from `EQ` folders on Internal Storage and SD cards; `Settings::eq_profile`
   keeps a copy and `eq_profile_on` plays it instead of the five bands (a preset or a band edit turns it off).
+  47 AutoEq profiles of common headphones and IEMs ship in `assets/eq` (pinned AutoEq commit, MIT,
+  `SOURCES.md`, refetch with `tools/assets/fetch_eq_profiles.py`; test `shipped_profiles_all_import`), installed to
+  `/usr/share/reborn/eq` and listed with the storage `EQ` folders (a storage file replaces a shipped one by name).
   Engine: `EqBand::kind`, 10 bands across the FFI, `DspConfig::preamp_db` in the gain stage before the filters,
   `equalizer`/`lowshelf`/`highshelf` in the graph, limiter unchanged. The equalizer curve shows the profile's
   response.

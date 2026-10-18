@@ -375,6 +375,31 @@ Filter 10: ON PK Fc 5332 Hz Gain -1.1 dB Q 5.75
         assert!(parse("x", &eleven).unwrap_err().contains("11 filters"));
     }
 
+    /// Every profile Reborn ships (assets/eq) reads with the real parser and
+    /// keeps AutoEq's ten filters.
+    #[test]
+    fn shipped_profiles_all_import() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/eq");
+        let mut count = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let file = path.file_name().unwrap().to_string_lossy().into_owned();
+            if !file.ends_with("ParametricEQ.txt") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let p = parse(&profile_name(&file), &text).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(p.bands.len(), MAX_BANDS, "{file}");
+            assert!(
+                p.preamp_db <= 0.0 && p.preamp_db > -20.0,
+                "{file}: {}",
+                p.preamp_db
+            );
+            count += 1;
+        }
+        assert_eq!(count, 47);
+    }
+
     #[test]
     fn profile_names_come_from_the_file_name() {
         assert_eq!(

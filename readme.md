@@ -41,8 +41,9 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   Nothing is recorded until you opt in; Disconnect and Reset Settings forget the sign-in and its
   waiting plays. Full guide, privacy and security:
   [Last.fm scrobbling](https://github.com/SchulzCode/Y2Linux/blob/main/docs/LASTFM.md).
-- Sound and playback: five-band equalizer with presets, headphone profiles (AutoEQ
-  `ParametricEQ.txt` files from an `EQ` folder, up to 10 filters with a clip-safe preamp),
+- Sound and playback: five-band equalizer with presets, headphone profiles (47 common
+  headphones and IEMs from AutoEQ built in, more as `ParametricEQ.txt` files in an `EQ` folder; up to 10
+  filters with a clip-safe preamp),
   headphone output level (Low/Medium/High) and DAC filter, Normalize Volume (ReplayGain), gapless
   playback, crossfade (up to 12 s), shuffle and repeat.
 - Search (Home → Search) across artists, albums and songs, with results shown live while typing:

@@ -1163,7 +1163,7 @@ fn eq_profiles(ui: &Ui, m: &AppModel) -> Page {
     }
     let mut page = Page::rows(rows);
     page.status = Some(
-        "Put AutoEQ ParametricEQ.txt files in an EQ folder on Internal Storage or the SD card."
+        "More: AutoEQ ParametricEQ.txt files in an EQ folder on Internal Storage or the SD card."
             .into(),
     );
     page

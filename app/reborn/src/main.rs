@@ -2192,7 +2192,7 @@ impl Runtime {
                 self.reload_dsp()?;
             }
             Effect::ScanEqProfiles => {
-                self.ui.eq_profiles = scan_eq_profiles(&self.storage_roots());
+                self.ui.eq_profiles = scan_eq_profiles(&shipped_eq_dirs(), &self.storage_roots());
                 self.dirty.mark_render();
             }
             Effect::ImportEqProfile(path) => match import_eq_profile(&path) {
@@ -5210,9 +5210,41 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
     Some(settings)
 }
 
+/// The profiles that come with the player (AutoEq, `assets/eq` in Reborn).
+fn shipped_eq_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![];
+    if let Ok(dev) = std::env::var("REBORN_EQ_PROFILES") {
+        dirs.push(PathBuf::from(dev));
+    }
+    dirs.push(PathBuf::from("/usr/share/reborn/eq"));
+    dirs
+}
+
+/// Profile files (`*.txt`, not hidden) directly in `dir`.
+fn eq_files_in(dir: &Path, files: &mut Vec<reborn_core::eq::ProfileFile>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with('.')
+            && name
+                .to_ascii_lowercase()
+                .ends_with(reborn_core::eq::FILE_SUFFIX)
+            && entry.file_type().is_ok_and(|t| t.is_file())
+        {
+            files.push(reborn_core::eq::ProfileFile {
+                name: reborn_core::eq::profile_name(&name),
+                path: entry.path(),
+            });
+        }
+    }
+}
+
 /// `ParametricEQ.txt` files in an `EQ` folder (any letter case) on each
-/// storage root, sorted by name.
-fn scan_eq_profiles(roots: &[PathBuf]) -> Vec<reborn_core::eq::ProfileFile> {
+/// storage root, then the shipped ones, sorted by name. A profile on the
+/// storage replaces a shipped one of the same name (a newer AutoEq file).
+fn scan_eq_profiles(shipped: &[PathBuf], roots: &[PathBuf]) -> Vec<reborn_core::eq::ProfileFile> {
     let mut files = vec![];
     for root in roots {
         let Ok(entries) = fs::read_dir(root) else {
@@ -5222,25 +5254,14 @@ fn scan_eq_profiles(roots: &[PathBuf]) -> Vec<reborn_core::eq::ProfileFile> {
             e.file_name().to_string_lossy().eq_ignore_ascii_case("eq")
                 && e.file_type().is_ok_and(|t| t.is_dir())
         }) {
-            let Ok(inner) = fs::read_dir(folder.path()) else {
-                continue;
-            };
-            for entry in inner.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if !name.starts_with('.')
-                    && name
-                        .to_ascii_lowercase()
-                        .ends_with(reborn_core::eq::FILE_SUFFIX)
-                    && entry.file_type().is_ok_and(|t| t.is_file())
-                {
-                    files.push(reborn_core::eq::ProfileFile {
-                        name: reborn_core::eq::profile_name(&name),
-                        path: entry.path(),
-                    });
-                }
-            }
+            eq_files_in(&folder.path(), &mut files);
         }
     }
+    for dir in shipped {
+        eq_files_in(dir, &mut files);
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(f.name.to_lowercase()));
     files.sort_by_key(|f| f.name.to_lowercase());
     files
 }
@@ -5349,9 +5370,20 @@ mod eq_profile_file_tests {
         fs::write(internal.join("EQ/readme.pdf"), "x").unwrap();
         fs::write(internal.join("Music/elsewhere.txt"), good).unwrap();
         fs::write(sd.join("eq/huge.txt"), "#".repeat(70 * 1024)).unwrap();
-        let files = scan_eq_profiles(&[internal.clone(), sd.clone(), root.join("missing")]);
+        // Shipped: one new model and one also on the storage (the storage wins).
+        let shipped = root.join("shipped");
+        fs::create_dir_all(&shipped).unwrap();
+        fs::write(shipped.join("AKG K371 ParametricEQ.txt"), good).unwrap();
+        fs::write(shipped.join("Sennheiser HD 650 ParametricEQ.txt"), good).unwrap();
+        fs::write(shipped.join("SOURCES.md"), "x").unwrap();
+        let files = scan_eq_profiles(
+            std::slice::from_ref(&shipped),
+            &[internal.clone(), sd.clone(), root.join("missing")],
+        );
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, ["aria", "huge", "Sennheiser HD 650"]);
+        assert_eq!(names, ["AKG K371", "aria", "huge", "Sennheiser HD 650"]);
+        assert!(files[3].path.starts_with(&internal));
+        let files: Vec<_> = files.into_iter().skip(1).collect();
         let profile = import_eq_profile(&files[2].path).unwrap();
         assert_eq!(profile.name, "Sennheiser HD 650");
         assert_eq!(profile.bands.len(), 2);
