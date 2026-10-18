@@ -1,9 +1,11 @@
 # Current Reborn state on the Y2
 
-## Unreleased — audio playback review after Beta 8.5 (2026-10-18, latest)
+## 1.0.0-beta.8.6 — Y2Linux 1.0 Beta 8.6 (Baseline 94), 2026-10-18 (latest): audio playback review
 
-Host-tested only; no test build yet. Findings and answers: Y2Linux `docs/planning/NEXT-SESSION-HANDOFF.md`
-(START HERE, audio review) and audit AUDIO-REVIEW-8.5.
+Published as `baseline-94` (Reborn `cefcc8a`, sequence 6800). Device results: Y2Linux Beta 8.6 report (test build 94
+on the owner's player = the release: profile list, `dsp_rise_fade`, `fade_continued` after Next, `pause_released`, no
+restart for the same level; CPU floor 598 MHz with a profile instead of 747.5, ≥16 % fewer decode-thread cycles).
+Findings and answers: Y2Linux handoff and audits AUDIO-REVIEW-8.5 / BETA-8.6.
 
 - **Fades:** an unfinished fade-in carries into a reopened sink (Next, a seek, another rate: `opening_gain`,
   `VolumeRamp::fade_in_from`, `fade_progress`), and volume up during a fade keeps fading towards the new volume
@@ -29,7 +31,7 @@ Host-tested only; no test build yet. Findings and answers: Y2Linux `docs/plannin
   ≤ 0.981, mutation without the limiter clips), the real shipped-folder scan (47, no license), fade/opening
   gain, DSP rise. 539 tests, fmt, strict Clippy.
 
-## 1.0.0-beta.8.5 — Y2Linux 1.0 Beta 8.5 (Baseline 93), 2026-10-18 (latest): headphone level, headphone profiles, DAC filter
+## 1.0.0-beta.8.5 — Y2Linux 1.0 Beta 8.5 (Baseline 93), 2026-10-18: headphone level, headphone profiles, DAC filter
 
 - Needs Y2Linux's `HP Output Level` kernel control (older kernels: Master stays −24 dB) and FFmpeg's
   `lowshelf`/`highshelf` (Y2Linux `docs/HEADPHONE-OUTPUT.md`). Device results: Y2Linux Beta 8.5 report (test
