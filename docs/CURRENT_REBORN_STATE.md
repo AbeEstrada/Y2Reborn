@@ -1,9 +1,10 @@
 # Current Reborn state on the Y2
 
-## Unreleased on `main` (2026-10-18): headphone level, headphone profiles, DAC filter
+## 1.0.0-beta.8.5 — Y2Linux 1.0 Beta 8.5 (Baseline 93), 2026-10-18 (latest): headphone level, headphone profiles, DAC filter
 
-- Not built into an image and not run on a player. Needs a Y2Linux kernel with the `HP Output Level` control
-  (Y2Linux `docs/HEADPHONE-OUTPUT.md`, audit HP-LEVEL-EQ) and FFmpeg's `lowshelf`/`highshelf`.
+- Needs Y2Linux's `HP Output Level` kernel control (older kernels: Master stays −24 dB) and FFmpeg's
+  `lowshelf`/`highshelf` (Y2Linux `docs/HEADPHONE-OUTPUT.md`). Device results: Y2Linux Beta 8.5 report (test
+  builds 91–93 on the owner's player).
 - **Headphone Level** (Settings → Sound → Output): `Settings::hp_level` (Low default = stock level, Medium, High), passed to
   `reborn_audio::wired_configure` at startup and on a change. `rb_sink_open` sets the kernel controls before
   the stream starts, sets Master to −19.5 dB with the control (−24 dB without it) and reads `HP Output Level Live`
