@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.6 — Y2Linux 1.0 Beta 8.6 (Baseline 94), 2026-10-18 (latest): audio playback review
+## 1.0.0-beta.8.7 — Y2Linux 1.0 Beta 8.7 (Baseline 95), 2026-10-18 (latest): identity only
+
+Published as `baseline-95` (Reborn `82fe089`, sequence 6900). No Reborn change: the release identifies GC9503V
+players from LK's panel name (Y2Linux kernel, #45/#46).
+
+## 1.0.0-beta.8.6 — Y2Linux 1.0 Beta 8.6 (Baseline 94), 2026-10-18: audio playback review
 
 Published as `baseline-94` (Reborn `cefcc8a`, sequence 6800). Device results: Y2Linux Beta 8.6 report (test build 94
 on the owner's player = the release: profile list, `dsp_rise_fade`, `fade_continued` after Next, `pause_released`, no
