@@ -479,7 +479,7 @@ const DOWNLOAD_PROGRESS: &str = "/run/y2/update-progress.json";
 const CHECK_PROGRESS: &str = "/run/y2/update-check-progress";
 
 /// The platform's live download record and the package check's
-/// "<percent> check" line. Reads two small files in RAM; never blocks on the
+/// "<percent> check [<seconds left>]" line (the seconds since Beta 8.3). Reads two small files in RAM; never blocks on the
 /// platform worker, which is busy with the download itself.
 pub fn download_progress() -> Option<DownloadLive> {
     let record: Value = serde_json::from_slice(&fs::read(DOWNLOAD_PROGRESS).ok()?).ok()?;
@@ -501,7 +501,13 @@ pub fn parse_download(record: &Value, check: Option<&str>) -> Option<DownloadLiv
         bytes_done: record["bytes_done"].as_u64()?,
         bytes_total: record["bytes_total"].as_u64()?,
         speed_bytes_per_s: record["speed_bytes_per_s"].as_u64().filter(|&s| s > 0),
-        seconds_left: record["seconds_left"].as_u64(),
+        seconds_left: if verifying {
+            check
+                .and_then(|line| line.split_whitespace().nth(2))
+                .and_then(|s| s.parse::<u64>().ok())
+        } else {
+            record["seconds_left"].as_u64()
+        },
         check_percent: if verifying {
             check
                 .and_then(|line| line.split_whitespace().next())
@@ -1459,8 +1465,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            (checking.verifying, checking.check_percent),
-            (true, Some(42))
+            (
+                checking.verifying,
+                checking.check_percent,
+                checking.seconds_left
+            ),
+            (true, Some(42), None)
+        );
+        // Since Beta 8.3 the check line also carries the seconds left.
+        let timed = parse_download(
+            &json!({"schema":1,"phase":"verify","bytes_done":100,"bytes_total":100,
+                "speed_bytes_per_s":null,"seconds_left":null}),
+            Some("42 check 6\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            (timed.check_percent, timed.seconds_left),
+            (Some(42), Some(6))
         );
         // Finished, failed or foreign records are not a running download.
         for phase in ["done", "failed", "other"] {

@@ -889,7 +889,9 @@ fn download_progress(
             let (detail, hint) = if verifying {
                 (
                     "Making sure the download is complete and genuine.".to_owned(),
-                    "This takes a few seconds.".to_owned(),
+                    l.seconds_left
+                        .map(time_left)
+                        .unwrap_or_else(|| "This takes a few seconds.".to_owned()),
                 )
             } else {
                 (
