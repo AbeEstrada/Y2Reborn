@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.10 — Y2Linux 1.0 Beta 8.10 (Baseline 105), 2026-10-19 (latest): report progress, no topic, uploads
+## 1.0.0-beta.8.11 — Y2Linux 1.0 Beta 8.11 (Baseline 106), 2026-10-20 (latest): storage setup waiting for a charger
+
+Published as `baseline-106` (Reborn `727fd47`, sequence 7500). `InternalSetup::Pending` carries `SetupWait` from the
+platform's reason: `battery_low`/`battery_unknown` → Settings → Storage says **Connect a charger and restart**;
+anything else (an update's health boot) keeps *Restart to finish setting up*. Before, every Pending said restart, and a
+user restarted on battery again and again without the setup ever running (Y2Linux report 20261019-153610; the platform
+gate is now 25 % by power-on OCV). Preview `32-storage-setup-battery`; tests in `client.rs` and
+`internal_storage_setup_is_offered_only_for_a_waiting_old_library_and_confirmed_red`. Not checked on a player.
+
+## 1.0.0-beta.8.10 — Y2Linux 1.0 Beta 8.10 (Baseline 105), 2026-10-19: report progress, no topic, uploads
 
 Published as `baseline-105` (Reborn `cfac12b`, sequence 7400), with the uploads entry below.
 
