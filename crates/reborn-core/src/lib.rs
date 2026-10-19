@@ -822,7 +822,7 @@ pub enum PlatformTask {
     ReportEnable(bool),
     /// A new random install ID.
     ReportNewId,
-    /// Build a report now (takes about half a minute) and queue it.
+    /// Build a report now (takes about ten seconds) and queue it.
     ReportSend(platform::ReportTopic),
     /// Build a report now and save it to storage for the owner to send.
     ReportSave(platform::ReportTopic, platform::ReportDestination),

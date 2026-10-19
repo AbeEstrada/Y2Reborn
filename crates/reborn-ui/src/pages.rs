@@ -1458,7 +1458,7 @@ fn report_preparing(m: &AppModel) -> Option<Page> {
     .then(|| {
         Page::hero(
             "Preparing the Report…",
-            "The player collects its logs and removes personal details. This takes about half a minute.",
+            "The player collects its logs and removes personal details. This takes about ten seconds.",
         )
     })
 }

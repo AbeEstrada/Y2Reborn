@@ -282,7 +282,7 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         ReportEnable(true) => call(&["report", "enable"], 30)?,
         ReportEnable(false) => call(&["report", "disable"], 30)?,
         ReportNewId => call(&["report", "new-id"], 10)?,
-        // Building a report reads every log: about 40 s on the Y2.
+        // Building a report reads every log: about 10 s on the Y2.
         ReportSend(topic) => call(&["report", "send", "--topic", topic.argument()], 180)?,
         ReportSave(topic, to) => call(
             &[
