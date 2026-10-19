@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.8.8, part of Y2Linux 1.0 Beta 8.8 (Baseline 101, 2026-10-19), public beta.**
-> Git tag `baseline-101` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.8.10, part of Y2Linux 1.0 Beta 8.10 (Baseline 105, 2026-10-19), public beta.**
+> Git tag `baseline-105` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -79,11 +79,11 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   restyle every screen (colours, fonts, pictures, layouts). Sixteen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
   Cassette, Neon Night, Zune, Bunny Bow and five Mini colours);
   more are added by copying a folder into `Skins` on the player. See [skins](docs/skins.md).
-- Error reports (Settings → About & Updates → Error Reports → Save Report): pick Internal
-  Storage or the SD card and what went wrong; the platform saves the player's logs and technical
-  details, with personal data removed, in about ten seconds, to attach to a GitHub issue
+- Error reports (Settings → About & Updates → Error Reports), opt-in after a one-time question:
+  sent over Wi-Fi when something goes wrong or with Send Report Now, or saved to Internal Storage
+  or the SD card (Save Report) to attach to a GitHub issue. The player's logs and technical
+  details with personal data removed, in about ten seconds, with the progress on screen
   ([Error reports](https://github.com/SchulzCode/Y2Linux/blob/main/docs/ERROR-REPORTS.md)).
-  Nothing is uploaded yet.
 - Works with the platform: sleep/wake preparation, workload hints to the CPU governor,
   `rebornctl` and a control socket at `/run/reborn/control.sock`.
 

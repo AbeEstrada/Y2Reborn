@@ -1,6 +1,10 @@
 # Current Reborn state on the Y2
 
-## Report progress, no topic (2026-10-19, unreleased)
+## 1.0.0-beta.8.10 — Y2Linux 1.0 Beta 8.10 (Baseline 105), 2026-10-19 (latest): report progress, no topic, uploads
+
+Published as `baseline-105` (Reborn `cfac12b`, sequence 7400), with the uploads entry below.
+
+### Report progress, no topic
 
 Send Report Now sends at once: `PlatformTask::ReportSend` has no topic, `Screen::ReportTopic` and `ReportTopic`
 are gone (every report holds everything). While a report is made, About & Updates → Error Reports shows its live
@@ -11,7 +15,7 @@ what happens ("260 of 504 KB", "Into the Error Reports folder.") and the time le
 "Starting…" sweeps. Previews 33f, 33l–33o; test `a_running_report_shows_its_steps_percent_and_what_happens`; 545
 tests, strict Clippy.
 
-## Uploads (2026-10-19, unreleased)
+### Uploads
 
 With the platform's uploader (Y2Linux ERROR-REPORTS-PLAN R4): Send Report Now flashes "Report sent" when the
 report went out at once (`last.state == "sent"` in the reply), "Report saved · waiting to send" otherwise; the page
@@ -27,7 +31,7 @@ and a saved report goes with a GitHub issue that says what went wrong. `Screen::
 Now, where the topic is the only thing the owner tells the receiver. The storage rows lose their chevron. Test
 `without_an_uploader_reports_are_saved_to_the_chosen_storage` updated; 543 tests, strict Clippy.
 
-## 1.0.0-beta.8.8 — Y2Linux 1.0 Beta 8.8 (Baseline 101), 2026-10-19 (latest published): Save Report
+## 1.0.0-beta.8.8 — Y2Linux 1.0 Beta 8.8 (Baseline 101), 2026-10-19: Save Report
 
 Published as `baseline-101` (Reborn `b6b6fbc`, sequence 7000), with the error report screens below. About & Updates →
 Error Reports → **Save Report** → storage (`ReportState::destinations`, `report_dest:<internal|sd>`) → topic
