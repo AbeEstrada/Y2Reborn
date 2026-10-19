@@ -11,7 +11,7 @@ use reborn_core::{
         BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, InternalSetup,
         LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware,
         ReportDestination, ReportLast, ReportLive, ReportState, ReportStep, SbcQuality, SdCard,
-        SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
+        SetupWait, SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
         UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
@@ -754,7 +754,10 @@ pub fn internal_setup(status: &Value) -> InternalSetup {
     let count = |key: &str| v[key].as_u64().unwrap_or(0);
     match v["state"].as_str() {
         Some("NotNeeded") => InternalSetup::NotNeeded,
-        Some("Pending") => InternalSetup::Pending,
+        Some("Pending") => InternalSetup::Pending(match v["reason"].as_str() {
+            Some("battery_low" | "battery_unknown") => SetupWait::Battery,
+            _ => SetupWait::Restart,
+        }),
         Some("Waiting") => InternalSetup::Waiting {
             files: count("files").min(u32::MAX as u64) as u32,
             bytes: count("bytes"),
@@ -1614,6 +1617,14 @@ mod tests {
             InternalSetup::Done { kept: 3 }
         );
         assert_eq!(internal_setup(&json!({})), InternalSetup::Unknown);
+        for (reason, wait) in [
+            ("battery_low", SetupWait::Battery),
+            ("battery_unknown", SetupWait::Battery),
+            ("update_in_progress", SetupWait::Restart),
+        ] {
+            let s = json!({"storage":{"internal_setup":{"state":"Pending","reason":reason}}});
+            assert_eq!(internal_setup(&s), InternalSetup::Pending(wait));
+        }
         // A cancelled queue followed by a check: the newer release is offered.
         v["system"]["update"] = json!({"state":"Failed","failure":"owner cancelled before installation",
             "download":{"state":"Checked","release_version":"1.0.0-platform-v1-power-final-candidate.49"}});

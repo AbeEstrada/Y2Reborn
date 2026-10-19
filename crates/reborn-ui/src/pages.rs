@@ -1346,7 +1346,7 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
     page = page.fact(
         "Internal Storage",
         match s.internal_setup {
-            InternalSetup::Pending => "Restart to finish setting up".into(),
+            InternalSetup::Pending(wait) => crate::views_settings::pending_note(wait).into(),
             InternalSetup::Running => "Setting up…".into(),
             InternalSetup::Waiting { .. } => "Not set up · Old files kept".into(),
             _ => free_text(internal).unwrap_or_else(|| "Checking…".into()),

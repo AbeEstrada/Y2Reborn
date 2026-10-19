@@ -1210,8 +1210,16 @@ fn internal_note(setup: reborn_core::platform::InternalSetup) -> Option<&'static
     use reborn_core::platform::InternalSetup;
     match setup {
         InternalSetup::Waiting { .. } => Some("Not set up · Your old files are kept"),
-        InternalSetup::Pending => Some("Restart to finish setting up"),
+        InternalSetup::Pending(wait) => Some(pending_note(wait)),
         InternalSetup::Running => Some("Setting up…"),
         _ => None,
+    }
+}
+
+/// A low battery keeps the setup waiting at every start until a charger is connected.
+pub(crate) fn pending_note(wait: reborn_core::platform::SetupWait) -> &'static str {
+    match wait {
+        reborn_core::platform::SetupWait::Battery => "Connect a charger and restart",
+        reborn_core::platform::SetupWait::Restart => "Restart to finish setting up",
     }
 }

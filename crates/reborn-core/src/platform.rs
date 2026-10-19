@@ -459,7 +459,7 @@ pub enum InternalSetup {
     Unknown,
     NotNeeded,
     /// Waits for a later start (an update still being checked, the battery).
-    Pending,
+    Pending(SetupWait),
     /// The old storage holds more than can be kept: the listener decides (it is erased).
     Waiting {
         files: u32,
@@ -471,6 +471,15 @@ pub enum InternalSetup {
         kept: u32,
     },
     Failed,
+}
+
+/// Why the setup waits: a restart alone does not help a low battery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupWait {
+    /// Under 25 % on battery at start: it runs at a start on a charger.
+    Battery,
+    /// An update's health check, or anything else a later start clears.
+    Restart,
 }
 
 /// Everything Reborn knows about the platform from its last observation.

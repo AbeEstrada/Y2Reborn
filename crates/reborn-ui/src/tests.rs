@@ -3388,15 +3388,18 @@ fn lastfm_password_sign_in_never_shows_or_prints_the_password() {
 
 #[test]
 fn internal_storage_setup_is_offered_only_for_a_waiting_old_library_and_confirmed_red() {
-    use reborn_core::platform::InternalSetup;
+    use reborn_core::platform::{InternalSetup, SetupWait};
     let mut ui = radios();
     let mut m = app(Screen::Storage);
     assert!(!ui
         .rows(&m, &[])
         .iter()
         .any(|r| r.key == "confirm:internal_setup"));
-    m.platform.snapshot.internal_setup = InternalSetup::Pending;
+    m.platform.snapshot.internal_setup = InternalSetup::Pending(SetupWait::Restart);
     assert!(visible_text(&ui, &m).contains("Restart to finish setting up"));
+    // Report 20261019-153610: restarting on a low battery never sets it up.
+    m.platform.snapshot.internal_setup = InternalSetup::Pending(SetupWait::Battery);
+    assert!(visible_text(&ui, &m).contains("Connect a charger and restart"));
     m.platform.snapshot.internal_setup = InternalSetup::Waiting {
         files: 1234,
         bytes: 3_100_000_000,

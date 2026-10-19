@@ -628,6 +628,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
         }
     );
+    case!(
+        "32-storage-setup-battery",
+        at(Screen::Storage, ""),
+        |_, m| {
+            m.navigation.focus = 0;
+            m.platform.snapshot.internal_setup = reborn_core::platform::InternalSetup::Pending(
+                reborn_core::platform::SetupWait::Battery,
+            );
+        }
+    );
     case!("32-storage-setup-question", at(Screen::Home, ""), |_, m| {
         m.platform.snapshot.internal_setup = reborn_core::platform::InternalSetup::Waiting {
             files: 1234,
