@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## Unreleased — error reports screens (2026-10-18, latest; on the owner's player as test build 98)
+## 1.0.0-beta.8.8 — Y2Linux 1.0 Beta 8.8 (Baseline 101), 2026-10-19 (latest): Save Report
+
+Published as `baseline-101` (Reborn `b6b6fbc`, sequence 7000), with the error report screens below. About & Updates →
+Error Reports → **Save Report** → storage (`ReportState::destinations`, `report_dest:<internal|sd>`) → topic
+(`Screen::ReportTopic`, filter `save:<destination>`) → `PlatformTask::ReportSave(topic, destination)` →
+`y2-platform report save --to … --topic …`; afterwards back on the Error Reports page, which shows the progress and
+"Last report saved to …". While the platform says `upload: false` (no uploader yet), the page shows only Save Report
+and What Is Saved, About & Updates shows no On/Off and `ask_about_reports()` asks nothing. A report takes ≈10 s.
+Test `without_an_uploader_reports_are_saved_to_the_chosen_storage`, previews 33h–33k; 543 tests, strict Clippy.
+
+## Error reports screens (2026-10-18; on the owner's player as test build 98, released in 8.8)
 
 Reborn `8ba33b3` and `fbecb77` (versions 1.0.0-beta.8.8 test builds 97–98, not published). Plan: Y2Linux
 `docs/planning/ERROR-REPORTS-PLAN.md`.
