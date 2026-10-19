@@ -28,11 +28,7 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             equalizer(c, ui, m, &page, focus, interactive)
         }
         Screen::Equalizer => group_page(c, ui, m, &page, focus, interactive, 38.),
-        Screen::Crossfade
-        | Screen::ScreenTimeout
-        | Screen::HeadphoneLevel
-        | Screen::DacFilter
-        | Screen::ReportTopic
+        Screen::Crossfade | Screen::ScreenTimeout | Screen::HeadphoneLevel | Screen::DacFilter
             if page.hero.is_none() =>
         {
             picker(c, ui, &page, focus, interactive)
@@ -41,6 +37,7 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
         Screen::Storage => storage(c, m, &page, focus, interactive),
         Screen::Update => update(c, ui, m, &page, focus, interactive),
+        Screen::ErrorReports if pages::report_preparing(m).is_some() => report_progress(c, ui, m),
         Screen::LastFm if ui.lastfm.approval.is_some() => {
             sign_in_code(c, ui, &page, focus, interactive)
         }
@@ -845,7 +842,10 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
 /// Where the update is: Download, Check, Install (the restart). Steps done
 /// carry a check, the current one the accent, the rest wait dimmed.
 pub(crate) fn steps(c: &mut Canvas, current: usize, accent: u32) {
-    const NAMES: [&str; 3] = ["Download", "Check", "Install"];
+    named_steps(c, ["Download", "Check", "Install"], current, accent);
+}
+
+fn named_steps(c: &mut Canvas, names: [&str; 3], current: usize, accent: u32) {
     let (y, gap) = (64., 120.);
     let x0 = 240. - gap;
     for i in 0..2 {
@@ -856,7 +856,7 @@ pub(crate) fn steps(c: &mut Canvas, current: usize, accent: u32) {
         };
         c.rect(x0 + i as f32 * gap + 12., y - 1., gap - 24., 2., tint);
     }
-    for (i, name) in NAMES.iter().enumerate() {
+    for (i, name) in names.iter().enumerate() {
         let x = x0 + i as f32 * gap;
         let (dot, label) = match i.cmp(&current) {
             std::cmp::Ordering::Less => (color::TEXT, color::MUTED),
@@ -1004,6 +1004,109 @@ fn download_progress(
         // The only control while the update runs: it is always the focus.
         components::empty_button(c, 300., "Cancel", true);
     }
+}
+
+/// *Send Report Now* or *Save Report* running (Y2Linux 1.0 Beta 8.10): the
+/// same steps, number and gliding bar as the update download, fed by the
+/// platform's live record. Before its first record a segment sweeps the track.
+fn report_progress(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    use reborn_core::platform::ReportStep;
+    let accent = ui.accent();
+    let saving = match m.platform.busy {
+        Some(reborn_core::PlatformTask::ReportSave(to)) => Some(to),
+        _ => None,
+    };
+    let live = m.platform.report;
+    let step = live.map_or(0, |l| match l.step {
+        ReportStep::Collect => 0,
+        ReportStep::Clean => 1,
+        ReportStep::Finish => 2,
+    });
+    named_steps(
+        c,
+        [
+            "Collect",
+            "Clean",
+            if saving.is_some() { "Save" } else { "Send" },
+        ],
+        step,
+        accent,
+    );
+    let title = match (step, saving) {
+        (0, _) => "Collecting Logs".to_owned(),
+        (1, _) => "Removing Personal Details".to_owned(),
+        (_, Some(to)) => format!("Saving to {}", to.label()),
+        (_, None) => "Sending the Report".to_owned(),
+    };
+    c.text_center(
+        240.,
+        128. + Face::S20.mid_offset(),
+        &title,
+        Face::S20,
+        color::TEXT,
+    );
+    let (x, y, w, h) = (60., 208., 360., 10.);
+    c.rrect(x, y, w, h, h / 2., color::TRACK);
+    let Some(l) = live else {
+        let seg = 72.;
+        let t = ui.spin_phase();
+        let swing = 0.5 - 0.5 * (std::f32::consts::TAU * t).cos();
+        c.rrect(x + (w - seg) * swing, y, seg, h, h / 2., accent);
+        c.text_center(
+            240.,
+            172. + Face::S20.mid_offset(),
+            "Starting…",
+            Face::S20,
+            color::MUTED,
+        );
+        return;
+    };
+    let target = l.percent / 100.;
+    let fill = ui.download_fill(target, false);
+    let shown = if target - fill < 0.004 { target } else { fill };
+    c.text_center(
+        240.,
+        172. + Face::S36.mid_offset(),
+        &format!("{}%", (shown * 100.).floor() as u32),
+        Face::S36,
+        color::TEXT,
+    );
+    let lit = (w * fill).round();
+    if lit >= h {
+        c.rrect(x, y, lit, h, h / 2., accent);
+        c.glow(x + lit - h / 2., y + h / 2., 14., 9., alpha(accent, 150));
+        c.disc(
+            x + lit - h / 2.,
+            y + h / 2.,
+            h / 2. - 1.,
+            mix(accent, color::TEXT, 0.55),
+        );
+    }
+    let detail = match (step, saving, l.bytes_done, l.bytes_total) {
+        (0, ..) => "The player's logs, settings and hardware details.".to_owned(),
+        (1, ..) => "Wi-Fi, Bluetooth, accounts and music names are taken out.".to_owned(),
+        (_, Some(_), ..) => "Into the Error Reports folder.".to_owned(),
+        (_, None, Some(done), Some(total)) => {
+            format!("{} of {} KB", done.div_ceil(1000), total.div_ceil(1000))
+        }
+        (_, None, ..) => "Over Wi-Fi, encrypted.".to_owned(),
+    };
+    c.text_center(
+        240.,
+        242. + Face::R13.mid_offset(),
+        &detail,
+        Face::R13,
+        color::MUTED,
+    );
+    c.text_center(
+        240.,
+        261. + Face::R13.mid_offset(),
+        &l.seconds_left
+            .map(time_left)
+            .unwrap_or_else(|| "This takes about ten seconds.".to_owned()),
+        Face::R13,
+        color::DIM,
+    );
 }
 
 /// The one-step update (Beta 7.1) over every screen: download and check

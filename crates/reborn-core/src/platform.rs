@@ -363,6 +363,28 @@ impl DownloadLive {
     }
 }
 
+/// The step of a report run the owner started: collecting the logs, taking
+/// the personal details out (and packing), then sending or saving it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportStep {
+    Collect,
+    Clean,
+    Finish,
+}
+
+/// Live progress of *Send Report Now* or *Save Report* (Y2Linux
+/// `/run/y2/report-progress.json`): the whole run's percent and its step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReportLive {
+    pub step: ReportStep,
+    /// 0..=100 of the whole run.
+    pub percent: f32,
+    pub seconds_left: Option<u64>,
+    /// While sending: how much of the report went out.
+    pub bytes_done: Option<u64>,
+    pub bytes_total: Option<u64>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UpdateState {
     pub phase: UpdatePhase,
@@ -679,53 +701,5 @@ impl ReportDestination {
         [Self::Internal, Self::Sd]
             .into_iter()
             .find(|d| d.argument() == value)
-    }
-}
-
-/// What a report sent with *Send Report Now* is about.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReportTopic {
-    Sound,
-    Display,
-    Battery,
-    Bluetooth,
-    Wifi,
-    Crash,
-    Other,
-}
-impl ReportTopic {
-    pub const ALL: [Self; 7] = [
-        Self::Sound,
-        Self::Display,
-        Self::Battery,
-        Self::Bluetooth,
-        Self::Wifi,
-        Self::Crash,
-        Self::Other,
-    ];
-    pub const fn argument(self) -> &'static str {
-        match self {
-            Self::Sound => "sound",
-            Self::Display => "display",
-            Self::Battery => "battery",
-            Self::Bluetooth => "bluetooth",
-            Self::Wifi => "wifi",
-            Self::Crash => "crash",
-            Self::Other => "other",
-        }
-    }
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Sound => "Sound",
-            Self::Display => "Display",
-            Self::Battery => "Battery or Sleep",
-            Self::Bluetooth => "Bluetooth",
-            Self::Wifi => "Wi-Fi",
-            Self::Crash => "Crash or Freeze",
-            Self::Other => "Something Else",
-        }
-    }
-    pub fn from_argument(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|t| t.argument() == value)
     }
 }

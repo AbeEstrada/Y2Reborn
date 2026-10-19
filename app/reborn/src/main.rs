@@ -2628,6 +2628,7 @@ impl Runtime {
             client::Reply::Reports(task, result) => {
                 use reborn_core::PlatformTask::*;
                 p.busy = None;
+                p.report = None;
                 match result {
                     Ok(state) => {
                         let enabled = state.enabled;
@@ -2639,8 +2640,8 @@ impl Runtime {
                             ReportEnable(true) => "Error reports are on".to_owned(),
                             ReportEnable(false) => "Error reports are off".to_owned(),
                             ReportNewId => "New install ID".to_owned(),
-                            ReportSend(_) if sent => "Report sent".to_owned(),
-                            ReportSend(_) if enabled == Some(true) => {
+                            ReportSend if sent => "Report sent".to_owned(),
+                            ReportSend if enabled == Some(true) => {
                                 "Report saved · waiting to send".to_owned()
                             }
                             ReportSave(to) => format!("Report saved to {}", to.label()),
@@ -3255,7 +3256,6 @@ fn platform_backed(screen: Screen) -> bool {
             | Screen::Diagnostics
             | Screen::DiagnosticSection
             | Screen::ErrorReports
-            | Screen::ReportTopic
     )
 }
 
@@ -4161,6 +4161,21 @@ fn run() -> Result<(), String> {
             let live = client::download_progress();
             if live != rt.model.platform.download {
                 rt.model.platform.download = live;
+                rt.dirty.mark_render();
+            }
+        }
+        // A report the owner started answers only when it is done: show the
+        // platform's live record meanwhile, like the update download.
+        if matches!(
+            rt.model.platform.busy,
+            Some(reborn_core::PlatformTask::ReportSend | reborn_core::PlatformTask::ReportSave(_))
+        ) && !rt.model.screen_off
+            && download_poll.elapsed() >= Duration::from_millis(200)
+        {
+            download_poll = Instant::now();
+            let live = client::report_progress();
+            if live != rt.model.platform.report {
+                rt.model.platform.report = live;
                 rt.dirty.mark_render();
             }
         }

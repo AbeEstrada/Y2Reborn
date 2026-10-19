@@ -1834,13 +1834,10 @@ impl Ui {
             }
             return Effect::Platform(PlatformTask::ReportSave(destination));
         }
-        if let Some(topic) = key
-            .strip_prefix("report_send:")
-            .and_then(reborn_core::platform::ReportTopic::from_argument)
-        {
-            // Back to the Error Reports page: it shows the progress, then the result.
-            Self::go(m, Screen::ErrorReports, "");
-            return Effect::Platform(PlatformTask::ReportSend(topic));
+        if key == "report_send" {
+            // Every report holds everything: no topic to choose. The page shows
+            // the progress, then the result.
+            return Effect::Platform(PlatformTask::ReportSend);
         }
         if let Some(index) = key
             .strip_prefix("eq_band:")
@@ -2951,7 +2948,6 @@ fn route(key: &str) -> Option<Screen> {
         "radio" => Screen::Radio,
         "lastfm" => Screen::LastFm,
         "error_reports" => Screen::ErrorReports,
-        "report_topic" => Screen::ReportTopic,
         _ => return None,
     })
 }

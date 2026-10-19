@@ -161,7 +161,6 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::HeadphoneLevel => headphone_level(m),
         Screen::DacFilter => dac_filter(m),
         Screen::ErrorReports => error_reports(m),
-        Screen::ReportTopic => report_topic(m),
         Screen::Theme => theme(ui, m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
@@ -1450,10 +1449,12 @@ fn update(m: &AppModel) -> Page {
     page
 }
 
-fn report_preparing(m: &AppModel) -> Option<Page> {
+/// While a report is made: no rows (nothing to press); the view draws the
+/// live progress (`views_settings::report_progress`), this hero is its text.
+pub(crate) fn report_preparing(m: &AppModel) -> Option<Page> {
     matches!(
         m.platform.busy,
-        Some(PlatformTask::ReportSend(_) | PlatformTask::ReportSave(..))
+        Some(PlatformTask::ReportSend | PlatformTask::ReportSave(..))
     )
     .then(|| {
         Page::hero(
@@ -1545,10 +1546,7 @@ fn error_reports(m: &AppModel) -> Page {
             idle,
         ),
         row("What Is Sent", "report_info", "").with_kind(RowKind::Chevron),
-        disabled(
-            row("Send Report Now", "report_topic", "").with_kind(RowKind::Chevron),
-            on && idle,
-        ),
+        disabled(row("Send Report Now", "report_send", ""), on && idle),
         save,
     ];
     if let Some(id) = r.short_id().filter(|_| on) {
@@ -1595,26 +1593,6 @@ fn report_trigger_label(trigger: &str) -> &'static str {
         "storage_error" => "storage problem",
         _ => "problem",
     }
-}
-
-/// Send Report Now: what it is about (the report itself has the logs).
-fn report_topic(m: &AppModel) -> Page {
-    if let Some(page) = report_preparing(m) {
-        return page;
-    }
-    // Seven topics fill the picker: no status line below them.
-    Page::rows(
-        reborn_core::platform::ReportTopic::ALL
-            .into_iter()
-            .map(|topic| {
-                row(
-                    topic.label(),
-                    &format!("report_send:{}", topic.argument()),
-                    "",
-                )
-            })
-            .collect(),
-    )
 }
 
 fn update_status(m: &AppModel) -> Page {

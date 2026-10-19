@@ -10,9 +10,9 @@ use reborn_core::{
     platform::{
         BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, InternalSetup,
         LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware,
-        ReportDestination, ReportLast, ReportState, SbcQuality, SdCard, SleepPhase, SleepProblem,
-        SleepState, StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer,
-        VolumeSpace, VolumeState, WakeReason,
+        ReportDestination, ReportLast, ReportLive, ReportState, ReportStep, SbcQuality, SdCard,
+        SleepPhase, SleepProblem, SleepState, StorageState, UpdatePhase, UpdateProblem,
+        UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
 };
@@ -263,7 +263,7 @@ fn execute(task: PlatformTask) -> Reply {
         ),
         // Passive IP/route/DNS readiness only; never pings an external host.
         NetworkCheck => call(&["status", "wifi"], 25).and_then(|v| schema(v, STATUS_SCHEMA)),
-        ReportEnable(_) | ReportNewId | ReportSend(_) | ReportSave(..) => {
+        ReportEnable(_) | ReportNewId | ReportSend | ReportSave(..) => {
             return Reply::Reports(task, reports(task))
         }
     };
@@ -282,8 +282,9 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         ReportEnable(true) => call(&["report", "enable"], 30)?,
         ReportEnable(false) => call(&["report", "disable"], 30)?,
         ReportNewId => call(&["report", "new-id"], 10)?,
-        // Building a report reads every log: about 10 s on the Y2.
-        ReportSend(topic) => call(&["report", "send", "--topic", topic.argument()], 180)?,
+        // Building a report reads every log (about 10 s on the Y2), then it is
+        // sent at once when Wi-Fi allows (30 s timeout per queued report).
+        ReportSend => call(&["report", "send"], 240)?,
         ReportSave(to) => call(&["report", "save", "--to", to.argument()], 180)?,
         _ => return Err("not_a_report_task".into()),
     };
@@ -303,7 +304,7 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         }
         .into());
     }
-    let status = if matches!(task, ReportSend(_) | ReportSave(..)) {
+    let status = if matches!(task, ReportSend | ReportSave(..)) {
         call(&["report", "status"], 10)?
     } else {
         answer
@@ -564,6 +565,34 @@ pub fn download_progress() -> Option<DownloadLive> {
     let record: Value = serde_json::from_slice(&fs::read(DOWNLOAD_PROGRESS).ok()?).ok()?;
     let check = fs::read_to_string(CHECK_PROGRESS).ok();
     parse_download(&record, check.as_deref())
+}
+
+const REPORT_PROGRESS: &str = "/run/y2/report-progress.json";
+
+/// The platform's live record of a report the owner started (Y2Linux 1.0
+/// Beta 8.10): read while *Send Report Now* or *Save Report* runs; the task
+/// itself answers only at the end.
+pub fn report_progress() -> Option<ReportLive> {
+    parse_report_progress(&serde_json::from_slice(&fs::read(REPORT_PROGRESS).ok()?).ok()?)
+}
+
+pub fn parse_report_progress(record: &Value) -> Option<ReportLive> {
+    if record["schema"] != 1 {
+        return None;
+    }
+    let step = match record["phase"].as_str()? {
+        "collect" => ReportStep::Collect,
+        "scrub" | "pack" => ReportStep::Clean,
+        "upload" | "save" => ReportStep::Finish,
+        _ => return None,
+    };
+    Some(ReportLive {
+        step,
+        percent: (record["percent"].as_f64()? as f32).clamp(0., 100.),
+        seconds_left: record["seconds_left"].as_u64(),
+        bytes_done: record["bytes_done"].as_u64(),
+        bytes_total: record["bytes_total"].as_u64(),
+    })
 }
 
 pub fn parse_download(record: &Value, check: Option<&str>) -> Option<DownloadLive> {
@@ -1359,6 +1388,44 @@ pub fn unobserved() -> PlatformSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_progress_is_read_from_the_platform_record() {
+        let live = parse_report_progress(&json!({"schema":1,"phase":"scrub","percent":41.5,
+            "seconds_left":6,"destination":null}))
+        .unwrap();
+        assert_eq!(
+            (live.step, live.percent, live.seconds_left, live.bytes_total),
+            (ReportStep::Clean, 41.5, Some(6), None)
+        );
+        let sending = parse_report_progress(&json!({"schema":1,"phase":"upload","percent":90.0,
+            "seconds_left":1,"bytes_done":250_000,"bytes_total":500_000}))
+        .unwrap();
+        assert_eq!(
+            (sending.step, sending.bytes_done, sending.bytes_total),
+            (ReportStep::Finish, Some(250_000), Some(500_000))
+        );
+        assert_eq!(
+            parse_report_progress(&json!({"schema":1,"phase":"collect","percent":0,
+                "seconds_left":null}))
+            .unwrap()
+            .step,
+            ReportStep::Collect
+        );
+        assert_eq!(
+            parse_report_progress(&json!({"schema":1,"phase":"save","percent":120}))
+                .unwrap()
+                .percent,
+            100.
+        );
+        for bad in [
+            json!({"schema":2,"phase":"scrub","percent":1}),
+            json!({"schema":1,"phase":"done","percent":100}),
+            json!({"schema":1,"phase":"scrub"}),
+        ] {
+            assert!(parse_report_progress(&bad).is_none());
+        }
+    }
 
     #[test]
     fn report_status_is_read_from_the_platform_record() {

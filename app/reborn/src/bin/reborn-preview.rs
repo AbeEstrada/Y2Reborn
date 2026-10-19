@@ -724,22 +724,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             reborn_core::ConfirmAction::ReportsQuestion,
         ));
     });
-    case!("33e-report-topic", at(Screen::ReportTopic, ""), |_, m| {
-        m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
-            enabled: Some(true),
-            upload: true,
-            ..Default::default()
-        });
-    });
+    // A report the owner started: before the first record, then each step.
     case!(
         "33f-report-preparing",
         at(Screen::ErrorReports, ""),
         |_, m| {
-            m.platform.busy = Some(reborn_core::PlatformTask::ReportSend(
-                reborn_core::platform::ReportTopic::Sound,
-            ));
+            m.platform.busy = Some(reborn_core::PlatformTask::ReportSend);
         }
     );
+    for (name, step, percent, seconds, bytes, save) in [
+        (
+            "33l-report-collect",
+            reborn_core::platform::ReportStep::Collect,
+            6.,
+            None,
+            None,
+            false,
+        ),
+        (
+            "33m-report-clean",
+            reborn_core::platform::ReportStep::Clean,
+            47.,
+            Some(6),
+            None,
+            false,
+        ),
+        (
+            "33n-report-send",
+            reborn_core::platform::ReportStep::Finish,
+            91.,
+            Some(1),
+            Some((260_000, 503_213)),
+            false,
+        ),
+        (
+            "33o-report-save",
+            reborn_core::platform::ReportStep::Finish,
+            88.,
+            Some(1),
+            None,
+            true,
+        ),
+    ] {
+        case!(name, at(Screen::ErrorReports, ""), move |_, m| {
+            m.platform.busy = Some(if save {
+                reborn_core::PlatformTask::ReportSave(reborn_core::platform::ReportDestination::Sd)
+            } else {
+                reborn_core::PlatformTask::ReportSend
+            });
+            m.platform.report = Some(reborn_core::platform::ReportLive {
+                step,
+                percent,
+                seconds_left: seconds,
+                bytes_done: bytes.map(|(done, _)| done),
+                bytes_total: bytes.map(|(_, total)| total),
+            });
+        });
+    }
     case!("35-about-up-to-date", at(Screen::Update, ""), |_, m| m
         .navigation
         .focus =

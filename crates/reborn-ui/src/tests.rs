@@ -211,7 +211,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 34] = [
+const NORMAL_SCREENS: [Screen; 33] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -234,7 +234,6 @@ const NORMAL_SCREENS: [Screen; 34] = [
     Screen::HeadphoneLevel,
     Screen::DacFilter,
     Screen::ErrorReports,
-    Screen::ReportTopic,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
     Screen::SettingsSystem,
@@ -3453,7 +3452,7 @@ fn radio_firmware_page_names_the_right_place_and_a_space_refusal() {
 
 #[test]
 fn error_reports_page_switches_sends_and_names_the_last_report() {
-    use reborn_core::platform::{ReportLast, ReportState, ReportTopic};
+    use reborn_core::platform::{ReportLast, ReportState};
     let mut ui = radios();
     // About & Updates names the state; an older platform has no row.
     let mut m = app(Screen::Update);
@@ -3483,7 +3482,7 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
     assert!(
         !rows
             .iter()
-            .find(|r| r.key == "report_topic")
+            .find(|r| r.key == "report_send")
             .unwrap()
             .enabled
     );
@@ -3542,17 +3541,16 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
         ui.model_action(&mut m, Action::Select),
         Effect::Platform(PlatformTask::ReportNewId)
     );
-    // Send Report Now: a topic, then back to the page, which shows the progress.
-    assert_eq!(select_key(&mut ui, &mut m, "report_topic"), Effect::None);
-    assert_eq!(m.screen, Screen::ReportTopic);
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), ReportTopic::ALL.len());
+    // Send Report Now: at once, no topic (every report holds everything); the
+    // page shows the progress, with nothing to press meanwhile.
     assert_eq!(
-        select_key(&mut ui, &mut m, "report_send:sound"),
-        Effect::Platform(PlatformTask::ReportSend(ReportTopic::Sound))
+        select_key(&mut ui, &mut m, "report_send"),
+        Effect::Platform(PlatformTask::ReportSend)
     );
     assert_eq!(m.screen, Screen::ErrorReports);
-    m.platform.busy = Some(PlatformTask::ReportSend(ReportTopic::Sound));
+    m.platform.busy = Some(PlatformTask::ReportSend);
     assert!(visible_text(&ui, &m).contains("Preparing the Report"));
+    assert!(ui.rows(&m, &m.library.tracks).is_empty());
     m.platform.busy = None;
     // What became of the last report, in the uploader's words.
     for (state, text) in [
@@ -3663,4 +3661,49 @@ fn the_error_report_question_records_no_as_well_as_yes() {
         );
         assert_eq!(m.navigation.modal, None);
     }
+}
+
+#[test]
+fn a_running_report_shows_its_steps_percent_and_what_happens() {
+    use reborn_core::platform::{ReportDestination, ReportLive, ReportState, ReportStep};
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let mut m = app(Screen::ErrorReports);
+    m.platform.snapshot.observed = true;
+    m.platform.snapshot.reports = Some(ReportState {
+        enabled: Some(true),
+        upload: true,
+        destinations: vec![ReportDestination::Sd],
+        ..Default::default()
+    });
+    let drawn = |m: &AppModel| drawn_text(&ui.draw(m, &m.library.tracks, false));
+    // Before the platform's first record.
+    m.platform.busy = Some(PlatformTask::ReportSend);
+    let text = drawn(&m);
+    assert!(text.contains("Starting") && text.contains("Collect") && text.contains("Send"));
+    let live = |step, percent, bytes: Option<(u64, u64)>| ReportLive {
+        step,
+        percent,
+        seconds_left: Some(14),
+        bytes_done: bytes.map(|b| b.0),
+        bytes_total: bytes.map(|b| b.1),
+    };
+    m.platform.report = Some(live(ReportStep::Clean, 47., None));
+    let text = drawn(&m);
+    assert!(text.contains("Removing Personal Details") && text.contains("47%"));
+    assert!(text.contains("About 15 seconds left"));
+    m.platform.report = Some(live(ReportStep::Finish, 91., Some((260_000, 503_213))));
+    let text = drawn(&m);
+    assert!(text.contains("Sending the Report") && text.contains("260 of 504 KB"));
+    // Saving: the last step is Save and names the storage.
+    m.platform.busy = Some(PlatformTask::ReportSave(ReportDestination::Sd));
+    m.platform.report = Some(live(ReportStep::Finish, 88., None));
+    let text = drawn(&m);
+    assert!(
+        text.contains("Saving to SD Card") && text.contains("Save") && !text.contains("Sending")
+    );
+    // Done: the page is back.
+    m.platform.busy = None;
+    m.platform.report = None;
+    assert!(drawn(&m).contains("Send Report Now"));
 }

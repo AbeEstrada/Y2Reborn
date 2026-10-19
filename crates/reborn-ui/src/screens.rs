@@ -82,7 +82,6 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Storage
         | Screen::LastFm
         | Screen::ErrorReports
-        | Screen::ReportTopic
         | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
@@ -137,7 +136,6 @@ fn native_screen(
         | Screen::Storage
         | Screen::LastFm
         | Screen::ErrorReports
-        | Screen::ReportTopic
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
         Screen::Playlists | Screen::Playlist => {
             crate::views_playlists::screen(c, ui, m, tracks, has_art, interactive)
@@ -201,7 +199,6 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::HeadphoneLevel => keys!("headphone_level"),
         Screen::DacFilter => keys!("dac_filter"),
         Screen::ErrorReports => keys!("error_reports"),
-        Screen::ReportTopic => keys!("report_topic"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
         Screen::HomeMenu => keys!("home_menu"),
@@ -706,7 +703,6 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::DacFilter => "DAC Filter".into(),
         Screen::ErrorReports if m.navigation.filter == "save" => "Save Report".into(),
         Screen::ErrorReports => "Error Reports".into(),
-        Screen::ReportTopic => "Send Report".into(),
         Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::HomeMenu => "Home Menu".into(),

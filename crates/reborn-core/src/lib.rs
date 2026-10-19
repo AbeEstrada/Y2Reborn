@@ -741,8 +741,6 @@ pub enum Screen {
     /// About & Updates > Error Reports; filter "info": what is sent, "save":
     /// where Save Report writes the file.
     ErrorReports,
-    /// What a sent report is about (a saved one has no topic).
-    ReportTopic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -822,8 +820,9 @@ pub enum PlatformTask {
     ReportEnable(bool),
     /// A new random install ID.
     ReportNewId,
-    /// Build a report now (takes about ten seconds) and queue it.
-    ReportSend(platform::ReportTopic),
+    /// Build a report now (about ten seconds) and send it, or queue it when it
+    /// cannot go out yet.
+    ReportSend,
     /// Build a report now and save it to storage for the owner to send.
     ReportSave(platform::ReportDestination),
 }
@@ -848,6 +847,8 @@ pub struct PlatformState {
     pub shutting_down: Option<platform::ShutdownIntent>,
     /// Live progress of a running update download.
     pub download: Option<platform::DownloadLive>,
+    /// Live progress of a report the owner is sending or saving.
+    pub report: Option<platform::ReportLive>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
