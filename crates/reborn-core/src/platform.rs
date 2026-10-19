@@ -648,7 +648,7 @@ pub struct ReportLast {
     pub report_id: String,
     /// "manual" or the automatic trigger (kernel_crash, reborn_crash, …).
     pub trigger: String,
-    /// queued, sent, failed or saved.
+    /// queued, sent, failed (retried), dropped (refused or unsent after three days) or saved.
     pub state: String,
     pub created_utc: String,
     pub bytes: u64,

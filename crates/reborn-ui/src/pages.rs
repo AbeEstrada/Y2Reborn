@@ -1566,6 +1566,8 @@ fn error_reports(m: &AppModel) -> Page {
             let what = report_trigger_label(&last.trigger);
             match last.state.as_str() {
                 "sent" => format!("Last report ({what}) sent."),
+                // Refused by the receiver, or still unsent after three days.
+                "dropped" => format!("Last report ({what}) couldn't be sent."),
                 "failed" => format!("Last report ({what}) couldn't be sent yet."),
                 _ if r.queued > 1 => {
                     format!("Last report ({what}) waiting to send, {} in all.", r.queued)

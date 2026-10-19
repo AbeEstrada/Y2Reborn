@@ -2631,12 +2631,15 @@ impl Runtime {
                 match result {
                     Ok(state) => {
                         let enabled = state.enabled;
+                        // The platform sends a new report at once when it can.
+                        let sent = state.last.as_ref().is_some_and(|l| l.state == "sent");
                         p.snapshot.reports = Some(state);
                         p.failure = None;
                         self.ui.flash(match task {
                             ReportEnable(true) => "Error reports are on".to_owned(),
                             ReportEnable(false) => "Error reports are off".to_owned(),
                             ReportNewId => "New install ID".to_owned(),
+                            ReportSend(_) if sent => "Report sent".to_owned(),
                             ReportSend(_) if enabled == Some(true) => {
                                 "Report saved · waiting to send".to_owned()
                             }

@@ -3553,6 +3553,23 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
     assert_eq!(m.screen, Screen::ErrorReports);
     m.platform.busy = Some(PlatformTask::ReportSend(ReportTopic::Sound));
     assert!(visible_text(&ui, &m).contains("Preparing the Report"));
+    m.platform.busy = None;
+    // What became of the last report, in the uploader's words.
+    for (state, text) in [
+        ("sent", "Last report (sent by you) sent."),
+        ("failed", "Last report (sent by you) couldn't be sent yet."),
+        ("dropped", "Last report (sent by you) couldn't be sent."),
+    ] {
+        if let Some(r) = m.platform.snapshot.reports.as_mut() {
+            r.queued = 0;
+            r.last = Some(ReportLast {
+                trigger: "manual".into(),
+                state: state.into(),
+                ..Default::default()
+            });
+        }
+        assert!(visible_text(&ui, &m).contains(text), "{state}");
+    }
 }
 
 #[test]
