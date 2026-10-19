@@ -738,9 +738,10 @@ pub enum Screen {
     LastFm,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
-    /// About & Updates > Error Reports; filter "info": what is sent.
+    /// About & Updates > Error Reports; filter "info": what is sent, "save":
+    /// where Save Report writes the file.
     ErrorReports,
-    /// Send Report Now: what the report is about.
+    /// What the report is about; filter "save:<destination>" for Save Report.
     ReportTopic,
 }
 
@@ -823,6 +824,8 @@ pub enum PlatformTask {
     ReportNewId,
     /// Build a report now (takes about half a minute) and queue it.
     ReportSend(platform::ReportTopic),
+    /// Build a report now and save it to storage for the owner to send.
+    ReportSave(platform::ReportTopic, platform::ReportDestination),
 }
 
 /// Presented platform state. Owned and filled by the application from the

@@ -1089,7 +1089,7 @@ impl Runtime {
                 .snapshot
                 .reports
                 .as_ref()
-                .is_some_and(|r| r.enabled.is_none())
+                .is_some_and(|r| r.upload && r.enabled.is_none())
             || matches!(
                 self.model.platform.snapshot.internal_setup,
                 reborn_core::platform::InternalSetup::Waiting { .. }
@@ -2634,13 +2634,14 @@ impl Runtime {
                         p.snapshot.reports = Some(state);
                         p.failure = None;
                         self.ui.flash(match task {
-                            ReportEnable(true) => "Error reports are on",
-                            ReportEnable(false) => "Error reports are off",
-                            ReportNewId => "New install ID",
+                            ReportEnable(true) => "Error reports are on".to_owned(),
+                            ReportEnable(false) => "Error reports are off".to_owned(),
+                            ReportNewId => "New install ID".to_owned(),
                             ReportSend(_) if enabled == Some(true) => {
-                                "Report saved · waiting to send"
+                                "Report saved · waiting to send".to_owned()
                             }
-                            _ => "Done",
+                            ReportSave(_, to) => format!("Report saved to {}", to.label()),
+                            _ => "Done".to_owned(),
                         });
                     }
                     Err(error) => {

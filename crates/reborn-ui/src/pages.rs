@@ -1431,6 +1431,7 @@ fn update(m: &AppModel) -> Page {
                 "Error Reports",
                 "error_reports",
                 match reports.enabled {
+                    _ if !reports.upload => "",
                     Some(true) => "On",
                     Some(false) => "Off",
                     None => "Not Set",
@@ -1450,7 +1451,11 @@ fn update(m: &AppModel) -> Page {
 }
 
 fn report_preparing(m: &AppModel) -> Option<Page> {
-    matches!(m.platform.busy, Some(PlatformTask::ReportSend(_))).then(|| {
+    matches!(
+        m.platform.busy,
+        Some(PlatformTask::ReportSend(_) | PlatformTask::ReportSave(..))
+    )
+    .then(|| {
         Page::hero(
             "Preparing the Report…",
             "The player collects its logs and removes personal details. This takes about half a minute.",
@@ -1459,14 +1464,29 @@ fn report_preparing(m: &AppModel) -> Option<Page> {
 }
 
 /// About & Updates > Error Reports (Y2Linux ERROR-REPORTS-PLAN): the switch,
-/// what is sent, a report now, the install ID and the last report.
+/// what is sent, a report now, the install ID and the last report. Until the
+/// platform uploads, only Save Report: a file on storage the owner sends.
 fn error_reports(m: &AppModel) -> Page {
+    let upload = m
+        .platform
+        .snapshot
+        .reports
+        .as_ref()
+        .is_some_and(|r| r.upload);
     if m.navigation.filter == "info" {
-        return Page::hero(
-            "What Is Sent",
-            "The player's logs, settings and hardware details. Never your music, names, Wi-Fi, \
-             Bluetooth or accounts. Sent encrypted over Wi-Fi, kept 180 days.",
-        );
+        return if upload {
+            Page::hero(
+                "What Is Sent",
+                "The player's logs, settings and hardware details. Never your music, names, \
+                 Wi-Fi, Bluetooth or accounts. Sent encrypted over Wi-Fi, kept 180 days.",
+            )
+        } else {
+            Page::hero(
+                "What Is Saved",
+                "The player's logs, settings and hardware details. Never your music, names, \
+                 Wi-Fi, Bluetooth or accounts. Attach the file to an issue on GitHub.",
+            )
+        };
     }
     if let Some(page) = report_preparing(m) {
         return page;
@@ -1478,8 +1498,48 @@ fn error_reports(m: &AppModel) -> Page {
         page.status = Some("Checking…".into());
         return page;
     };
-    let on = r.enabled == Some(true);
     let idle = m.platform.busy.is_none();
+    if m.navigation.filter == "save" {
+        if r.destinations.is_empty() {
+            return Page::hero(
+                "No Storage Available",
+                "Internal Storage and the SD card can't be written right now.",
+            );
+        }
+        return Page::rows(
+            r.destinations
+                .iter()
+                .map(|d| {
+                    disabled(
+                        row(d.label(), &format!("report_dest:{}", d.argument()), "")
+                            .with_kind(RowKind::Chevron),
+                        idle,
+                    )
+                })
+                .collect(),
+        );
+    }
+    let save = disabled(
+        row("Save Report", "report_save", "").with_kind(RowKind::Chevron),
+        idle,
+    );
+    let saved = r.last.as_ref().filter(|l| l.state == "saved").map(|l| {
+        format!(
+            "Last report saved to {}, Error Reports folder.",
+            l.destination.map_or("storage", |d| d.label())
+        )
+    });
+    if !upload {
+        let mut page = Page::rows(vec![
+            save,
+            row("What Is Saved", "report_info", "").with_kind(RowKind::Chevron),
+        ]);
+        page.status = Some(saved.unwrap_or_else(|| {
+            "Saves the logs to Internal Storage or the SD card for you to send.".into()
+        }));
+        return page;
+    }
+    let on = r.enabled == Some(true);
     let mut rows = vec![
         disabled(
             row("Send Error Reports", "report_toggle", "").with_kind(RowKind::Toggle(on)),
@@ -1490,6 +1550,7 @@ fn error_reports(m: &AppModel) -> Page {
             row("Send Report Now", "report_topic", "").with_kind(RowKind::Chevron),
             on && idle,
         ),
+        save,
     ];
     if let Some(id) = r.short_id().filter(|_| on) {
         rows.push(disabled(
@@ -1499,6 +1560,7 @@ fn error_reports(m: &AppModel) -> Page {
     }
     let mut page = Page::rows(rows);
     page.status = Some(match (&r.last, on) {
+        _ if saved.is_some() => saved.unwrap_or_default(),
         (_, false) => "Off: nothing is collected or sent.".into(),
         (None, true) => "On: a report is made when something goes wrong.".into(),
         (Some(last), true) => {
@@ -1534,22 +1596,21 @@ fn report_trigger_label(trigger: &str) -> &'static str {
     }
 }
 
-/// Send Report Now: what it is about (the report itself has the logs).
+/// Send Report Now or Save Report (filter "save:<destination>"): what it is
+/// about (the report itself has the logs).
 fn report_topic(m: &AppModel) -> Page {
     if let Some(page) = report_preparing(m) {
         return page;
     }
+    let action = match m.navigation.filter.strip_prefix("save:") {
+        Some(destination) => format!("report_save:{destination}:"),
+        None => "report_send:".to_owned(),
+    };
     // Seven topics fill the picker: no status line below them.
     Page::rows(
         reborn_core::platform::ReportTopic::ALL
             .into_iter()
-            .map(|topic| {
-                row(
-                    topic.label(),
-                    &format!("report_send:{}", topic.argument()),
-                    "",
-                )
-            })
+            .map(|topic| row(topic.label(), &format!("{action}{}", topic.argument()), ""))
             .collect(),
     )
 }

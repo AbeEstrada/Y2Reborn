@@ -3465,7 +3465,10 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
             .collect()
     };
     assert!(!labels(&ui, &m).contains(&"Error Reports".to_owned()));
-    m.platform.snapshot.reports = Some(ReportState::default());
+    m.platform.snapshot.reports = Some(ReportState {
+        upload: true,
+        ..Default::default()
+    });
     let row = ui
         .rows(&m, &m.library.tracks)
         .into_iter()
@@ -3500,6 +3503,8 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
             state: "queued".into(),
             ..Default::default()
         }),
+        upload: true,
+        destinations: Vec::new(),
     });
     let rows = ui.rows(&m, &m.library.tracks);
     assert_eq!(rows[0].kind, RowKind::Toggle(true));
@@ -3548,6 +3553,86 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
     assert_eq!(m.screen, Screen::ErrorReports);
     m.platform.busy = Some(PlatformTask::ReportSend(ReportTopic::Sound));
     assert!(visible_text(&ui, &m).contains("Preparing the Report"));
+}
+
+#[test]
+fn without_an_uploader_reports_are_saved_to_the_chosen_storage() {
+    use reborn_core::platform::{ReportDestination, ReportLast, ReportState, ReportTopic};
+    let mut ui = radios();
+    let mut m = app(Screen::Update);
+    m.platform.snapshot.observed = true;
+    m.platform.snapshot.reports = Some(ReportState {
+        destinations: vec![ReportDestination::Internal, ReportDestination::Sd],
+        ..Default::default()
+    });
+    // No upload: no On/Off on About & Updates, no switch, no Send Report Now.
+    let row = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .find(|r| r.label == "Error Reports")
+        .unwrap();
+    assert_eq!(row.secondary, "");
+    assert_eq!(select_key(&mut ui, &mut m, "error_reports"), Effect::None);
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels, ["Save Report", "What Is Saved"]);
+    assert!(visible_text(&ui, &m).contains("for you to send"));
+    assert_eq!(select_key(&mut ui, &mut m, "report_info"), Effect::None);
+    let text = visible_text(&ui, &m);
+    assert!(text.contains("Attach the file") && !text.contains("Wi-Fi, kept"));
+    ui.model_action(&mut m, Action::Back);
+    // Save Report: where, then what about, then back on the page itself.
+    assert_eq!(select_key(&mut ui, &mut m, "report_save"), Effect::None);
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels, ["Internal Storage", "SD Card"]);
+    assert_eq!(crate::screens::screen_title(&m), "Save Report");
+    assert_eq!(select_key(&mut ui, &mut m, "report_dest:sd"), Effect::None);
+    assert_eq!(m.screen, Screen::ReportTopic);
+    assert_eq!(crate::screens::screen_title(&m), "Save Report");
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), ReportTopic::ALL.len());
+    assert_eq!(
+        select_key(&mut ui, &mut m, "report_save:sd:battery"),
+        Effect::Platform(PlatformTask::ReportSave(
+            ReportTopic::Battery,
+            ReportDestination::Sd
+        ))
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::ErrorReports, "")
+    );
+    m.platform.busy = Some(PlatformTask::ReportSave(
+        ReportTopic::Battery,
+        ReportDestination::Sd,
+    ));
+    assert!(visible_text(&ui, &m).contains("Preparing the Report"));
+    m.platform.busy = None;
+    m.platform.snapshot.reports = Some(ReportState {
+        destinations: vec![ReportDestination::Internal],
+        last: Some(ReportLast {
+            trigger: "manual".into(),
+            state: "saved".into(),
+            destination: Some(ReportDestination::Sd),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    assert!(visible_text(&ui, &m).contains("saved to SD Card"));
+    // Back leaves the page for About & Updates, not the pickers.
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Update);
+    // Nothing writable: the picker says so.
+    m.platform.snapshot.reports = Some(ReportState::default());
+    assert_eq!(select_key(&mut ui, &mut m, "error_reports"), Effect::None);
+    assert_eq!(select_key(&mut ui, &mut m, "report_save"), Effect::None);
+    assert!(visible_text(&ui, &m).contains("No Storage Available"));
 }
 
 #[test]

@@ -1816,6 +1816,37 @@ impl Ui {
             Self::go(m, Screen::ErrorReports, "info");
             return Effect::None;
         }
+        if key == "report_save" {
+            Self::go(m, Screen::ErrorReports, "save");
+            return Effect::None;
+        }
+        if let Some(destination) = key
+            .strip_prefix("report_dest:")
+            .and_then(reborn_core::platform::ReportDestination::from_argument)
+        {
+            Self::go(
+                m,
+                Screen::ReportTopic,
+                format!("save:{}", destination.argument()),
+            );
+            return Effect::None;
+        }
+        if let Some((destination, topic)) = key.strip_prefix("report_save:").and_then(|rest| {
+            let (destination, topic) = rest.split_once(':')?;
+            Some((
+                reborn_core::platform::ReportDestination::from_argument(destination)?,
+                reborn_core::platform::ReportTopic::from_argument(topic)?,
+            ))
+        }) {
+            // Back to the Error Reports page (not the pickers): it shows the
+            // progress, then where the file went.
+            while !(m.screen == Screen::ErrorReports && m.navigation.filter.is_empty())
+                && !m.navigation.history.is_empty()
+            {
+                Self::back(m);
+            }
+            return Effect::Platform(PlatformTask::ReportSave(topic, destination));
+        }
         if let Some(topic) = key
             .strip_prefix("report_send:")
             .and_then(reborn_core::platform::ReportTopic::from_argument)

@@ -9,9 +9,10 @@
 use reborn_core::{
     platform::{
         BluetoothQuality, DiagnosticSection, DownloadLive, Fact, HealthLevel, InternalSetup,
-        LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware, ReportLast,
-        ReportState, SbcQuality, SdCard, SleepPhase, SleepProblem, SleepState, StorageState,
-        UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace, VolumeState, WakeReason,
+        LdacQuality, OperationResult, PlatformInfo, PlatformSnapshot, RadioFirmware,
+        ReportDestination, ReportLast, ReportState, SbcQuality, SdCard, SleepPhase, SleepProblem,
+        SleepState, StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer,
+        VolumeSpace, VolumeState, WakeReason,
     },
     PlatformTask,
 };
@@ -262,7 +263,7 @@ fn execute(task: PlatformTask) -> Reply {
         ),
         // Passive IP/route/DNS readiness only; never pings an external host.
         NetworkCheck => call(&["status", "wifi"], 25).and_then(|v| schema(v, STATUS_SCHEMA)),
-        ReportEnable(_) | ReportNewId | ReportSend(_) => {
+        ReportEnable(_) | ReportNewId | ReportSend(_) | ReportSave(..) => {
             return Reply::Reports(task, reports(task))
         }
     };
@@ -283,8 +284,27 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         ReportNewId => call(&["report", "new-id"], 10)?,
         // Building a report reads every log: about 40 s on the Y2.
         ReportSend(topic) => call(&["report", "send", "--topic", topic.argument()], 180)?,
+        ReportSave(topic, to) => call(
+            &[
+                "report",
+                "save",
+                "--to",
+                to.argument(),
+                "--topic",
+                topic.argument(),
+            ],
+            180,
+        )?,
         _ => return Err("not_a_report_task".into()),
     };
+    if answer["saved"] == false {
+        return Err(match answer["reason"].as_str() {
+            Some("not_mounted") => "That storage isn't available.",
+            Some("no_space") => "Not enough free space for the report.",
+            _ => "The report couldn't be saved. Please try again.",
+        }
+        .into());
+    }
     if answer["queued"] == false {
         return Err(match answer["reason"].as_str() {
             Some("not_enabled") => "Turn on Error Reports first.",
@@ -293,7 +313,7 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         }
         .into());
     }
-    let status = if matches!(task, ReportSend(_)) {
+    let status = if matches!(task, ReportSend(_) | ReportSave(..)) {
         call(&["report", "status"], 10)?
     } else {
         answer
@@ -318,7 +338,18 @@ pub fn report_state(value: &Value) -> Option<ReportState> {
             state: text(&last["state"]).unwrap_or_default(),
             created_utc: text(&last["created_utc"]).unwrap_or_default(),
             bytes: last["bytes"].as_u64().unwrap_or(0),
+            destination: last["destination"]
+                .as_str()
+                .and_then(ReportDestination::from_argument),
         }),
+        upload: value["upload"].as_bool().unwrap_or(false),
+        destinations: value["destinations"]
+            .as_array()
+            .map_or_else(Vec::new, |list| {
+                list.iter()
+                    .filter_map(|d| d.as_str().and_then(ReportDestination::from_argument))
+                    .collect()
+            }),
     })
 }
 
@@ -1355,6 +1386,19 @@ mod tests {
         assert_eq!(state.queued, 2);
         assert_eq!(state.short_id().as_deref(), Some("DA2C48EA"));
         assert_eq!(state.last.unwrap().bytes, 409177);
+        // Test builds 96-98 had no upload or destinations: no upload, nowhere to save.
+        assert!(!state.upload && state.destinations.is_empty());
+        let state = report_state(&json!({"schema": 1, "enabled": null, "install_id": null,
+            "queued": [], "upload": false, "destinations": ["internal", "sd", "usb"],
+            "last": {"report_id": "r", "trigger": "manual", "state": "saved",
+                     "destination": "sd", "file": "Error Reports/y2linux-report-20261019-140000.tar.gz",
+                     "created_utc": "2026-10-19T12:00:00+00:00", "bytes": 401234}}))
+        .unwrap();
+        assert_eq!(
+            state.destinations,
+            [ReportDestination::Internal, ReportDestination::Sd]
+        );
+        assert_eq!(state.last.unwrap().destination, Some(ReportDestination::Sd));
         // Another schema is an older or newer platform: no state, no screen.
         assert!(report_state(&json!({"schema": 2})).is_none());
         assert!(report_state(&json!({"failure": "report_failed"})).is_none());

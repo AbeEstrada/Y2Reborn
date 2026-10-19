@@ -661,12 +661,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state: "queued".into(),
                 ..Default::default()
             }),
+            upload: true,
+            destinations: Vec::new(),
         });
     });
+    case!(
+        "33h-error-reports-save",
+        at(Screen::ErrorReports, ""),
+        |_, m| {
+            m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+                destinations: vec![
+                    reborn_core::platform::ReportDestination::Internal,
+                    reborn_core::platform::ReportDestination::Sd,
+                ],
+                ..Default::default()
+            });
+        }
+    );
+    case!(
+        "33i-report-destination",
+        at(Screen::ErrorReports, "save"),
+        |_, m| {
+            m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+                destinations: vec![
+                    reborn_core::platform::ReportDestination::Internal,
+                    reborn_core::platform::ReportDestination::Sd,
+                ],
+                ..Default::default()
+            });
+        }
+    );
+    case!("33j-report-saved", at(Screen::ErrorReports, ""), |_, m| {
+        m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
+            destinations: vec![reborn_core::platform::ReportDestination::Internal],
+            last: Some(reborn_core::platform::ReportLast {
+                trigger: "manual".into(),
+                state: "saved".into(),
+                destination: Some(reborn_core::platform::ReportDestination::Internal),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    });
+    case!(
+        "33k-error-reports-save-info",
+        at(Screen::ErrorReports, "info"),
+        |_, m| {
+            m.platform.snapshot.reports = Some(reborn_core::platform::ReportState::default());
+        }
+    );
     case!("33c-error-reports-info", at(Screen::ErrorReports, "info"));
     case!("33g-about-error-reports", at(Screen::Update, ""), |_, m| {
         m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
             enabled: Some(true),
+            upload: true,
             ..Default::default()
         });
         m.navigation.focus = 1;
@@ -679,6 +727,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("33e-report-topic", at(Screen::ReportTopic, ""), |_, m| {
         m.platform.snapshot.reports = Some(reborn_core::platform::ReportState {
             enabled: Some(true),
+            upload: true,
             ..Default::default()
         });
     });

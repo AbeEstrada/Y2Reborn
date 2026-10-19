@@ -624,6 +624,11 @@ pub struct ReportState {
     /// Reports waiting to be sent.
     pub queued: usize,
     pub last: Option<ReportLast>,
+    /// The platform can upload reports; until it can, the owner saves them to
+    /// storage and sends the file, and the switch and question stay hidden.
+    pub upload: bool,
+    /// Storage a report can be saved to now (mounted writable).
+    pub destinations: Vec<ReportDestination>,
 }
 impl ReportState {
     /// The install ID as shown: its first eight characters, upper case.
@@ -643,10 +648,38 @@ pub struct ReportLast {
     pub report_id: String,
     /// "manual" or the automatic trigger (kernel_crash, reborn_crash, …).
     pub trigger: String,
-    /// queued, sent or failed.
+    /// queued, sent, failed or saved.
     pub state: String,
     pub created_utc: String,
     pub bytes: u64,
+    /// Where a saved report went.
+    pub destination: Option<ReportDestination>,
+}
+
+/// Where *Save Report* writes the file (its Error Reports folder, seen over MTP).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportDestination {
+    Internal,
+    Sd,
+}
+impl ReportDestination {
+    pub const fn argument(self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::Sd => "sd",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Internal => "Internal Storage",
+            Self::Sd => "SD Card",
+        }
+    }
+    pub fn from_argument(value: &str) -> Option<Self> {
+        [Self::Internal, Self::Sd]
+            .into_iter()
+            .find(|d| d.argument() == value)
+    }
 }
 
 /// What a report sent with *Send Report Now* is about.
