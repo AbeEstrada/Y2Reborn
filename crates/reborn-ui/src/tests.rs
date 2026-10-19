@@ -3557,7 +3557,7 @@ fn error_reports_page_switches_sends_and_names_the_last_report() {
 
 #[test]
 fn without_an_uploader_reports_are_saved_to_the_chosen_storage() {
-    use reborn_core::platform::{ReportDestination, ReportLast, ReportState, ReportTopic};
+    use reborn_core::platform::{ReportDestination, ReportLast, ReportState};
     let mut ui = radios();
     let mut m = app(Screen::Update);
     m.platform.snapshot.observed = true;
@@ -3584,7 +3584,8 @@ fn without_an_uploader_reports_are_saved_to_the_chosen_storage() {
     let text = visible_text(&ui, &m);
     assert!(text.contains("Attach the file") && !text.contains("Wi-Fi, kept"));
     ui.model_action(&mut m, Action::Back);
-    // Save Report: where, then what about, then back on the page itself.
+    // Save Report: where (no topic: a saved report has everything), then back
+    // on the page itself.
     assert_eq!(select_key(&mut ui, &mut m, "report_save"), Effect::None);
     let labels: Vec<_> = ui
         .rows(&m, &m.library.tracks)
@@ -3593,25 +3594,15 @@ fn without_an_uploader_reports_are_saved_to_the_chosen_storage() {
         .collect();
     assert_eq!(labels, ["Internal Storage", "SD Card"]);
     assert_eq!(crate::screens::screen_title(&m), "Save Report");
-    assert_eq!(select_key(&mut ui, &mut m, "report_dest:sd"), Effect::None);
-    assert_eq!(m.screen, Screen::ReportTopic);
-    assert_eq!(crate::screens::screen_title(&m), "Save Report");
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), ReportTopic::ALL.len());
     assert_eq!(
-        select_key(&mut ui, &mut m, "report_save:sd:battery"),
-        Effect::Platform(PlatformTask::ReportSave(
-            ReportTopic::Battery,
-            ReportDestination::Sd
-        ))
+        select_key(&mut ui, &mut m, "report_dest:sd"),
+        Effect::Platform(PlatformTask::ReportSave(ReportDestination::Sd))
     );
     assert_eq!(
         (m.screen, m.navigation.filter.as_str()),
         (Screen::ErrorReports, "")
     );
-    m.platform.busy = Some(PlatformTask::ReportSave(
-        ReportTopic::Battery,
-        ReportDestination::Sd,
-    ));
+    m.platform.busy = Some(PlatformTask::ReportSave(ReportDestination::Sd));
     assert!(visible_text(&ui, &m).contains("Preparing the Report"));
     m.platform.busy = None;
     m.platform.snapshot.reports = Some(ReportState {

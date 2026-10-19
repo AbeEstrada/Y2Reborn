@@ -706,7 +706,6 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::DacFilter => "DAC Filter".into(),
         Screen::ErrorReports if m.navigation.filter == "save" => "Save Report".into(),
         Screen::ErrorReports => "Error Reports".into(),
-        Screen::ReportTopic if m.navigation.filter.starts_with("save:") => "Save Report".into(),
         Screen::ReportTopic => "Send Report".into(),
         Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),

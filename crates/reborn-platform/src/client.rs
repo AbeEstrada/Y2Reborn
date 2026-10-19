@@ -284,17 +284,7 @@ fn reports(task: PlatformTask) -> Result<ReportState, String> {
         ReportNewId => call(&["report", "new-id"], 10)?,
         // Building a report reads every log: about 10 s on the Y2.
         ReportSend(topic) => call(&["report", "send", "--topic", topic.argument()], 180)?,
-        ReportSave(topic, to) => call(
-            &[
-                "report",
-                "save",
-                "--to",
-                to.argument(),
-                "--topic",
-                topic.argument(),
-            ],
-            180,
-        )?,
+        ReportSave(to) => call(&["report", "save", "--to", to.argument()], 180)?,
         _ => return Err("not_a_report_task".into()),
     };
     if answer["saved"] == false {

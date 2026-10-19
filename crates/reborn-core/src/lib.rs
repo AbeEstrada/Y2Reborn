@@ -741,7 +741,7 @@ pub enum Screen {
     /// About & Updates > Error Reports; filter "info": what is sent, "save":
     /// where Save Report writes the file.
     ErrorReports,
-    /// What the report is about; filter "save:<destination>" for Save Report.
+    /// What a sent report is about (a saved one has no topic).
     ReportTopic,
 }
 
@@ -825,7 +825,7 @@ pub enum PlatformTask {
     /// Build a report now (takes about ten seconds) and queue it.
     ReportSend(platform::ReportTopic),
     /// Build a report now and save it to storage for the owner to send.
-    ReportSave(platform::ReportTopic, platform::ReportDestination),
+    ReportSave(platform::ReportDestination),
 }
 
 /// Presented platform state. Owned and filled by the application from the

@@ -1511,8 +1511,7 @@ fn error_reports(m: &AppModel) -> Page {
                 .iter()
                 .map(|d| {
                     disabled(
-                        row(d.label(), &format!("report_dest:{}", d.argument()), "")
-                            .with_kind(RowKind::Chevron),
+                        row(d.label(), &format!("report_dest:{}", d.argument()), ""),
                         idle,
                     )
                 })
@@ -1596,21 +1595,22 @@ fn report_trigger_label(trigger: &str) -> &'static str {
     }
 }
 
-/// Send Report Now or Save Report (filter "save:<destination>"): what it is
-/// about (the report itself has the logs).
+/// Send Report Now: what it is about (the report itself has the logs).
 fn report_topic(m: &AppModel) -> Page {
     if let Some(page) = report_preparing(m) {
         return page;
     }
-    let action = match m.navigation.filter.strip_prefix("save:") {
-        Some(destination) => format!("report_save:{destination}:"),
-        None => "report_send:".to_owned(),
-    };
     // Seven topics fill the picker: no status line below them.
     Page::rows(
         reborn_core::platform::ReportTopic::ALL
             .into_iter()
-            .map(|topic| row(topic.label(), &format!("{action}{}", topic.argument()), ""))
+            .map(|topic| {
+                row(
+                    topic.label(),
+                    &format!("report_send:{}", topic.argument()),
+                    "",
+                )
+            })
             .collect(),
     )
 }

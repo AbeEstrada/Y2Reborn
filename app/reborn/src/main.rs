@@ -2640,7 +2640,7 @@ impl Runtime {
                             ReportSend(_) if enabled == Some(true) => {
                                 "Report saved · waiting to send".to_owned()
                             }
-                            ReportSave(_, to) => format!("Report saved to {}", to.label()),
+                            ReportSave(to) => format!("Report saved to {}", to.label()),
                             _ => "Done".to_owned(),
                         });
                     }
