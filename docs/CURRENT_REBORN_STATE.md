@@ -1,5 +1,16 @@
 # Current Reborn state on the Y2
 
+## Report progress, no topic (2026-10-19, unreleased)
+
+Send Report Now sends at once: `PlatformTask::ReportSend` has no topic, `Screen::ReportTopic` and `ReportTopic`
+are gone (every report holds everything). While a report is made, About & Updates → Error Reports shows its live
+progress like the update download: `client::report_progress` reads Y2Linux's `/run/y2/report-progress.json` every
+200 ms while `ReportSend`/`ReportSave` run (`PlatformState::report`, `ReportLive`, `ReportStep`), and
+`views_settings::report_progress` draws the steps Collect · Clean · Send (or Save), the percent, the gliding bar,
+what happens ("260 of 504 KB", "Into the Error Reports folder.") and the time left; before the first record
+"Starting…" sweeps. Previews 33f, 33l–33o; test `a_running_report_shows_its_steps_percent_and_what_happens`; 545
+tests, strict Clippy.
+
 ## Uploads (2026-10-19, unreleased)
 
 With the platform's uploader (Y2Linux ERROR-REPORTS-PLAN R4): Send Report Now flashes "Report sent" when the
