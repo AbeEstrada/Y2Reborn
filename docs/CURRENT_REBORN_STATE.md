@@ -1,15 +1,22 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.9 — Y2Linux 1.0 Beta 8.9 (Baseline 102), 2026-10-19 (latest): Save Report without a topic
+## Uploads (2026-10-19, unreleased)
 
-Published as `baseline-102` (Reborn `4da5f84`, sequence 7100). Save Report asks only for the storage: `report_dest:<destination>` returns to the Error Reports page and starts
+With the platform's uploader (Y2Linux ERROR-REPORTS-PLAN R4): Send Report Now flashes "Report sent" when the
+report went out at once (`last.state == "sent"` in the reply), "Report saved · waiting to send" otherwise; the page
+names a dropped report (refused by the receiver or unsent after three days) as "couldn't be sent". The switch,
+Send Report Now, the install ID and the question appear when the image carries the upload key (`upload: true`).
+
+## 1.0.0-beta.8.9 — Y2Linux 1.0 Beta 8.9 (label 102), 2026-10-19: Save Report without a topic
+
+Built and installed on the owner's player, not published (Reborn `4da5f84`, sequence 7100). Save Report asks only for the storage: `report_dest:<destination>` returns to the Error Reports page and starts
 `PlatformTask::ReportSave(destination)` (`y2-platform report save --to …`, no `--topic`). The topic never changed a
 report's content (`report.py` collects the same sections for every topic; it was only a label in `report.json`),
 and a saved report goes with a GitHub issue that says what went wrong. `Screen::ReportTopic` stays for Send Report
 Now, where the topic is the only thing the owner tells the receiver. The storage rows lose their chevron. Test
 `without_an_uploader_reports_are_saved_to_the_chosen_storage` updated; 543 tests, strict Clippy.
 
-## 1.0.0-beta.8.8 — Y2Linux 1.0 Beta 8.8 (Baseline 101), 2026-10-19: Save Report
+## 1.0.0-beta.8.8 — Y2Linux 1.0 Beta 8.8 (Baseline 101), 2026-10-19 (latest published): Save Report
 
 Published as `baseline-101` (Reborn `b6b6fbc`, sequence 7000), with the error report screens below. About & Updates →
 Error Reports → **Save Report** → storage (`ReportState::destinations`, `report_dest:<internal|sd>`) → topic
