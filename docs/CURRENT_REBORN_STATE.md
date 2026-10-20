@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.15 — Y2Linux 1.0 Beta 8.15 (Baseline 112), 2026-10-20 (latest): CJK text, update check, codec retry
+## 1.0.0-beta.8.16 — Y2Linux 1.0 Beta 8.16 (Baseline 113), 2026-10-20 (latest): large libraries
+
+Published as `baseline-113` (Reborn `eea9312`, sequence 8000). From a 28 600-song report: `MAX_QUEUE` is 5 000
+(`queue_window`: the chosen song with a tenth before it; Shuffle a random 5 000; `play_members` picks positions before
+cloning; `AppModel::restore` trims an older larger queue) (`122607f`). The scan probe takes matching ids from its
+indexed lookup instead of an `INSERT…SELECT` planned as a walk over the whole source (749 s of a 759 s no-change
+rescan) (`5c7e768`). Tags of new/changed files are read by `read_parallel` on up to 3 threads (`scan_workers`, after
+the LibraryScan lease restored the cores; `reborn_platform::lower_thread_priority` nice 10), applied in file order
+(`4922cab`).
+
+## 1.0.0-beta.8.15 — Y2Linux 1.0 Beta 8.15 (Baseline 112), 2026-10-20: CJK text, update check, codec retry
 
 Published as `baseline-112` (Reborn `2ef41d3`, sequence 7900). Text lookup is exact face → fallback page → Noto Sans
 CJK (`/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf`, `REBORN_CJK_FONT` overrides) → U+FFFD; missing glyphs are
