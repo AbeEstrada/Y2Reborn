@@ -3,6 +3,7 @@
 use reborn_core::Track;
 use reborn_graphics::THUMB_SIZE;
 use reborn_media::{external_artwork, folder_artwork_candidates, Cancel, MediaFile};
+use reborn_observability::isolated;
 use reborn_platform::storage::{pin_track, PinnedTrack};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -313,7 +314,9 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         }
         let started = std::time::Instant::now();
         if full {
-            let rgba = Cancel::new().ok().and_then(|cancel| job.art.load(&cancel));
+            let rgba = Cancel::new()
+                .ok()
+                .and_then(|cancel| isolated(|| job.art.load(&cancel)).ok().flatten());
             if let Ok(mut guard) = lock.lock() {
                 guard.current = None;
                 *guard.unread.entry((job.thumb, true)).or_insert(0) += 1;
@@ -338,9 +341,16 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
             Some(bytes) => (Some(bytes), true),
             None => {
                 let cancel = Cancel::new().ok();
-                let rgba = cancel
-                    .and_then(|cancel| job.art.load(&cancel))
-                    .and_then(|cover| reborn_ui::art::thumbnail(&cover));
+                // A bug on one odd picture costs its cover, not the player.
+                let rgba = cancel.and_then(|cancel| {
+                    isolated(|| {
+                        job.art
+                            .load(&cancel)
+                            .and_then(|cover| reborn_ui::art::thumbnail(&cover))
+                    })
+                    .ok()
+                    .flatten()
+                });
                 if let Some(bytes) = &rgba {
                     if cached < CACHE_LIMIT {
                         let temp = path.with_extension("tmp");

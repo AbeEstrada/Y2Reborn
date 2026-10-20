@@ -1242,7 +1242,10 @@ impl ScanBatch<'_> {
                     .strip_prefix(&self.source.root)
                     .map_err(|e| e.to_string())?,
             );
-            match self.decode(&path, &file)? {
+            // A bug on one odd file makes it unreadable, not the player.
+            let decoded = reborn_observability::isolated(|| self.decode(&path, &file))
+                .unwrap_or(Ok(Decoded::Unreadable));
+            match decoded? {
                 Decoded::Track(track) => {
                     self.unreadable.remove(&key);
                     changes.push(*track);

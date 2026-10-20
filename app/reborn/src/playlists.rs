@@ -5,6 +5,7 @@
 //! blindly.
 
 use reborn_core::playlist::{Playlist, PlaylistEdit, PlaylistEntry};
+use reborn_observability::isolated;
 use reborn_platform::playlists as files;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -57,7 +58,9 @@ impl Worker {
             .name("playlists".into())
             .spawn(move || {
                 while let Ok(job) = queue.recv() {
-                    if replies_tx.send(run(job)).is_err() {
+                    // A bug on one odd file costs that job, not the player.
+                    let reply = isolated(|| run(job)).unwrap_or_else(Reply::Failed);
+                    if replies_tx.send(reply).is_err() {
                         return;
                     }
                 }
@@ -75,7 +78,7 @@ fn run(job: Job) -> Reply {
         Job::Refresh(roots) => Reply::Listed(
             files::discover(&roots)
                 .iter()
-                .filter_map(|path| files::read(path).ok())
+                .filter_map(|path| isolated(|| files::read(path)).ok()?.ok())
                 .collect(),
         ),
         Job::Create { dir, name, entries } => (|| {

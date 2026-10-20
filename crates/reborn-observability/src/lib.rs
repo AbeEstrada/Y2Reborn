@@ -680,16 +680,41 @@ impl Observer {
                     .try_lock()
                     .map(|s| s.context.clone())
                     .unwrap_or(json!({"unavailable":"panic while observer locked"}));
-                let record = json!({"version":version,"thread":thread::current().name(),"location":info.location().map(|l|format!("{}:{}",l.file(),l.line())),"message":safe_string(message),"recent_event_ids":recent,"session":i.session,"state_summary":context});
+                let isolated = ISOLATED.with(|i| i.get());
+                let record = json!({"version":version,"thread":thread::current().name(),"location":info.location().map(|l|format!("{}:{}",l.file(),l.line())),"message":safe_string(message),"recent_event_ids":recent,"session":i.session,"state_summary":context,"isolated":isolated});
                 if let Ok(mut file) = File::create(i.dir.join("panic-last.json")) {
                     let _ = serde_json::to_writer(&mut file, &record);
                     let _ = file.sync_all();
                 }
             }
+            if ISOLATED.with(|i| i.get()) {
+                return; // `isolated` catches it; this file is skipped
+            }
             std::process::exit(101);
         }));
     }
 }
+thread_local! {
+    static ISOLATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f`, turning a panic into `Err(message)` instead of ending Reborn:
+/// for work on one user file (a playlist, a picture), where a bug must cost
+/// that file, not the player. The panic is still recorded in
+/// `panic-last.json`, marked `isolated`, so error reports carry it.
+pub fn isolated<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+    let before = ISOLATED.with(|i| i.replace(true));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    ISOLATED.with(|i| i.set(before));
+    result.map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic".into())
+    })
+}
+
 pub fn wall_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
