@@ -362,6 +362,29 @@ fn cancel_operations(c: &Connection, operations: &Operations) {
     }
 }
 
+const CODEC_RETRIES: u8 = 5;
+const CODEC_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// A codec choice waiting for the peer to be ready.
+struct CodecRetry {
+    address: String,
+    preference: CodecPreference,
+    attempt: u8,
+    due: Instant,
+}
+
+/// Refusals that pass once the connection settles (not: music playing).
+fn codec_not_ready(error: &str) -> bool {
+    [
+        "connected A2DP peer required",
+        "playback PCM not ready",
+        "BlueALSA unavailable",
+        "operation in progress",
+    ]
+    .iter()
+    .any(|reason| error.contains(reason))
+}
+
 fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
     if !Path::new("/etc/y2linux/platform-contract").exists() {
         return Ok(None);
@@ -1275,6 +1298,10 @@ impl Bluetooth {
                     let mut adapter = String::new();
                     let mut discovery: Option<Discovery> = None;
                     let mut operation_error = None;
+                    // A codec choice refused only because the peer was not ready yet
+                    // (connecting, PCM not registered, another operation running) is
+                    // tried again: it was dropped (reports 61caa81e/297f1032).
+                    let mut codec_retry: Option<CodecRetry> = None;
                     let mut unpublished = false;
                     let mut commands_pending = false;
                     loop {
@@ -1427,13 +1454,28 @@ impl Bluetooth {
                             changed |= current.pending.as_ref().map(|v| (&v.device, &v.display)) != display.as_ref().map(|v| (&v.device, &v.display));
                             current.pending = display;
                         }
+                        let mut codec_attempt = 0u8;
                         let command = match rx.try_recv() {
-                            Ok(c) => Some(c),
+                            Ok(c) => {
+                                if matches!(c, Command::Codec { .. }) {
+                                    codec_retry = None; // a newer choice replaces it
+                                }
+                                Some(c)
+                            }
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                                 cancel_operations(&c, &operations);
                                 return;
                             }
-                            Err(_) => None,
+                            Err(_) => match codec_retry.take() {
+                                Some(retry) if retry.due <= Instant::now() => {
+                                    codec_attempt = retry.attempt;
+                                    Some(Command::Codec { address: retry.address, preference: retry.preference })
+                                }
+                                other => {
+                                    codec_retry = other;
+                                    None
+                                }
+                            },
                         };
                         commands_pending = command.is_some();
                         if let Some(cmd) = command {
@@ -1458,6 +1500,10 @@ impl Bluetooth {
                             // restart the bounded operation.
                             if matches!(cmd, Command::Scan(true)) && discovery.is_some() { continue; }
                             let scan_command = matches!(cmd, Command::Scan(_));
+                            let codec_args = match &cmd {
+                                Command::Codec { address, preference } => Some((address.clone(), *preference)),
+                                _ => None,
+                            };
                             if !matches!(cmd, Command::Refresh) {
                                 operation_error = None;
                                 current.error = None;
@@ -1555,6 +1601,16 @@ impl Bluetooth {
                                     }
                                 }
                             };
+                            if let (Err(e), Some((address, preference))) = (&result, codec_args) {
+                                if codec_not_ready(e) && codec_attempt < CODEC_RETRIES {
+                                    codec_retry = Some(CodecRetry {
+                                        address,
+                                        preference,
+                                        attempt: codec_attempt + 1,
+                                        due: Instant::now() + CODEC_RETRY_DELAY,
+                                    });
+                                }
+                            }
                             if let Err(e) = result {
                                 current.error = Some(e.clone());
                                 operation_error = Some(e.clone());
@@ -2590,5 +2646,25 @@ mod pcm_lease_tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod codec_retry_tests {
+    use super::codec_not_ready;
+
+    #[test]
+    fn only_refusals_that_settle_are_retried() {
+        assert!(codec_not_ready("connected A2DP peer required"));
+        assert!(codec_not_ready(
+            "BlueALSA playback PCM not ready; retry after connection completes"
+        ));
+        assert!(codec_not_ready(
+            "Platform Bluetooth operation in progress; retry after it completes"
+        ));
+        assert!(!codec_not_ready(
+            "Release the Bluetooth PCM before codec selection"
+        ));
+        assert!(!codec_not_ready("codec unsupported by peer"));
     }
 }
