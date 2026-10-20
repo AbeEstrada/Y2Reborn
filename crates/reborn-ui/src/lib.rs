@@ -1584,8 +1584,8 @@ impl Ui {
             }
             Action::PreviousTrack => return Effect::PreviousTrack,
             Action::NextTrack => return Effect::NextTrack,
-            Action::SeekBackward => return Effect::Seek(-30_000),
-            Action::SeekForward => return Effect::Seek(30_000),
+            Action::SeekBackward => return Effect::Seek(-1),
+            Action::SeekForward => return Effect::Seek(1),
             Action::VolumeUp => return Effect::AdjustVolume(2),
             Action::VolumeDown => return Effect::AdjustVolume(-2),
             _ => {}

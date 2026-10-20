@@ -40,6 +40,40 @@ const HOLD_LIMIT: Duration = Duration::from_secs(180);
 /// Seek steps closer together than this are one seek.
 const SEEK_SETTLE: Duration = Duration::from_millis(350);
 
+/// The step of a held Previous/Next seek (one every 90 ms): small at first,
+/// larger the longer the button is held, at most 1/60 of the song (a fixed
+/// 30 s per step crossed a normal song in about a second, user feedback).
+fn seek_step(held: Duration, length_ms: u64) -> u64 {
+    let step = if held < Duration::from_millis(1500) {
+        1_000
+    } else if held < Duration::from_secs(4) {
+        3_000
+    } else {
+        10_000
+    };
+    step.min((length_ms / 60).max(1_000))
+}
+
+/// A new seed for every shuffle, from the kernel's random pool (#4: a seed
+/// made from the track ID gave the same order every time).
+fn shuffle_seed() -> u64 {
+    reborn_platform::random_u64()
+}
+
+/// Fisher-Yates over `items[from..]`, driven by splitmix64.
+fn shuffle_from<T>(items: &mut [T], from: usize, mut seed: u64) {
+    for i in (from + 1..items.len()).rev() {
+        seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        let span = (i - from + 1) as u128;
+        let j = from + ((u128::from(z) * span) >> 64) as usize;
+        items.swap(i, j);
+    }
+}
+
 /// Stations kept on top of a country's, a genre's or the popular list.
 const TOP_STATIONS: usize = 10;
 
@@ -196,6 +230,8 @@ struct Runtime {
     /// (and only when no start is in progress): seeking with held
     /// Previous/Next, skipping while a song is still starting.
     seek_until: Option<Instant>,
+    /// First and latest step of the current held seek (`seek_step`).
+    seek_run: Option<(Instant, Instant)>,
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
@@ -911,14 +947,15 @@ impl Runtime {
             .ok_or("selected track is not in the playback collection")?;
         let use_shuffle = force_shuffle || self.model.settings.shuffle;
         if use_shuffle {
-            let selected = queue.remove(selected_position);
-            let mut seed = selected.id.unsigned_abs().wrapping_add(index as u64 + 1);
-            for i in (1..queue.len()).rev() {
-                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                let j = (seed as usize % (i + 1)).min(i);
-                queue.swap(i, j);
+            if force_shuffle {
+                // A Shuffle row: any song may come first.
+                shuffle_from(&mut queue, 0, shuffle_seed());
+            } else {
+                // A song picked with Shuffle on plays first, the rest follow.
+                let selected = queue.remove(selected_position);
+                queue.insert(0, selected);
+                shuffle_from(&mut queue, 1, shuffle_seed());
             }
-            queue.insert(0, selected);
             self.model.replace_queue(queue, 0)?;
         } else {
             let selected_index = selected_position;
@@ -1671,9 +1708,21 @@ impl Runtime {
     fn effect(&mut self, e: Effect) -> Result<(), String> {
         // Holding Previous/Next seeks every 90 ms: steps are collected and
         // applied once, so they never meet a restart still in progress.
-        if let Effect::Seek(delta) = e {
-            if !self.model.current().is_some_and(Track::is_radio) {
-                self.seek_by(delta);
+        if let Effect::Seek(direction) = e {
+            if let Some(length) = self
+                .model
+                .current()
+                .filter(|t| !t.is_radio())
+                .map(|t| t.duration_ms)
+            {
+                let now = Instant::now();
+                let start = match self.seek_run {
+                    Some((start, last)) if now.duration_since(last) < SEEK_SETTLE => start,
+                    _ => now,
+                };
+                self.seek_run = Some((start, now));
+                let step = seek_step(now.duration_since(start), length) as i64;
+                self.seek_by(direction.signum() * step);
                 return Ok(());
             }
         }
@@ -3738,6 +3787,7 @@ fn run() -> Result<(), String> {
         held_since: None,
         loaded_dsp: None,
         seek_until: None,
+        seek_run: None,
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
@@ -6414,5 +6464,56 @@ mod codec_reconnect_tests {
         ] {
             assert!(!sleep_control_allowed(&command));
         }
+    }
+}
+#[cfg(test)]
+mod shuffle_and_seek_tests {
+    use super::{seek_step, shuffle_from};
+    use std::time::Duration;
+
+    #[test]
+    fn shuffles_differ_by_seed_and_keep_every_song() {
+        let orders: Vec<Vec<u32>> = (1..=8u64)
+            .map(|seed| {
+                let mut v: Vec<u32> = (0..40).collect();
+                shuffle_from(&mut v, 0, seed.wrapping_mul(0x1234_5678_9abc_def1));
+                v
+            })
+            .collect();
+        for order in &orders {
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..40).collect::<Vec<_>>());
+        }
+        for (i, a) in orders.iter().enumerate() {
+            for b in &orders[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn a_picked_song_stays_first_and_every_song_can_lead() {
+        let mut first = [0u32; 10];
+        for seed in 0..10_000u64 {
+            let mut kept: Vec<u32> = (0..10).collect();
+            shuffle_from(&mut kept, 1, seed);
+            assert_eq!(kept[0], 0);
+            let mut all: Vec<u32> = (0..10).collect();
+            shuffle_from(&mut all, 0, seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+            first[all[0] as usize] += 1;
+        }
+        // About 1000 each; a seed-derived order once always led with the same song.
+        assert!(first.iter().all(|&n| (800..1200).contains(&n)), "{first:?}");
+    }
+
+    #[test]
+    fn held_seek_starts_small_and_grows_within_the_song() {
+        let song = 4 * 60_000;
+        assert_eq!(seek_step(Duration::ZERO, song), 1_000);
+        assert_eq!(seek_step(Duration::from_secs(2), song), 3_000);
+        assert_eq!(seek_step(Duration::from_secs(5), song), 4_000); // 1/60 of 4 min
+        assert_eq!(seek_step(Duration::from_secs(5), 60 * 60_000), 10_000);
+        assert_eq!(seek_step(Duration::from_secs(5), 30_000), 1_000);
     }
 }

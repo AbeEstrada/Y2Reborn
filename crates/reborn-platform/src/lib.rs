@@ -16,6 +16,20 @@ pub mod scrobble;
 pub mod storage;
 pub mod wifi;
 pub mod workload;
+
+/// 64 random bits from the kernel's pool (getrandom), the clock if that fails.
+pub fn random_u64() -> u64 {
+    let mut value = [0u8; 8];
+    // SAFETY: getrandom writes at most the buffer's length into it.
+    let n = unsafe { libc::getrandom(value.as_mut_ptr().cast(), value.len(), 0) };
+    if n == 8 {
+        u64::from_ne_bytes(value)
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0x9e37_79b9_7f4a_7c15, |d| d.as_nanos() as u64)
+    }
+}
 pub use native::{
     evdev_monotonic_clock, filesystem_uuid, free_bytes, install_signals, monotonic_seconds, space,
     stop_requested,

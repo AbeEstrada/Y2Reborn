@@ -148,7 +148,7 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             Face::R13,
             color::MUTED,
         );
-        if row.key != "all_songs" {
+        if row.key != "all_songs" && row.key != "shuffle:collection" {
             c.text_center(
                 240.,
                 312. + Face::R11.mid_offset(),

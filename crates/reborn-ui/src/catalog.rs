@@ -112,7 +112,8 @@ impl Catalog {
                 albums.sort_by_cached_key(|((album, artist), _)| {
                     (title_key(album), artist_key(artist))
                 });
-                // A genre's album view opens with all of its songs.
+                // A genre's album view opens with all of its songs, then
+                // Shuffle (as on an album page; user request).
                 if m.navigation.filter.starts_with("genre:") && !albums.is_empty() {
                     let songs = tracks
                         .iter()
@@ -122,6 +123,7 @@ impl Catalog {
                         Item::new("All Songs", "all_songs")
                             .with_secondary(crate::components::count(songs, "song", "songs")),
                     );
+                    self.push(Item::new("Shuffle", "shuffle:collection"));
                 }
                 for ((album, artist), (i, t)) in albums {
                     self.push(album_item(album, artist, i, t));

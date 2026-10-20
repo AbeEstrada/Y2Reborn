@@ -40,10 +40,11 @@ pub fn home(
     if let Some(t) = current {
         c.glow(360., 172., 150., 160., alpha(cover, 0x46));
         art_quad(c, 266., 58., 180., has_art);
+        // As wide as the line below: a long title ran into the menu.
         c.text_center(
             356.,
             270. + Face::S15.mid_offset(),
-            crate::track_title(t),
+            &text::fit(Face::S15, crate::track_title(t), 200.),
             Face::S15,
             color::TEXT,
         );

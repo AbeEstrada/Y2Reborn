@@ -2136,7 +2136,7 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     let albums = ui.rows(&m, &tracks);
     assert_eq!(
         albums.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
-        ["All Songs", "Album 0", "Album 1"]
+        ["All Songs", "Shuffle", "Album 0", "Album 1"]
     );
     assert_eq!(albums[0].secondary, "6 songs");
     // All Songs -> the genre's six songs.
@@ -2148,10 +2148,23 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     assert_eq!(ui.row_count(&m, &tracks), 6);
     // Back, then one album -> its page.
     ui.action(&mut m, &tracks, Action::Back);
-    m.navigation.focus = 2;
+    m.navigation.focus = 3;
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::Album);
     assert!(m.navigation.filter.ends_with("Album 1"));
+    // Back, then Shuffle -> the genre's six songs, shuffled.
+    ui.action(&mut m, &tracks, Action::Back);
+    m.navigation.focus = 1;
+    match ui.action(&mut m, &tracks, Action::Select) {
+        Effect::PlayCollection {
+            members, shuffle, ..
+        } => {
+            assert!(shuffle);
+            assert_eq!(members.len(), 6);
+            assert!(members.iter().all(|&i| tracks[i].genre == "Jazz"));
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

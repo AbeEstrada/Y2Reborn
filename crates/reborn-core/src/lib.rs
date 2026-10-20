@@ -1129,6 +1129,8 @@ pub enum Effect {
     TogglePlayback,
     NextTrack,
     PreviousTrack,
+    /// One step of a held Previous/Next: the sign is the direction, the app
+    /// sizes the step by how long the button has been held.
     Seek(i64),
     AdjustVolume(i8),
     ScanLibrary,
