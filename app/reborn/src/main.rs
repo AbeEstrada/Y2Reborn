@@ -926,41 +926,50 @@ impl Runtime {
         members: Vec<usize>,
         force_shuffle: bool,
     ) -> Result<(), String> {
-        let selected = self
+        let online = self
             .model
             .library
             .tracks
             .get(index)
-            .cloned()
+            .map(|track| track.online)
             .ok_or("invalid selection")?;
-        if !selected.online {
+        if !online {
             return Err("media source offline".into());
         }
-        let mut queue = members
+        // Positions first, songs last: a 28 600-song collection is cut to
+        // MAX_QUEUE before any song is copied.
+        let tracks = &self.model.library.tracks;
+        let mut members = members
             .into_iter()
-            .filter_map(|member| self.model.library.tracks.get(member).cloned())
-            .filter(|track| track.online)
+            .filter(|&member| tracks.get(member).is_some_and(|track| track.online))
             .collect::<Vec<_>>();
-        let selected_position = queue
+        let selected_position = members
             .iter()
-            .position(|track| track.id == selected.id && track.path == selected.path)
+            .position(|&member| member == index)
             .ok_or("selected track is not in the playback collection")?;
         let use_shuffle = force_shuffle || self.model.settings.shuffle;
-        if use_shuffle {
+        let (window, start) = if use_shuffle {
             if force_shuffle {
                 // A Shuffle row: any song may come first.
-                shuffle_from(&mut queue, 0, shuffle_seed());
+                shuffle_from(&mut members, 0, shuffle_seed());
             } else {
                 // A song picked with Shuffle on plays first, the rest follow.
-                let selected = queue.remove(selected_position);
-                queue.insert(0, selected);
-                shuffle_from(&mut queue, 1, shuffle_seed());
+                let selected = members.remove(selected_position);
+                members.insert(0, selected);
+                shuffle_from(&mut members, 1, shuffle_seed());
             }
-            self.model.replace_queue(queue, 0)?;
+            (0..members.len().min(reborn_core::MAX_QUEUE), 0)
         } else {
-            let selected_index = selected_position;
-            self.model.replace_queue(queue, selected_index)?;
-        }
+            let window =
+                reborn_core::queue_window(members.len(), selected_position, reborn_core::MAX_QUEUE);
+            let start = selected_position - window.start;
+            (window, start)
+        };
+        let queue = members[window]
+            .iter()
+            .filter_map(|&member| tracks.get(member).cloned())
+            .collect::<Vec<_>>();
+        self.model.replace_queue(queue, start)?;
         self.load()
     }
 

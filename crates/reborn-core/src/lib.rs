@@ -56,7 +56,23 @@ pub const BUILD_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), "-product-ui-v3
 pub fn display_release(release: &str) -> &str {
     release.split('-').next().unwrap_or(release)
 }
-pub const MAX_QUEUE: usize = 20_000;
+/// The play queue holds at most this many songs (about two weeks of music).
+/// The session stores every queued song (≈500 bytes each, `SESSION_MAX_BYTES`)
+/// and rewrites it at each song change: 20 000 never fit, and a larger
+/// collection is played as a window of it (`queue_window`), a shuffle as a
+/// random part of it. A library of 28 600 songs refused every play from All
+/// Songs ("invalid queue bounds").
+pub const MAX_QUEUE: usize = 5_000;
+
+/// The part of a `len`-song collection queued when `selected` starts playing:
+/// at most `cap` songs, the selected one with a tenth of the window before it.
+pub fn queue_window(len: usize, selected: usize, cap: usize) -> std::ops::Range<usize> {
+    if len <= cap {
+        return 0..len;
+    }
+    let start = selected.saturating_sub(cap / 10).min(len - cap);
+    start..start + cap
+}
 pub const SESSION_SCHEMA_VERSION: u32 = 2;
 pub const SESSION_MAX_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1452,8 +1468,18 @@ impl AppModel {
             }
             m.settings.codec_revision = CODEC_REVISION;
         }
-        if m.queue.len() > MAX_QUEUE || (!m.queue.is_empty() && m.queue_position >= m.queue.len()) {
+        if !m.queue.is_empty() && m.queue_position >= m.queue.len() {
             return Err(io::Error::other("invalid saved queue"));
+        }
+        if m.queue.len() > MAX_QUEUE {
+            // Saved by a Reborn with a larger limit: keep the part around
+            // the current song.
+            let window = queue_window(m.queue.len(), m.queue_position, MAX_QUEUE);
+            if m.queue_entry_ids.len() == m.queue.len() {
+                m.queue_entry_ids = m.queue_entry_ids[window.clone()].to_vec();
+            }
+            m.queue_position -= window.start;
+            m.queue = m.queue[window].to_vec();
         }
         let ids_valid = m.queue_entry_ids.len() == m.queue.len()
             && m.queue_entry_ids.iter().all(|id| id.0 != 0)
@@ -1770,5 +1796,49 @@ mod tests {
         assert!(!s.zone_auto());
         s.time_zone_auto = Some(true);
         assert!(s.zone_auto());
+    }
+}
+
+#[cfg(test)]
+mod queue_window_tests {
+    use super::{queue_window, AppModel, Track, MAX_QUEUE};
+
+    #[test]
+    fn a_large_collection_queues_a_window_around_the_selected_song() {
+        assert_eq!(queue_window(300, 120, MAX_QUEUE), 0..300);
+        assert_eq!(queue_window(28_600, 0, 5_000), 0..5_000);
+        assert_eq!(queue_window(28_600, 10_000, 5_000), 9_500..14_500);
+        assert_eq!(queue_window(28_600, 28_599, 5_000), 23_600..28_600);
+        for selected in [0, 499, 500, 14_000, 28_599] {
+            let w = queue_window(28_600, selected, 5_000);
+            assert_eq!(w.len(), 5_000);
+            assert!(w.contains(&selected));
+        }
+    }
+
+    #[test]
+    fn a_saved_queue_over_the_limit_is_trimmed_not_lost() {
+        let path = std::env::temp_dir().join(format!("reborn-queue-{}.json", std::process::id()));
+        let m = AppModel {
+            queue: (0..MAX_QUEUE as i64 + 3_000)
+                .map(|id| Track {
+                    id,
+                    ..Default::default()
+                })
+                .collect(),
+            queue_position: 6_000,
+            ..Default::default()
+        };
+        // Written by hand: checkpoint() would refuse this size.
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"schema": super::SESSION_SCHEMA_VERSION, "model": m}),
+        )
+        .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let restored = AppModel::restore(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(restored.queue.len(), MAX_QUEUE);
+        assert_eq!(restored.current().unwrap().id, 6_000);
+        assert_eq!(restored.queue_entry_ids.len(), MAX_QUEUE);
     }
 }
