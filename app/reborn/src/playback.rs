@@ -670,7 +670,22 @@ impl Playback {
             log,
             cache,
             Box::new(|spec, log, id| {
-                AlsaSink::open_spec(spec, log, id).map(|s| Box::new(s) as Box<dyn AudioSink>)
+                // A codec whose crystal did not start in time (#48) or a
+                // device still busy just after a resume refuses one open; a
+                // second open a moment later plays.
+                let sink = AlsaSink::open_spec(spec, log.clone(), id).or_else(|first| {
+                    log.emit(
+                        Level::Warn,
+                        "audio",
+                        "sink_open_retry",
+                        "audio output refused to open; trying once more",
+                        None,
+                        json!({"error":first,"output":format!("{:?}", spec.output)}),
+                    );
+                    thread::sleep(Duration::from_millis(250));
+                    AlsaSink::open_spec(spec, log, id)
+                })?;
+                Ok(Box::new(sink) as Box<dyn AudioSink>)
             }),
         )
     }
