@@ -17,6 +17,15 @@ pub mod storage;
 pub mod wifi;
 pub mod workload;
 
+/// A background helper thread (library scan workers) yields to playback and
+/// the UI: nice 10 for this thread only.
+pub fn lower_thread_priority() {
+    // SAFETY: setpriority on this thread's own id; nothing is shared.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, 10);
+    }
+}
+
 /// 64 random bits from the kernel's pool (getrandom), the clock if that fails.
 pub fn random_u64() -> u64 {
     let mut value = [0u8; 8];

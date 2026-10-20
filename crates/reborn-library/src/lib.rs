@@ -16,7 +16,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -1193,13 +1193,105 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
 /// Files (source, path, size, mtime) that FFmpeg could not open during this
 /// process: an incremental scan does not open them again until they change.
 /// A rebuild retries every file.
-type Unreadable = HashSet<(String, PathBuf, u64, i64)>;
+type UnreadableKey = (String, PathBuf, u64, i64);
+type Unreadable = HashSet<UnreadableKey>;
 enum Decoded {
     Track(Box<Track>),
     /// The file changed while it was read: try again on the next scan.
     Changed,
     Unreadable,
 }
+/// One file's tags, read off the scanner thread (`read_parallel`).
+enum TagRead {
+    Parsed {
+        metadata: Box<reborn_media::Metadata>,
+        elapsed_us: u64,
+        /// The file changed while it was read.
+        changed: bool,
+    },
+    Failed {
+        error: String,
+        elapsed_us: u64,
+    },
+    /// Not about this file (no cancel token): ends the batch, as before.
+    Fatal(String),
+    /// A bug while reading this file: it counts as unreadable.
+    Panicked,
+}
+
+/// Open `path`, take its tags and close it; touches nothing shared.
+fn read_tags(path: &Path, before: Option<&fs::Metadata>) -> TagRead {
+    let cancel = match Cancel::new() {
+        Ok(cancel) => cancel,
+        Err(error) => return TagRead::Fatal(error),
+    };
+    let started = Instant::now();
+    let parsed = MediaFile::open(path, cancel);
+    let elapsed_us = started.elapsed().as_micros() as u64;
+    match parsed {
+        Ok(mut media) => TagRead::Parsed {
+            metadata: Box::new(std::mem::take(&mut media.metadata)),
+            elapsed_us,
+            changed: !before.is_some_and(|before| {
+                fs::metadata(path).is_ok_and(|after| same_file(before, &after))
+            }),
+        },
+        Err(error) => TagRead::Failed { error, elapsed_us },
+    }
+}
+
+/// Tag reads for a new library (28 600 songs: about 35 ms each, 12 minutes on
+/// one core) spread over the cores the scan lease brought online, one left
+/// for the UI and playback. Read after the lease: an idle player has parked
+/// every core but CPU0.
+fn scan_workers() -> usize {
+    thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .saturating_sub(1)
+        .clamp(1, 3)
+}
+
+/// `read_tags` for every pending file on up to `workers` threads, results in
+/// input order. Workers run at a lower priority than playback and the UI.
+fn read_parallel(
+    pending: &[(FileStamp, UnreadableKey, PathBuf)],
+    workers: usize,
+    stop: &AtomicBool,
+) -> Vec<TagRead> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<TagRead>>> = pending.iter().map(|_| Mutex::new(None)).collect();
+    let work = || loop {
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        if i >= pending.len() || stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let (file, _, path) = &pending[i];
+        let read = reborn_observability::isolated(|| read_tags(path, file.metadata.as_ref()))
+            .unwrap_or(TagRead::Panicked);
+        *slots[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(read);
+    };
+    match workers.min(pending.len()) {
+        0 => {}
+        1 => work(),
+        n => thread::scope(|scope| {
+            for _ in 0..n {
+                scope.spawn(|| {
+                    reborn_platform::lower_thread_priority();
+                    work()
+                });
+            }
+        }),
+    }
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or(TagRead::Panicked)
+        })
+        .collect()
+}
+
 struct ScanBatch<'a> {
     db: &'a Database,
     source: &'a Source,
@@ -1212,6 +1304,8 @@ struct ScanBatch<'a> {
     id: u64,
     stop: &'a AtomicBool,
     unreadable: &'a mut Unreadable,
+    /// Threads reading tags (`scan_workers`).
+    workers: usize,
 }
 impl ScanBatch<'_> {
     fn process(&mut self, files: Vec<FileStamp>) -> Result<(), String> {
@@ -1225,6 +1319,7 @@ impl ScanBatch<'_> {
         self.stats.db_us += started.elapsed().as_micros() as u64;
         let mut changes = Vec::new();
         let mut retained = Vec::new();
+        let mut pending = Vec::new();
         for (file, reuse) in files.into_iter().zip(reused) {
             if self.stop.load(Ordering::Relaxed) {
                 return Err("scan cancelled".into());
@@ -1249,9 +1344,19 @@ impl ScanBatch<'_> {
                     .strip_prefix(&self.source.root)
                     .map_err(|e| e.to_string())?,
             );
+            pending.push((file, key, path));
+        }
+        // Tags are read on several cores; the results are applied in file order.
+        let reads = read_parallel(&pending, self.workers, self.stop);
+        if self.stop.load(Ordering::Relaxed) {
+            return Err("scan cancelled".into());
+        }
+        for ((file, key, _), read) in pending.into_iter().zip(reads) {
             // A bug on one odd file makes it unreadable, not the player.
-            let decoded = reborn_observability::isolated(|| self.decode(&path, &file))
-                .unwrap_or(Ok(Decoded::Unreadable));
+            let decoded = match read {
+                TagRead::Panicked => Ok(Decoded::Unreadable),
+                read => self.apply(&file, read),
+            };
             match decoded? {
                 Decoded::Track(track) => {
                     self.unreadable.remove(&key);
@@ -1301,23 +1406,29 @@ impl ScanBatch<'_> {
         }
         Ok(())
     }
-    fn decode(&mut self, path: &Path, file: &FileStamp) -> Result<Decoded, String> {
+    /// Account for one file's `read_tags` result and turn it into a track.
+    fn apply(&mut self, file: &FileStamp, read: TagRead) -> Result<Decoded, String> {
         let logical_path = &file.path;
         let size = file.size;
         let mtime = file.mtime;
-        let started = Instant::now();
-        let parsed = MediaFile::open(path, Cancel::new()?);
-        self.stats.metadata_us += started.elapsed().as_micros() as u64;
+        let (parsed, elapsed_us) = match read {
+            TagRead::Parsed {
+                metadata,
+                elapsed_us,
+                changed,
+            } => (Ok((metadata, changed)), elapsed_us),
+            TagRead::Failed { error, elapsed_us } => (Err(error), elapsed_us),
+            TagRead::Fatal(error) => return Err(error),
+            TagRead::Panicked => return Ok(Decoded::Unreadable),
+        };
+        self.stats.metadata_us += elapsed_us;
         let track = match parsed {
-            Ok(mut media) => {
-                let m = std::mem::take(&mut media.metadata);
+            Ok((m, changed)) => {
                 self.stats.ffmpeg_open_us += m.open_us;
                 self.stats.ffmpeg_probe_us += m.probe_us;
                 self.stats.ffmpeg_info_runs += m.info_runs as u64;
                 self.stats.ffmpeg_io_bytes += m.io_bytes;
-                if !file.metadata.as_ref().is_some_and(|before| {
-                    fs::metadata(path).is_ok_and(|after| same_file(before, &after))
-                }) {
+                if changed {
                     *self.complete = false;
                     self.stats.failures += 1;
                     return Ok(Decoded::Changed);
@@ -1401,6 +1512,7 @@ fn scan_sources_with_identity_and_reuse(
     let mut workload = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::LibraryScan,
     );
+    let workers = scan_workers();
     let start = Instant::now();
     let id = log.correlation();
     let mut stats = ScanMetrics {
@@ -1553,6 +1665,7 @@ fn scan_sources_with_identity_and_reuse(
                     id,
                     stop,
                     unreadable: &mut *unreadable,
+                    workers,
                 }
                 .process(std::mem::take(&mut batch_items))?;
             }
@@ -1571,6 +1684,7 @@ fn scan_sources_with_identity_and_reuse(
                     id,
                     stop,
                     unreadable: &mut *unreadable,
+                    workers,
                 }
                 .process(batch_items)?;
             } else {
@@ -2985,5 +3099,78 @@ mod ingest_regression_tests {
         assert_eq!(file_mtime(&before), file_mtime(&after));
         assert!(!same_file(&before, &after));
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod parallel_read_tests {
+    use super::{read_parallel, read_tags, FileStamp, TagRead};
+    use std::{fs, path::PathBuf, sync::atomic::AtomicBool};
+
+    fn fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fixtures")
+            .join(name)
+    }
+
+    fn summary(read: &TagRead) -> String {
+        match read {
+            TagRead::Parsed {
+                metadata, changed, ..
+            } => format!("{}:{}:{changed}", metadata.codec, metadata.sample_rate),
+            TagRead::Failed { .. } => "failed".into(),
+            TagRead::Fatal(e) => format!("fatal {e}"),
+            TagRead::Panicked => "panicked".into(),
+        }
+    }
+
+    #[test]
+    fn several_workers_read_every_file_and_keep_the_order() {
+        let garbage =
+            std::env::temp_dir().join(format!("reborn-garbage-{}.flac", std::process::id()));
+        fs::write(&garbage, b"not audio").unwrap();
+        let names = [
+            "flac-16-44100.flac",
+            "flac-24-96000.flac",
+            "mp3.mp3",
+            "opus.opus",
+            "flac-16-48000.flac",
+        ];
+        let mut paths: Vec<PathBuf> = (0..6)
+            .flat_map(|_| names.iter().map(|n| fixture(n)))
+            .collect();
+        paths.insert(7, garbage.clone());
+        let pending: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                let metadata = fs::metadata(path).unwrap();
+                let stamp = FileStamp {
+                    path: path.clone(),
+                    size: metadata.len(),
+                    mtime: 0,
+                    metadata: Some(metadata),
+                };
+                (stamp, (String::new(), path.clone(), 0, 0), path.clone())
+            })
+            .collect();
+        let expected: Vec<String> = pending
+            .iter()
+            .map(|(file, _, path)| summary(&read_tags(path, file.metadata.as_ref())))
+            .collect();
+        assert_eq!(expected[7], "failed");
+        assert!(
+            expected
+                .iter()
+                .filter(|e| e.starts_with("flac:96000"))
+                .count()
+                == 6
+        );
+        let stop = AtomicBool::new(false);
+        let parallel: Vec<String> = read_parallel(&pending, 3, &stop)
+            .iter()
+            .map(summary)
+            .collect();
+        fs::remove_file(garbage).unwrap();
+        assert_eq!(parallel, expected);
     }
 }
