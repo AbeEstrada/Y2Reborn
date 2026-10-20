@@ -9,6 +9,10 @@ mod components;
 pub mod diagnostics;
 mod flow;
 mod fontdata;
+mod glyph_cache;
+pub use glyph_cache::{
+    available as cjk_font_available, set_budget as set_glyph_budget, GLYPHS_PER_FRAME,
+};
 pub mod keyboard;
 mod maskdata;
 mod motion;
@@ -527,7 +531,11 @@ impl Ui {
     /// Whether something on screen changes with time (a fade, a ring), so the
     /// caller keeps redrawing.
     pub fn animating(&self) -> bool {
-        self.volume_until.is_some() || self.power_hold.is_some() || self.spinning || self.gliding()
+        self.volume_until.is_some()
+            || self.power_hold.is_some()
+            || self.spinning
+            || self.gliding()
+            || glyph_cache::pending()
     }
 
     /// Motion that wants the panel's full frame rate: Cover Flow's glide and
@@ -2824,12 +2832,15 @@ impl Ui {
 
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
         self.motion.begin_frame();
+        glyph_cache::begin_frame();
         let frame = screens::draw(self, m, tracks, has_art);
-        if self.ui_motion {
+        let frame = if self.ui_motion {
             self.slide_screens(m, frame)
         } else {
             frame
-        }
+        };
+        glyph_cache::end_frame(&frame);
+        frame
     }
 
     /// A new screen slides in from the right over the last one (Back: the

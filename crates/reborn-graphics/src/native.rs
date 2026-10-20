@@ -1,5 +1,6 @@
 use super::{
-    Quad, Tex, FONT_PAGE_WIDTH, SKIN_ATLAS, THUMB_CELL, THUMB_COLUMNS, THUMB_SIZE, THUMB_SLOTS,
+    glyph_page, Quad, Tex, FONT_PAGE_WIDTH, GLYPH_PAGE, SKIN_ATLAS, THUMB_CELL, THUMB_COLUMNS,
+    THUMB_SIZE, THUMB_SLOTS,
 };
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
@@ -53,6 +54,7 @@ unsafe extern "C" {
     fn rb_graphics_thumb(p: *mut c_void, cx: c_int, cy: c_int, rgba: *const u8) -> c_int;
     fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_skin(p: *mut c_void, b: *const u8, w: c_int, h: c_int) -> c_int;
+    fn rb_graphics_glyphs(p: *mut c_void, y: c_int, rows: c_int, a8: *const u8) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_readback(p: *mut c_void, pixels: *mut u8) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
@@ -79,6 +81,11 @@ pub struct Renderer {
     mask_size: (usize, usize),
     skin_size: (usize, usize),
     page_heights: [usize; 3],
+    /// Whether this context's glyph-cache texture holds the whole shared
+    /// page; a new context starts empty and takes one full upload.
+    glyphs_resident: bool,
+    /// The last glyph upload failed (logged once per failure streak).
+    glyphs_failed: bool,
 }
 #[derive(Clone, Copy)]
 struct ThumbSlot {
@@ -179,6 +186,8 @@ impl Renderer {
             mask_size: atlases.mask_size,
             skin_size: (1, 1),
             page_heights: heights.map(|h| h as usize),
+            glyphs_resident: false,
+            glyphs_failed: false,
         })
     }
     pub fn render(&mut self, quads: &[Quad]) -> Result<(), String> {
@@ -202,6 +211,7 @@ impl Renderer {
         self.missing.clear();
         let start = Instant::now();
         let cpu_start = thread_cpu_seconds();
+        self.sync_glyphs();
         // SAFETY: live EGL context is current on this thread; uniquely borrowed renderer prevents concurrent calls.
         unsafe {
             rb_graphics_begin(self.raw.as_ptr());
@@ -213,6 +223,9 @@ impl Renderer {
                     Tex::Art => (5, [0; 4]),
                     Tex::CollectionArt => (6, [0; 4]),
                     Tex::Skin => (8, q.src),
+                    // Not drawn while the page failed to upload.
+                    Tex::Glyphs if !self.glyphs_resident => continue,
+                    Tex::Glyphs => (9, q.src),
                     Tex::Thumb(key) => match self.thumbs.get_mut(&key) {
                         Some(slot) => {
                             slot.used = self.frame;
@@ -317,8 +330,51 @@ impl Renderer {
             }
             Tex::Mask => inside(self.mask_size.0, self.mask_size.1),
             Tex::Skin => inside(self.skin_size.0, self.skin_size.1),
+            Tex::Glyphs => inside(GLYPH_PAGE, GLYPH_PAGE),
             _ => true,
         }
+    }
+    /// Upload the glyph-page rows the UI wrote since the last frame (all of
+    /// it once per context). Before the first runtime glyph nothing exists.
+    /// A failed upload hides runtime glyphs and is retried in full next frame.
+    fn sync_glyphs(&mut self) {
+        let mut page = glyph_page();
+        if !page.allocated() {
+            return;
+        }
+        let dirty = page.take_dirty();
+        let (start, end) = if self.glyphs_resident {
+            match dirty {
+                Some(rows) => rows,
+                None => return,
+            }
+        } else {
+            (0, GLYPH_PAGE)
+        };
+        let rows = &page.pixels()[start * GLYPH_PAGE..end * GLYPH_PAGE];
+        // SAFETY: `rows` holds exactly (end - start) full 1024-texel rows of
+        // the page, inside its bounds; GL copies them before returning.
+        let r = unsafe {
+            rb_graphics_glyphs(
+                self.raw.as_ptr(),
+                start as c_int,
+                (end - start) as c_int,
+                rows.as_ptr(),
+            )
+        };
+        let resident = r >= 0;
+        if !resident && !self.glyphs_failed {
+            self.log.emit(
+                Level::Warn,
+                "graphics",
+                "glyph_upload_failed",
+                "runtime glyph page upload failed; retrying",
+                None,
+                json!({"result": r, "rows": [start, end]}),
+            );
+        }
+        self.glyphs_resident = resident;
+        self.glyphs_failed = !resident;
     }
     /// Library thumbnails the last frame wanted but that are not resident,
     /// in draw order. The caller loads them and calls `upload_thumb`.

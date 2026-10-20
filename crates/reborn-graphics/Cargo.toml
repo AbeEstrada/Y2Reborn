@@ -8,6 +8,8 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reborn-observability = { path = "../reborn-observability" }
+# Read-only mapping of the CJK fallback font (glyphs.rs).
+libc.workspace = true
 
 [build-dependencies]
 cc.workspace = true

@@ -259,6 +259,7 @@ name = "reborn-graphics"
 version = "1.0.0-beta.8.14"
 dependencies = [
  "cc",
+ "libc",
  "pkg-config",
  "reborn-observability",
  "serde",

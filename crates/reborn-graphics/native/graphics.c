@@ -103,8 +103,10 @@ static int wait_flip(int fd, struct flip *f) {
 static _Thread_local char last_error[256];
 const char *rb_graphics_error(void) { return last_error; }
 /* Texture slots; keep in step with reborn-graphics/src/native.rs. */
-#define RB_TEXTURES 9
+#define RB_TEXTURES 10
 #define RB_SKIN_MAX 1024
+/* Runtime glyph page edge; keep in step with GLYPH_PAGE in glyphs.rs. */
+#define RB_GLYPHS 1024
 typedef struct {
   int fd, width, height, modeset;
   bool sleeping, failed;
@@ -120,7 +122,8 @@ typedef struct {
   EGLContext context;
   /* Texture slots, in the order the product UI names them (see rb_graphics_quad):
    * 0 white, 1..3 glyph pages, 4 shape/icon masks, 5 artwork, 6 collection
-   * artwork, 7 thumbnail atlas. Every sampled size is kept for UV scaling. */
+   * artwork, 7 thumbnail atlas, 8 skin atlas, 9 runtime glyph page. Every
+   * sampled size is kept for UV scaling. */
   GLuint program, vbo, tex[RB_TEXTURES];
   int tex_w[RB_TEXTURES], tex_h[RB_TEXTURES];
   struct flip flip;
@@ -332,6 +335,10 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
    * skin is chosen (rb_graphics_skin); until then one white texel. */
   g->tex[8] = texture(1, 1, white);
   g->tex_w[8] = g->tex_h[8] = 1;
+  /* Runtime glyph page (CJK): sized by its first upload (rb_graphics_glyphs),
+   * so a UI that never shows such text holds no video memory for it. */
+  g->tex[9] = texture(1, 1, white);
+  g->tex_w[9] = g->tex_h[9] = 1;
   for (int i = 5; i < RB_TEXTURES; i++) {
     glBindTexture(GL_TEXTURE_2D, g->tex[i]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -507,13 +514,14 @@ void rb_graphics_begin(RbGraphics *g) {
   glClear(GL_COLOR_BUFFER_BIT);
 }
 /* `tex` selects the texture (0 white, 1..3 glyph pages, 4 masks, 5 artwork,
- * 6 collection artwork, 7 thumbnails, 8 skin atlas); (sx, sy, sw, sh) is the source rectangle
+ * 6 collection artwork, 7 thumbnails, 8 skin atlas, 9 runtime glyph page);
+ * (sx, sy, sw, sh) is the source rectangle
  * in texels of a mask/glyph/thumbnail texture and is ignored otherwise. */
 /* Texture-space source rectangle (u, v, uw, vh) for `tex`. */
 static void source_uv(RbGraphics *g, int tex, int sx, int sy, int sw, int sh,
                       float uv[4]) {
   uv[0] = 0; uv[1] = 0; uv[2] = 1; uv[3] = 1;
-  if ((tex >= 1 && tex <= 4) || tex == 7 || tex == 8) {
+  if ((tex >= 1 && tex <= 4) || tex >= 7) {
     uv[0] = (float)sx / g->tex_w[tex];
     uv[1] = (float)sy / g->tex_h[tex];
     uv[2] = (float)sw / g->tex_w[tex];
@@ -629,6 +637,39 @@ int rb_graphics_skin(RbGraphics *g, const uint8_t *p, int w, int h) {
     return -EIO;
   g->tex_w[8] = w;
   g->tex_h[8] = h;
+  return 0;
+}
+/* Replace full-width rows [y, y + rows) of the runtime glyph page with A8
+ * coverage, sampled as luminance-alpha like the built-in glyph pages. The
+ * first upload allocates the RB_GLYPHS square texture; the caller sends the
+ * whole page then, so no undefined texel is ever sampled. */
+int rb_graphics_glyphs(RbGraphics *g, int y, int rows, const uint8_t *a8) {
+  if (!a8 || y < 0 || rows < 1 || y + rows > RB_GLYPHS)
+    return -EINVAL;
+  uint8_t *la = malloc((size_t)RB_GLYPHS * rows * 2);
+  if (!la)
+    return -ENOMEM;
+  for (size_t i = 0; i < (size_t)RB_GLYPHS * rows; i++) {
+    la[2 * i] = 255;
+    la[2 * i + 1] = a8[i];
+  }
+  glBindTexture(GL_TEXTURE_2D, g->tex[9]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  if (g->tex_w[9] != RB_GLYPHS) {
+    if (y != 0 || rows != RB_GLYPHS) {
+      free(la);
+      return -EINVAL;
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, RB_GLYPHS, RB_GLYPHS, 0,
+                 GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, la);
+  } else {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, RB_GLYPHS, rows, GL_LUMINANCE_ALPHA,
+                    GL_UNSIGNED_BYTE, la);
+  }
+  free(la);
+  if (glGetError() != GL_NO_ERROR)
+    return -EIO;
+  g->tex_w[9] = g->tex_h[9] = RB_GLYPHS;
   return 0;
 }
 int rb_graphics_test(RbGraphics *g) {

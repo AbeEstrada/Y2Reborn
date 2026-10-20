@@ -2,8 +2,12 @@
 //!
 //! Every `Face` is one weight at one pixel size, rendered once at build time,
 //! so glyphs are drawn 1:1 on the pixel grid. Characters a face lacks fall back
-//! to the 24 px page, scaled; characters nobody has become U+FFFD.
-use crate::fontdata::{self, Glyph, SetData};
+//! to the 24 px page, scaled; then to the CJK font, rasterised at the face's
+//! size at runtime (`glyph_cache`); characters nobody has become U+FFFD.
+use crate::{
+    fontdata::{self, Glyph, SetData},
+    glyph_cache::{self, Runtime},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Face {
@@ -66,6 +70,8 @@ pub enum Source {
     Exact(&'static Glyph),
     /// A scaled 24 px glyph from the fallback page.
     Fallback(&'static Glyph),
+    /// A CJK-font glyph at the face's pixel size, rasterised on first draw.
+    Runtime(Runtime),
 }
 
 fn find(glyphs: &'static [Glyph], ch: char) -> Option<&'static Glyph> {
@@ -79,9 +85,13 @@ pub fn lookup(face: Face, ch: char) -> Option<Source> {
     if let Some(g) = find(face.set().glyphs, ch) {
         return Some(Source::Exact(g));
     }
-    find(fontdata::FALLBACK, ch)
-        .or_else(|| find(fontdata::FALLBACK, '\u{FFFD}'))
-        .map(Source::Fallback)
+    if let Some(g) = find(fontdata::FALLBACK, ch) {
+        return Some(Source::Fallback(g));
+    }
+    if let Some(g) = glyph_cache::lookup(ch, face.set().size) {
+        return Some(Source::Runtime(g));
+    }
+    find(fontdata::FALLBACK, '\u{FFFD}').map(Source::Fallback)
 }
 
 /// Pen advance of `ch` in pixels.
@@ -89,6 +99,7 @@ pub fn advance(face: Face, ch: char) -> f32 {
     match lookup(face, ch) {
         Some(Source::Exact(g)) => f32::from(g.3) / 64.,
         Some(Source::Fallback(g)) => f32::from(g.3) / 64. * face.px() / FALLBACK_PX,
+        Some(Source::Runtime(g)) => g.advance,
         None => 0.,
     }
 }
@@ -176,8 +187,48 @@ mod tests {
         assert!(matches!(lookup(Face::R15, 'ł'), Some(Source::Exact(_))));
         assert!(matches!(lookup(Face::R15, 'Ж'), Some(Source::Fallback(_))));
         assert!(matches!(lookup(Face::S36, 'a'), Some(Source::Fallback(_))));
-        // Unsupported scripts show the replacement glyph instead of nothing.
-        assert!(matches!(lookup(Face::R15, '音'), Some(Source::Fallback(g)) if g.0 == 0xFFFD));
+        // CJK comes from the CJK font at the face's size; only without the
+        // font (host, older image) does it show the replacement glyph.
+        if glyph_cache::available() {
+            assert!(matches!(lookup(Face::R15, '音'), Some(Source::Runtime(g)) if g.px == 15));
+        } else {
+            assert!(matches!(lookup(Face::R15, '音'), Some(Source::Fallback(g)) if g.0 == 0xFFFD));
+        }
+        // Characters no font has still show the replacement glyph.
+        assert!(
+            matches!(lookup(Face::R15, '\u{10FFFD}'), Some(Source::Fallback(g)) if g.0 == 0xFFFD)
+        );
+    }
+
+    #[test]
+    fn cjk_widths_fit_and_wrap_with_the_font() {
+        if !glyph_cache::available() {
+            eprintln!("CJK font not available; skipped");
+            return;
+        }
+        // Ideographs and kana advance one em; Hangul 0.92 em.
+        assert!((width(Face::R15, "宇多田ヒカル") - 90.).abs() < 0.1);
+        assert!((width(Face::S20, "아이유") - 3. * 18.4).abs() < 0.1);
+        let mixed = width(Face::R15, "残酷な天使のテーゼ (Director's Edit)");
+        assert!(mixed > width(Face::R15, "残酷な天使のテーゼ") + width(Face::R15, "(Director's"));
+        let cut = fit(
+            Face::R15,
+            "「残酷な天使のテーゼ」とても長いタイトルの曲です",
+            120.,
+        );
+        assert!(
+            cut.ends_with('…') && width(Face::R15, &cut) <= 120.,
+            "{cut}"
+        );
+        assert_eq!(cut.chars().count(), 8, "{cut}");
+        // No spaces: lines break between characters, each within the box.
+        let lines = wrap(Face::S25, "残酷な天使のテーゼ魂のルフラン", 150., 2);
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines.iter().all(|l| width(Face::S25, l) <= 150.),
+            "{lines:?}"
+        );
+        assert_eq!(lines[0], "残酷な天使の");
     }
 
     #[test]

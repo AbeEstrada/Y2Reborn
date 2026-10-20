@@ -3723,3 +3723,40 @@ fn a_running_report_shows_its_steps_percent_and_what_happens() {
     m.platform.report = None;
     assert!(drawn(&m).contains("Send Report Now"));
 }
+
+#[test]
+fn cjk_titles_draw_from_the_runtime_glyph_page_or_show_the_replacement() {
+    use reborn_graphics::Tex;
+    let mut m = app(Screen::NowPlaying);
+    for t in m.library.tracks.iter_mut() {
+        t.title = "残酷な天使のテーゼ".into();
+        t.artist = "아이유".into();
+    }
+    m.replace_queue(m.library.tracks.clone(), 0).unwrap();
+    let ui = Ui::default();
+    let quads = ui.draw(&m, &m.library.tracks, true);
+    let runtime: Vec<_> = quads.iter().filter(|q| q.tex == Tex::Glyphs).collect();
+    if glyph_cache::available() {
+        assert!(runtime.len() >= 12, "{} runtime glyphs", runtime.len());
+        assert!(runtime.iter().all(|q| {
+            let [x, y, w, h] = q.src.map(usize::from);
+            w > 0
+                && h > 0
+                && x + w <= reborn_graphics::GLYPH_PAGE
+                && y + h <= reborn_graphics::GLYPH_PAGE
+        }));
+        assert!(!drawn_text(&quads).contains('\u{FFFD}'));
+        // Drawn again, every glyph is a cache hit at the same place.
+        let again = ui.draw(&m, &m.library.tracks, true);
+        let srcs = |q: &[reborn_graphics::Quad]| {
+            q.iter()
+                .filter(|q| q.tex == Tex::Glyphs)
+                .map(|q| q.src)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(srcs(&again), srcs(&quads));
+    } else {
+        assert!(runtime.is_empty());
+        assert!(drawn_text(&quads).contains('\u{FFFD}'));
+    }
+}

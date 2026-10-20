@@ -63,6 +63,65 @@ fn tracks() -> Vec<Track> {
     out
 }
 
+/// Japanese, Korean and Chinese tags (Beta 8.15): drawn from the CJK font
+/// when `REBORN_CJK_FONT` (or the image path) names it, else as U+FFFD.
+fn cjk_tracks() -> Vec<Track> {
+    let albums: [(&str, &str, &[&str]); 5] = [
+        (
+            "高橋洋子",
+            "残酷な天使のテーゼ／FLY ME TO THE MOON",
+            &[
+                "「残酷な天使のテーゼ」",
+                "FLY ME TO THE MOON",
+                "魂のルフラン",
+            ],
+        ),
+        (
+            "宇多田ヒカル",
+            "First Love",
+            &[
+                "Automatic",
+                "甘いワナ ～Paint It, Black",
+                "First Love",
+                "初恋 (Director's Edit with an unusually long title)",
+            ],
+        ),
+        (
+            "아이유",
+            "Real",
+            &["좋은 날", "이 밤의 끝을 잡고", "첫 이별 그날 밤"],
+        ),
+        ("周杰倫", "葉惠美", &["晴天", "東風破", "以父之名"]),
+        ("米津玄師", "STRAY SHEEP", &["感電", "馬と鹿", "Lemon"]),
+    ];
+    let mut out = vec![];
+    for (artist, album, titles) in albums {
+        for (n, title) in titles.iter().enumerate() {
+            let i = out.len();
+            out.push(Track {
+                id: 1000 + i as i64,
+                source_id: "internal".into(),
+                path: format!("/media/internal/music/cjk/{i:02}.flac").into(),
+                filename: format!("{n:02} {title}.flac"),
+                title: (*title).into(),
+                artist: artist.into(),
+                album: album.into(),
+                album_artist: artist.into(),
+                track: n as u32 + 1,
+                duration_ms: 241_000 + i as u64 * 13_000,
+                codec: "flac".into(),
+                sample_rate: 44_100,
+                channels: 2,
+                artwork: true,
+                online: true,
+                genre: "J-Pop".into(),
+                ..Default::default()
+            });
+        }
+    }
+    out
+}
+
 fn status() -> Value {
     json!({"schema":"org.y2linux.status/v1",
         "record":{"kernel":"6.18.0-y2linux-preview","boot_id":"preview-boot"},
@@ -223,7 +282,18 @@ fn at(screen: Screen, filter: &str) -> AppModel {
     m
 }
 
+/// `at` over the CJK library, playing `current` (an index into it).
+fn cjk_at(screen: Screen, filter: &str, current: usize) -> AppModel {
+    let mut m = at(screen, filter);
+    let tracks = cjk_tracks();
+    m.replace_queue(tracks.clone(), current).unwrap();
+    m.library.tracks = tracks;
+    m
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Each state is drawn once: rasterise every CJK glyph it needs at once.
+    reborn_ui::set_glyph_budget(None);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let skin_dir = args
         .iter()
@@ -1424,6 +1494,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Japanese, Korean and Chinese tags (CJK font fallback, Beta 8.15).
+    case!(
+        "77a-cjk-now-playing",
+        cjk_at(Screen::NowPlaying, "", 0),
+        move |ui, _| ui.accent = orange
+    );
+    case!(
+        "77b-cjk-now-playing-mixed",
+        cjk_at(Screen::NowPlaying, "", 4),
+        move |ui, _| ui.accent = teal
+    );
+    case!(
+        "77c-cjk-now-playing-korean",
+        cjk_at(Screen::NowPlaying, "", 7),
+        move |ui, _| ui.accent = orange
+    );
+    case!(
+        "77d-cjk-now-playing-long",
+        cjk_at(Screen::NowPlaying, "", 6),
+        move |ui, _| ui.accent = teal
+    );
+    case!(
+        "77e-cjk-songs",
+        cjk_at(Screen::Tracks, "", 0),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 3;
+        }
+    );
+    case!(
+        "77f-cjk-artists",
+        cjk_at(Screen::Artists, "", 0),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 1;
+        }
+    );
+    case!(
+        "77g-cjk-albums",
+        cjk_at(Screen::Albums, "", 0),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 2;
+        }
+    );
+    case!(
+        "77h-cjk-albums-grid",
+        cjk_at(Screen::Albums, "", 0),
+        move |ui, m| {
+            ui.accent = orange;
+            m.settings.album_view = reborn_core::AlbumView::Grid;
+            m.navigation.focus = 2;
+        }
+    );
+    case!(
+        "77i-cjk-album",
+        cjk_at(Screen::Album, "album:宇多田ヒカル\u{1f}First Love", 4),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 3;
+        }
+    );
+    case!(
+        "77j-cjk-up-next",
+        cjk_at(Screen::Queue, "", 0),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 2;
+        }
+    );
+    case!(
+        "77k-cjk-home-playing",
+        cjk_at(Screen::Home, "", 0),
+        move |ui, _| ui.accent = orange
+    );
+    case!(
+        "77l-cjk-search-results",
+        cjk_at(Screen::Search, "first", 0),
+        |_, m| m.navigation.focus = 1
+    );
+
     let mut manifest = vec![];
     let write = |name: &str, quads: &[reborn_graphics::Quad], focus: usize| {
         fs::write(
@@ -1599,6 +1750,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "text": t, "quads": reborn_ui::charge::charge_label_frame(t, reborn_ui::charge::CHARGE_HINT_Y)})).collect::<Vec<_>>(),
         }))?,
     )?;
+    // The runtime glyph page the CJK states drew from (tools/preview).
+    {
+        let page = reborn_graphics::glyph_page();
+        if page.allocated() {
+            fs::write(output.join("glyph-page.a8"), page.pixels())?;
+        }
+    }
     manifest.sort();
     fs::write(
         output.join("manifest.json"),

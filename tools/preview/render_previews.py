@@ -86,6 +86,13 @@ class Rasterizer:
         self.masks = mask_page(root / "assets/icons/reborn-masks.a8", 512)
         self.covers: dict[int, Image.Image] = {}
         self.skin: Image.Image | None = None
+        self.glyphs: Image.Image | None = None
+
+    def load_glyphs(self, preview_dir: Path) -> None:
+        """The runtime (CJK) glyph page reborn-preview wrote, if any."""
+        path = preview_dir / "glyph-page.a8"
+        if path.exists():
+            self.glyphs = mask_page(path, 1024)
 
     def load_skin(self, preview_dir: Path) -> None:
         """The skin atlas reborn-preview wrote for `--skin`, if any."""
@@ -120,7 +127,10 @@ class Rasterizer:
         if tex == "Skin":
             sx, sy, sw, sh = quad["src"]
             return self.skin.crop((sx, sy, sx + sw, sy + sh))
-        page = (self.regular, self.semibold, self.fallback)[tex["Font"]] if isinstance(tex, dict) else self.masks
+        if tex == "Glyphs":
+            page = self.glyphs
+        else:
+            page = (self.regular, self.semibold, self.fallback)[tex["Font"]] if isinstance(tex, dict) else self.masks
         sx, sy, sw, sh = quad["src"]
         layer = Image.new("RGBA", (sw, sh), (255, 255, 255, 255))
         layer.putalpha(page.crop((sx, sy, sx + sw, sy + sh)))
@@ -179,6 +189,8 @@ class Rasterizer:
         else:
             if isinstance(tex, dict) and "Font" in tex:
                 page = (self.regular, self.semibold, self.fallback)[tex["Font"]]
+            elif tex == "Glyphs":
+                page = self.glyphs
             else:
                 page = self.masks
             sx, sy, sw, sh = quad["src"]
@@ -215,6 +227,7 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     raster = Rasterizer(root)
     raster.load_skin(args.preview_dir)
+    raster.load_glyphs(args.preview_dir)
     for spec in sorted(args.preview_dir.glob("*.json")):
         if spec.name == "manifest.json":
             continue

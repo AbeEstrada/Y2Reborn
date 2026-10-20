@@ -95,6 +95,15 @@ int main(int argc, char **argv) {
         if (rb_graphics_thumb(g, cx, cy, cell) < 0) return 7;
         free(cell);
       }
+    } else if (line[0] == 'G') {
+      /* The runtime glyph page: one 1024x1024 A8 file, uploaded whole. */
+      char file[400];
+      if (sscanf(line + 1, "%399s", file) == 1) {
+        size_t size;
+        uint8_t *page = slurp(file, &size);
+        if (size != (size_t)RB_GLYPHS * RB_GLYPHS || rb_graphics_glyphs(g, 0, RB_GLYPHS, page) < 0) return 10;
+        free(page);
+      }
     } else if (line[0] == 'A') {
       char file[400];
       if (sscanf(line + 1, "%399s", file) == 1) {

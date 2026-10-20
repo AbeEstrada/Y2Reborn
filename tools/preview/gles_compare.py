@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render_previews import HEIGHT, WIDTH, Rasterizer  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-TEX = {"Solid": 0, "Mask": 4, "Art": 5, "CollectionArt": 6}
+TEX = {"Solid": 0, "Mask": 4, "Art": 5, "CollectionArt": 6, "Glyphs": 9}
 
 
 def cell_bytes(image: Image.Image) -> bytes:
@@ -39,7 +39,7 @@ def cell_bytes(image: Image.Image) -> bytes:
 
 def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Path) -> Image.Image:
     lines, cells = [], {}
-    art = collection = False
+    art = collection = glyphs = False
     for q in quads:
         tex = q.get("tex", "Solid")
         if isinstance(tex, dict) and "Thumb" in tex:
@@ -61,6 +61,9 @@ def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Pa
                 path.write_bytes(raster.cover_for(0, 160).tobytes())
                 lines.insert(0, f"A {path}")
                 art = True
+            if kind == 9 and not glyphs:
+                lines.insert(0, f"G {raster.glyphs_path}")
+                glyphs = True
             if kind == 6 and not collection:
                 path = work / "collection.rgba"
                 path.write_bytes(raster.cover_for(0, 160).tobytes())
@@ -87,6 +90,8 @@ def main() -> int:
     parser.add_argument("--save", type=Path, help="write side-by-side PNGs here")
     args = parser.parse_args()
     raster = Rasterizer(ROOT)
+    raster.load_glyphs(args.quads)
+    raster.glyphs_path = args.quads / "glyph-page.a8"
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)

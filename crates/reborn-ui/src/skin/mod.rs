@@ -11,7 +11,7 @@
 //! not describe is drawn by Reborn itself in the skin's palette.
 //! Without a skin nothing here runs and Reborn draws exactly as before.
 //! The format is documented for authors in `docs/skins.md`.
-mod atlas;
+pub(crate) mod atlas;
 mod compile;
 mod draw;
 

@@ -182,6 +182,59 @@ impl ttf_parser::OutlineBuilder for Outline<'_> {
     }
 }
 
+/// One glyph's coverage: `w` x `h` bytes, row-major, with the cell's top-left
+/// `left` pixels right of the pen and `top` pixels above the baseline.
+pub(crate) struct Coverage {
+    pub w: usize,
+    pub h: usize,
+    pub left: i16,
+    pub top: i16,
+    pub alpha: Vec<u8>,
+}
+
+/// Rasterise glyph `id` at `scale` pixels per font unit; `None` for a blank
+/// glyph (no outline) or one larger than `max` pixels on a side.
+pub(crate) fn coverage(
+    face: &ttf_parser::Face,
+    id: ttf_parser::GlyphId,
+    scale: f32,
+    raster: &mut ab_glyph_rasterizer::Rasterizer,
+    max: usize,
+) -> Result<Option<Coverage>, ()> {
+    let Some(bbox) = face.glyph_bounding_box(id) else {
+        return Ok(None);
+    };
+    let left = (f32::from(bbox.x_min) * scale).floor();
+    let top = (f32::from(bbox.y_max) * scale).ceil();
+    let right = (f32::from(bbox.x_max) * scale).ceil();
+    let bottom = (f32::from(bbox.y_min) * scale).floor();
+    let (w, h) = ((right - left) as usize + 1, (top - bottom) as usize + 1);
+    if w > max || h > max {
+        return Err(());
+    }
+    raster.reset(w, h);
+    let mut outline = Outline {
+        raster,
+        scale,
+        x0: left / scale,
+        y0: top / scale,
+        start: ab_glyph_rasterizer::point(0., 0.),
+        last: ab_glyph_rasterizer::point(0., 0.),
+    };
+    face.outline_glyph(id, &mut outline);
+    let mut alpha = vec![0; w * h];
+    raster.for_each_pixel_2d(|x, y, a| {
+        alpha[y as usize * w + x as usize] = (a.clamp(0., 1.) * 255.).round() as u8;
+    });
+    Ok(Some(Coverage {
+        w,
+        h,
+        left: left as i16,
+        top: top as i16,
+        alpha,
+    }))
+}
+
 /// Rasterise `charset()` from `data` at `px` into the atlas.
 /// With `ascii`, only printable ASCII (large display sizes).
 pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32, ascii: bool) -> Result<Font, String> {
@@ -198,7 +251,9 @@ pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32, ascii: bool) -> Result
             continue;
         };
         let advance = f32::from(face.glyph_hor_advance(id).unwrap_or(0)) * scale;
-        let Some(bbox) = face.glyph_bounding_box(id) else {
+        let Some(cov) = coverage(&face, id, scale, &mut raster, 256)
+            .map_err(|()| format!("glyph {ch:?} is too large at {px} px"))?
+        else {
             // Blank glyphs (space) only advance.
             glyphs.insert(
                 ch,
@@ -211,37 +266,18 @@ pub fn rasterise(atlas: &mut Atlas, data: &[u8], px: f32, ascii: bool) -> Result
             );
             continue;
         };
-        let left = (f32::from(bbox.x_min) * scale).floor();
-        let top = (f32::from(bbox.y_max) * scale).ceil();
-        let right = (f32::from(bbox.x_max) * scale).ceil();
-        let bottom = (f32::from(bbox.y_min) * scale).floor();
-        let (w, h) = ((right - left) as usize + 1, (top - bottom) as usize + 1);
-        if w > 256 || h > 256 {
-            return Err(format!("glyph {ch:?} is too large at {px} px"));
-        }
-        raster.reset(w, h);
-        let mut outline = Outline {
-            raster: &mut raster,
-            scale,
-            x0: left / scale,
-            y0: top / scale,
-            start: ab_glyph_rasterizer::point(0., 0.),
-            last: ab_glyph_rasterizer::point(0., 0.),
-        };
-        face.outline_glyph(id, &mut outline);
-        let (x0, y0) = atlas.cell(w, h)?;
-        raster.for_each_pixel_2d(|x, y, a| {
-            let a = (a.clamp(0., 1.) * 255.).round() as u8;
+        let (x0, y0) = atlas.cell(cov.w, cov.h)?;
+        for (i, &a) in cov.alpha.iter().enumerate() {
             if a > 0 {
-                atlas.coverage(x0 + x as usize, y0 + y as usize, a);
+                atlas.coverage(x0 + i % cov.w, y0 + i / cov.w, a);
             }
-        });
+        }
         glyphs.insert(
             ch,
             Glyph {
-                src: [x0 as u16, y0 as u16, w as u16, h as u16],
-                left: left as i16,
-                top: top as i16,
+                src: [x0 as u16, y0 as u16, cov.w as u16, cov.h as u16],
+                left: cov.left,
+                top: cov.top,
                 advance,
             },
         );

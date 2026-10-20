@@ -1,4 +1,6 @@
+mod glyphs;
 mod native;
+pub use glyphs::{cjk_font, glyph_page, GlyphPage, CJK_FONT_ENV, CJK_FONT_PATH, GLYPH_PAGE};
 pub use native::{Atlases, Renderer};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +26,9 @@ pub enum Tex {
     /// The active skin's RGBA atlas (images and white glyph coverage),
     /// addressed with `Quad::src` in texels.
     Skin,
+    /// The runtime glyph page (`glyph_page`): characters rasterised from the
+    /// CJK font; coverage masks tinted by `color`, `Quad::src` in texels.
+    Glyphs,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

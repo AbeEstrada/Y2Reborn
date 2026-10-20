@@ -2,7 +2,7 @@
 //! rings, glows, gradients, icons and text. Everything is a `Quad`; the native
 //! renderer samples coverage masks, so one tint colour draws any shape.
 use crate::{
-    maskdata as mask,
+    glyph_cache, maskdata as mask,
     text::{self, Face, Source},
 };
 use reborn_graphics::{Quad, Tex};
@@ -466,6 +466,21 @@ impl Canvas {
                         color,
                     ));
                     pen += f32::from(g.3) / 64. * k + tracking;
+                }
+                Source::Runtime(g) => {
+                    // Blank for one frame when the rasterising budget is spent.
+                    if let Some(p) = glyph_cache::place(g).filter(|p| p.src[2] > 0) {
+                        self.draw.push(Quad::masked(
+                            Tex::Glyphs,
+                            p.src,
+                            (x + pen).round() + f32::from(p.left),
+                            baseline - f32::from(p.top),
+                            f32::from(p.src[2]),
+                            f32::from(p.src[3]),
+                            color,
+                        ));
+                    }
+                    pen += g.advance + tracking;
                 }
             }
         }
