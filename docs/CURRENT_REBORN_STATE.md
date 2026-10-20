@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.12 — Y2Linux 1.0 Beta 8.12 (Baseline 108), 2026-10-20 (latest): playlist crash loop, crash isolation, audio open retry
+## 1.0.0-beta.8.13 — Y2Linux 1.0 Beta 8.13 (Baseline 110), 2026-10-20 (latest): library tags over MTP
+
+Published as `baseline-110` (Reborn `21cd3b0`, sequence 7701); no Reborn source change besides the identity. Y2Linux's
+MTP responder (umtprd overlay 0005) now reads Reborn's library read-only (`/data/reborn/library.db`: `tracks` joined to
+online `sources` by absolute `path`, `deleted=0`) to report title, artist, album, album artist, track, duration, sample
+rate, channels and bitrate to libmtp clients such as Strawberry. **The `tracks`/`sources` columns it reads are now an
+interface:** renaming them falls back to file names over MTP (no failure). Pause/resume silence on wired output was the
+#48 crystal path on the reopen after a 180 s hold, fixed in 8.12 and checked on a player.
+
+## 1.0.0-beta.8.12 — Y2Linux 1.0 Beta 8.12 (Baseline 108), 2026-10-20: playlist crash loop, crash isolation, audio open retry
 
 Published as `baseline-108` (Reborn `90f3da6`, sequence 7601). An M3U line with a multi-byte character across byte 8
 (`’`, `º`) panicked the playlists thread at `reborn-platform/src/playlists.rs:223` (`trimmed[..8]`) on every scan with
