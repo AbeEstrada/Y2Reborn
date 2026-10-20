@@ -324,25 +324,32 @@ fn probe(
                 .map_err(err)?;
         }
     }
-    let join = format!("FROM scan_candidates c LEFT JOIN tracks t ON t.source_id=?1 AND t.path=c.path AND t.size=c.size AND t.mtime=c.mtime AND t.deleted=0 AND t.metadata_revision={METADATA_REVISION}");
-    let matches = {
+    // One lookup per candidate through UNIQUE(source_id,path). The matches
+    // are then marked seen by id: an `INSERT … SELECT … WHERE t.id IS NOT
+    // NULL` over the same join was planned as a walk over every track of the
+    // source per batch (28 600 songs: 1.7 s per 64 files, 12.6 min for a
+    // rescan that found no change).
+    let ids = {
         let mut q = tx
             .prepare_cached(&format!(
-                "SELECT t.id IS NOT NULL {join} ORDER BY c.position"
+                "SELECT t.id FROM scan_candidates c LEFT JOIN tracks t ON t.source_id=?1 AND t.path=c.path AND t.size=c.size AND t.mtime=c.mtime AND t.deleted=0 AND t.metadata_revision={METADATA_REVISION} ORDER BY c.position"
             ))
             .map_err(err)?;
         let rows = q
-            .query_map([source], |r| r.get::<_, bool>(0))
+            .query_map([source], |r| r.get::<_, Option<i64>>(0))
             .map_err(err)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
     };
-    tx.execute(
-        &format!("INSERT OR IGNORE INTO scan_seen SELECT t.id {join} WHERE t.id IS NOT NULL"),
-        [source],
-    )
-    .map_err(err)?;
+    {
+        let mut q = tx
+            .prepare_cached("INSERT OR IGNORE INTO scan_seen VALUES(?1)")
+            .map_err(err)?;
+        for id in ids.iter().flatten() {
+            q.execute([id]).map_err(err)?;
+        }
+    }
     tx.commit().map_err(err)?;
-    Ok(matches)
+    Ok(ids.iter().map(Option::is_some).collect())
 }
 #[derive(Clone)]
 struct ScanFinish {
