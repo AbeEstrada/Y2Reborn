@@ -1,6 +1,18 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.11 — Y2Linux 1.0 Beta 8.11 (Baseline 106), 2026-10-20 (latest): storage setup waiting for a charger
+## 1.0.0-beta.8.12 — Y2Linux 1.0 Beta 8.12 (Baseline 108), 2026-10-20 (latest): playlist crash loop, crash isolation, audio open retry
+
+Published as `baseline-108` (Reborn `90f3da6`, sequence 7601). An M3U line with a multi-byte character across byte 8
+(`’`, `º`) panicked the playlists thread at `reborn-platform/src/playlists.rs:223` (`trimmed[..8]`) on every scan with
+the SD card; the panic hook ends the process, so three players crash-looped and updates rolled back (Y2Linux #49).
+Fixed there and in `reborn-ui/src/playlist_index.rs` (`text[..7]`, `percent_decode`) (`3ff346a`).
+`reborn_observability::isolated()` turns a panic on one user file into an error: the hook writes `panic-last.json`
+with `"isolated": true` and returns instead of `exit(101)`; used per playlist file/job, per cover decode and per
+scanned song (`bc2762d`, test `crates/reborn-observability/tests/isolated_panic.rs`). A refused output open is tried
+once more after 250 ms (CS43131 crystal, Y2Linux #48; `2db37cf`). Test build 107 on the maintainer's player: crash
+playlists listed and opened, no panic.
+
+## 1.0.0-beta.8.11 — Y2Linux 1.0 Beta 8.11 (Baseline 106), 2026-10-20: storage setup waiting for a charger
 
 Published as `baseline-106` (Reborn `727fd47`, sequence 7500). `InternalSetup::Pending` carries `SetupWait` from the
 platform's reason: `battery_low`/`battery_unknown` → Settings → Storage says **Connect a charger and restart**;
