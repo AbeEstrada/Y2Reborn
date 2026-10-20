@@ -44,9 +44,11 @@ fn percent_decode(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        // Bytes, not `&text[..]`: a `%` before `’` is no character boundary.
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&text[i + 1..i + 3], 16) {
-                out.push(b);
+            let hex = |b: u8| (b as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((h * 16 + l) as u8);
                 i += 3;
                 continue;
             }
@@ -100,7 +102,11 @@ impl Index {
 
     fn lookup(&self, tracks: &[Track], dir: &Path, location: &str) -> Option<usize> {
         let mut text = location.trim().to_owned();
-        if text.len() > 7 && text[..7].eq_ignore_ascii_case("file://") {
+        if text.len() > 7
+            && text
+                .get(..7)
+                .is_some_and(|p| p.eq_ignore_ascii_case("file://"))
+        {
             text = percent_decode(&text[7..]);
             text = text.strip_prefix("localhost").unwrap_or(&text).to_owned();
         } else if text.contains("://") {
@@ -362,5 +368,37 @@ mod tests {
             index.resolve(&tracks, list.parent().unwrap(), &location),
             Some(0)
         );
+    }
+
+    #[test]
+    fn non_ascii_entries_never_panic_and_still_resolve() {
+        let tracks = vec![
+            track("/media/sd/Music/Beyoncé - Halo.mp3"),
+            track("/media/sd/Music/Café/Número 1º.flac"),
+        ];
+        let mut index = Index::default();
+        let dir = Path::new("/media/sd/Music");
+        let r = |index: &mut Index, loc: &str| index.resolve(&tracks, dir, loc);
+        // `é` across byte 7, where `file://` would end.
+        assert_eq!(r(&mut index, "Beyoncé - Halo.mp3"), Some(0));
+        assert_eq!(
+            r(
+                &mut index,
+                "file:///media/sd/Music/Caf%C3%A9/N%C3%BAmero%201%C2%BA.flac"
+            ),
+            Some(1)
+        );
+        // `%` before a multi-byte character or at the end stays as it is.
+        for odd in [
+            "%’x.mp3",
+            "a%é.mp3",
+            "file:///%’.mp3",
+            "file:///%Aé.mp3",
+            "x%",
+            "%",
+        ] {
+            assert_eq!(r(&mut index, odd), None, "{odd}");
+        }
+        assert_eq!(percent_decode("%e2%80%99%zz%4"), "’%zz%4");
     }
 }

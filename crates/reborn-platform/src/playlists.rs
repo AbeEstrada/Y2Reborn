@@ -220,7 +220,11 @@ pub fn parse(text: &str) -> Playlist {
         if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("#EXTM3U") {
             continue;
         }
-        if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("#EXTINF:") {
+        // `get`, not `[..8]`: byte 8 can sit inside a character (`It’s…`).
+        if trimmed
+            .get(..8)
+            .is_some_and(|p| p.eq_ignore_ascii_case("#EXTINF:"))
+        {
             info = Some(trimmed.to_owned());
         } else if trimmed.starts_with('#') {
             extra.push(trimmed.to_owned());
@@ -395,6 +399,25 @@ mod tests {
         assert_eq!(again.entries, playlist.entries);
         assert_eq!(again.trailer, playlist.trailer);
         assert!(!playlist.read_only);
+    }
+
+    #[test]
+    fn a_character_across_byte_eight_is_a_plain_line() {
+        // The reported crashes: `’` at bytes 6..9 and `º` at bytes 7..9.
+        let text = "#EXTM3U\nDon’t Stop.mp3\nNúmero 1º.flac\n#EXTINF:1,Ação\nÉté.mp3\n";
+        let playlist = parse(text);
+        let locations: Vec<_> = playlist.entries.iter().map(|e| &e.location).collect();
+        assert_eq!(locations, ["Don’t Stop.mp3", "Número 1º.flac", "Été.mp3"]);
+        assert_eq!(playlist.entries[2].info.as_deref(), Some("#EXTINF:1,Ação"));
+        // Every split point of a multi-byte line, in every encoding a computer writes.
+        for prefix in 0..10 {
+            let line = format!("{}’º€.mp3", "a".repeat(prefix));
+            for encoding in [TextEncoding::Utf8, TextEncoding::Windows1252] {
+                let (bytes, _) = encode(&line, encoding);
+                let (decoded, _) = decode(&bytes);
+                assert_eq!(parse(&decoded).entries[0].location, line);
+            }
+        }
     }
 
     #[test]
