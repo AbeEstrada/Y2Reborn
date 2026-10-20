@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.14 — Y2Linux 1.0 Beta 8.14 (Baseline 111), 2026-10-20 (latest): shuffle, seek, genre Shuffle, titles
+## 1.0.0-beta.8.15 — Y2Linux 1.0 Beta 8.15 (Baseline 112), 2026-10-20 (latest): CJK text, update check, codec retry
+
+Published as `baseline-112` (Reborn `2ef41d3`, sequence 7900). Text lookup is exact face → fallback page → Noto Sans
+CJK (`/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf`, `REBORN_CJK_FONT` overrides) → U+FFFD; missing glyphs are
+rasterised at the face's size into a runtime 1024² A8 page (`reborn-graphics/src/glyphs.rs`, `reborn-ui/src/glyph_cache.rs`,
+texture slot 9, LRU shelves, ≤ 48 new glyphs a frame), font memory-mapped on first need (`a3b1943`). A failed update
+check flashes *Couldn't reach the update server* and the page keeps Update Now; `network_not_online` maps to
+NeedsNetwork (`cdf8c7b`). The Bluetooth worker retries a codec choice refused while the peer is still connecting
+(2 s, 5 tries; `b8cd9a7`). Not run on a player before publishing (owner updates by OTA).
+
+## 1.0.0-beta.8.14 — Y2Linux 1.0 Beta 8.14 (Baseline 111), 2026-10-20: shuffle, seek, genre Shuffle, titles
 
 Published as `baseline-111` (Reborn `5cda8bb`, sequence 7800; changes in `2861ec9`). `play_members` seeded its
 Fisher-Yates shuffle from the selected track's ID and index, and Shuffle rows always selected the first member, so every
