@@ -1689,9 +1689,10 @@ fn update_status(m: &AppModel) -> Page {
             Page::hero("Working…", "This takes a moment.")
         }
         UpdatePhase::Failed(problem) => match problem {
+            // Also after a wake while Wi-Fi was still reconnecting: it may be on.
             UpdateProblem::NeedsNetwork => Page::hero(
-                "Connect to Wi-Fi to Check for Updates",
-                "Updates download over Wi-Fi.",
+                "Couldn't Reach the Update Server",
+                "Make sure Wi-Fi is connected, then check again.",
             )
             .with_rows(vec![Item::new("Wi-Fi", "wifi"), check]),
             UpdateProblem::NoUpdateSource | UpdateProblem::NeedsComputer => Page::hero(

@@ -378,7 +378,12 @@ pub fn update_problem(error: &str) -> UpdateProblem {
     let e = error.to_ascii_lowercase();
     if e.contains("exactly_one") || e.contains("channel") || e.contains("local_package") {
         UpdateProblem::NoUpdateSource
-    } else if e.contains("clock") || e.contains("tls") || e.contains("http") || e.contains("url") {
+    } else if e.contains("clock")
+        || e.contains("tls")
+        || e.contains("http")
+        || e.contains("url")
+        || e.contains("network")
+    {
         UpdateProblem::NeedsNetwork
     } else if e.contains("space") || e.contains("reserve") {
         UpdateProblem::NotEnoughSpace
@@ -1553,6 +1558,17 @@ mod tests {
             update(&v, true).phase,
             UpdatePhase::Failed(UpdateProblem::NeedsNetwork)
         );
+        // A check made before Wi-Fi reconnected (Y2Linux 8.15 waits, then says so).
+        assert_eq!(
+            update_problem("network_not_online"),
+            UpdateProblem::NeedsNetwork
+        );
+        // A failed check keeps the release already offered: Update Now stays.
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Checked","release_version":"9.9","last_check_failure":"<urlopen error timed out>"}});
+        assert!(matches!(
+            update(&v, true).phase,
+            UpdatePhase::Available { ref version } if version == "9.9"
+        ));
         assert_eq!(
             update_problem("exactly_one_local_package_or_HTTPS_manifest_required"),
             UpdateProblem::NoUpdateSource

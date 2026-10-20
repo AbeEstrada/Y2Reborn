@@ -2804,7 +2804,11 @@ impl Runtime {
                             p.download = None;
                             self.ui
                                 .flash("The download didn't finish. Nothing was changed.");
-                        } else if !matches!(task, UpdateCheck) {
+                        } else if task == UpdateCheck {
+                            // The page keeps a release it already offered.
+                            self.ui
+                                .flash("Couldn't reach the update server. Try again in a moment.");
+                        } else {
                             self.ui.flash(error.clone());
                         }
                         p.failure = Some(error);
