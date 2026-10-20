@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.13 — Y2Linux 1.0 Beta 8.13 (Baseline 110), 2026-10-20 (latest): library tags over MTP
+## 1.0.0-beta.8.14 — Y2Linux 1.0 Beta 8.14 (Baseline 111), 2026-10-20 (latest): shuffle, seek, genre Shuffle, titles
+
+Published as `baseline-111` (Reborn `5cda8bb`, sequence 7800; changes in `2861ec9`). `play_members` seeded its
+Fisher-Yates shuffle from the selected track's ID and index, and Shuffle rows always selected the first member, so every
+Shuffle played one fixed order: now `reborn_platform::random_u64()` (getrandom) seeds a splitmix64 shuffle, a Shuffle
+row (`force_shuffle`) shuffles every member, a song picked with Shuffle on stays first. `Effect::Seek` carries only the
+direction; `seek_step` sizes held-seek steps 1 s → 3 s (after 1.5 s) → 10 s (after 4 s), at most 1/60 of the song
+(was 30 s every 90 ms). A genre's album list has Shuffle (`shuffle:collection`) under All Songs, also skipped by Cover
+Flow's album detail. The Home card's title is fitted to 200 px. Owner checked all four on build 111.
+
+## 1.0.0-beta.8.13 — Y2Linux 1.0 Beta 8.13 (Baseline 110), 2026-10-20: library tags over MTP
 
 Published as `baseline-110` (Reborn `21cd3b0`, sequence 7701); no Reborn source change besides the identity. Y2Linux's
 MTP responder (umtprd overlay 0005) now reads Reborn's library read-only (`/data/reborn/library.db`: `tracks` joined to
