@@ -75,3 +75,29 @@ Cost of the 10.5-h book with the larger cap: peak RSS 186 MB vs 49 MB for a shor
 5. **Speed**: `atempo` in Y2Linux FFmpeg and its verify lists, `RbDspConfig.speed`, scaled times.
 6. **Sleep timer**.
 7. **Finish**: tests, previews, skins, docs, device test with real books, beta.
+
+## Status (2026-10-21)
+
+Phases 0–6 are implemented on main (`11febec` library, `faa87fc` progress and playback, `56f79ac`
+menus, `6aeec66` speed, `b2951f5` sleep timer, `f61c7c3` skins); Y2Linux `01d8882` builds FFmpeg
+with `atempo`. Code map:
+
+- `reborn_core::books`: detection (`is_book`), grouping and order (`books`, `order`, `natural`),
+  chapters (`ChapterMark`, `Span`, `spans`), the playing book (`Listening`: chapter at, next,
+  previous, progress), the shelf (`Shelf`, `Progress`, `rewind_ms`), speeds (`SPEEDS`, `next_speed`).
+- `AppModel.book` (session), `LibraryState.shelf` / `.chapters` (kept out of action rollback),
+  `AppModel.sleep_timer` (memory only); effects `PlayBook`, `SetBookFinished`, `ForgetBook`,
+  `LoadChapters`, `SetAudiobooksOnHome`, `SetBookSpeed`, `SetSleepTimer`.
+- App: `app/reborn/src/books.rs` (shelf file `state/books.json`, chapter reader thread, start,
+  chapter steps, finish, rewind), `sleep_timer.rs`; hooks in `main.rs` (checkpoint saves the
+  place, queue replacement saves first, Next/Previous, track end, crossfade 0 and speed in
+  `load()`, book seek steps, rewind in `toggle()`); `playback.rs` scales played frames by the
+  job's tempo.
+- UI: `views_books.rs` (list rows, book page, `BookNow` for Now Playing and skins), Home entry,
+  Home Menu toggle, hold menus, search results, `components::time` with hours.
+- Media: `rb_media_chapters`, `admit_streams`, `av_max_alloc` 128 MiB, `RbDspConfig.speed`
+  (360 bytes) with `atempo` after `aformat`, `heavy_mp4` scan serialisation.
+
+Host evidence: workspace tests (608), clippy, previews `b1`–`b6` in Reborn's look and two skins,
+GLES comparison 165/165. Owed on the player: a real library's books, chapter steps in a long M4B,
+speed by ear, resume after a restart, the sleep timer's fade, memory with a long book.
