@@ -94,6 +94,21 @@ the same pinned, freshness-checked cover loader as before, and cached in
 1500 files, emptied by *Clear cache*). Until a cover is ready the row shows a
 calm placeholder. The accent is computed from the 160×160 now-playing cover.
 
+**Since Beta 8.18 (sharper covers).** Covers are cropped to their centre
+(never stretched) and scaled with Lanczos (bicubic when a small picture has to
+grow) with full-resolution chroma. The now-playing and Cover Flow artwork is
+180×180, the largest size drawn (Home's card); thumbnails are 128×128, decoded
+straight from the picture. Every picture goes to the GPU with box-filtered half
+and quarter copies (`reborn_graphics::level_block`), and each quad samples the
+smallest copy at least as large as it is drawn (`level_source`), so GL's
+bilinear filter never shrinks a cover by more than half: no grainy list covers
+without mipmaps. The thumbnail atlas is 2048×1024 (70 cells of 196×130, about
+8 MB). The disk cache is `thumb3-<id>-<mtime>-<size>.t128`: 4:2:0 YCbCr, 24 KB
+per album, at most 3000 files (about 72 MB); when full, the 300 least recently
+shown are removed (a shown file's time is refreshed at most once a day). Older
+`thumb-`/`thumb2-` files are removed once. Recommended covers for users: square,
+at least 180×180 (300–600 px JPEG is plenty).
+
 ## Host verification of the GL path
 
 `tools/preview/gles_compare.py` renders every preview quad list through the

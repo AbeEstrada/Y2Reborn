@@ -121,9 +121,9 @@ class Rasterizer:
         if tex == "Solid":
             return Image.new("RGBA", (size, size), (255, 255, 255, 255))
         if tex in ("Art", "CollectionArt"):
-            return self.cover_for(0, 160)
+            return self.cover_for(0, 180)
         if isinstance(tex, dict) and "Thumb" in tex:
-            return self.cover_for(tex["Thumb"], 96)
+            return self.cover_for(tex["Thumb"], 128)
         if tex == "Skin":
             sx, sy, sw, sh = quad["src"]
             return self.skin.crop((sx, sy, sx + sw, sy + sh))

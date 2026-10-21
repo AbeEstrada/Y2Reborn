@@ -1489,6 +1489,16 @@ done:
   return lowres;
 }
 
+/* A scaler for artwork: Lanczos when shrinking (sharp, no aliasing), bicubic
+ * when a small picture has to grow (Lanczos rings there), both with exact
+ * rounding and full-resolution chroma so JPEG colour edges stay clean. */
+static struct SwsContext *art_scaler(const AVFrame *frame, int w, int h) {
+  int shrink = frame->width >= w && frame->height >= h;
+  return sws_getContext(frame->width, frame->height, frame->format, w, h,
+      AV_PIX_FMT_RGBA, (shrink ? SWS_LANCZOS : SWS_BICUBIC) | SWS_ACCURATE_RND |
+      SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP, NULL, NULL, NULL);
+}
+
 static int decode_art(enum AVCodecID id, AVCodecParameters *params,
                        AVPacket *packet, uint8_t *out, int side) {
   if (!image_codec(id) || !packet || packet->size <= 0 || packet->size > 16 * 1024 * 1024)
@@ -1509,9 +1519,19 @@ static int decode_art(enum AVCodecID id, AVCodecParameters *params,
   if (r >= 0) r = avcodec_open2(ctx, codec, NULL);
   if (r >= 0) r = avcodec_send_packet(ctx, packet);
   if (r >= 0) r = avcodec_receive_frame(ctx, frame);
+  if (r >= 0 && (frame->width < 1 || frame->height < 1)) r = AVERROR_INVALIDDATA;
+  if (r >= 0 && frame->width != frame->height) {
+    /* A cover fills its square: the centre of a wide or tall picture, never
+     * stretched. Even offsets keep 4:2:0 chroma aligned with its luma. */
+    int edge = frame->width < frame->height ? frame->width : frame->height;
+    frame->crop_left = (size_t)((frame->width - edge) / 2 & ~1);
+    frame->crop_top = (size_t)((frame->height - edge) / 2 & ~1);
+    frame->crop_right = (size_t)(frame->width - edge) - frame->crop_left;
+    frame->crop_bottom = (size_t)(frame->height - edge) - frame->crop_top;
+    r = av_frame_apply_cropping(frame, AV_FRAME_CROP_UNALIGNED);
+  }
   if (r >= 0) {
-    struct SwsContext *scale = sws_getContext(frame->width, frame->height, frame->format,
-        side, side, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+    struct SwsContext *scale = art_scaler(frame, side, side);
     if (!scale) r = AVERROR(ENOMEM);
     else {
       uint8_t *dest[] = {out}; int stride[] = {side * 4};
@@ -1669,8 +1689,7 @@ int rb_media_logo_file(const char *path, uint8_t *out, int side) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     memset(out, 0, (size_t)side * side * 4);
-    struct SwsContext *scale = sws_getContext(frame->width, frame->height, frame->format,
-        w, h, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL, NULL, NULL);
+    struct SwsContext *scale = art_scaler(frame, w, h);
     if (!scale) r = AVERROR(ENOMEM);
     else {
       uint8_t *dest[] = {out + ((size_t)((side - h) / 2) * side + (side - w) / 2) * 4};

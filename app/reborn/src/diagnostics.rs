@@ -151,8 +151,10 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
     }
     for name in ["artwork-png.flac", "artwork-jpeg.flac", "artwork-webp.flac"] {
         let mut art = Decoder::open(&fixtures.join(name), 48000, Cancel::new()?)?;
-        let rgba = art.artwork()?;
-        if rgba.len() != 160 * 160 * 4 || !rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 0) {
+        let rgba = art.artwork(reborn_graphics::ART_SIZE as u32)?;
+        if rgba.len() != reborn_graphics::ART_SIZE * reborn_graphics::ART_SIZE * 4
+            || !rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 0)
+        {
             return Err(format!("artwork fixture pixel mismatch: {name}"));
         }
     }
@@ -161,8 +163,11 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         "artwork-external.png",
         "artwork-external.webp",
     ] {
-        let rgba = reborn_media::external_artwork(&fixtures.join(name))?;
-        if rgba.len() != 160 * 160 * 4 || !rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 0) {
+        let rgba =
+            reborn_media::external_artwork(&fixtures.join(name), reborn_graphics::ART_SIZE as u32)?;
+        if rgba.len() != reborn_graphics::ART_SIZE * reborn_graphics::ART_SIZE * 4
+            || !rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 0)
+        {
             return Err(format!("external artwork fixture pixel mismatch: {name}"));
         }
     }

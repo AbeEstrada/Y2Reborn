@@ -109,9 +109,10 @@ fn run() -> Result<(), String> {
             for _ in 0..10 {
                 let start = Instant::now();
                 let pixels = if ext == "flac" {
-                    MediaFile::open(&path, Cancel::new()?).and_then(|mut m| m.artwork())
+                    // The player's cover size (reborn_graphics::ART_SIZE).
+                    MediaFile::open(&path, Cancel::new()?).and_then(|mut m| m.artwork(180))
                 } else {
-                    reborn_media::external_artwork(&path)
+                    reborn_media::external_artwork(&path, 180)
                 };
                 if pixels.is_ok() {
                     successes += 1;

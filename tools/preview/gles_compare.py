@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -26,15 +27,46 @@ ROOT = Path(__file__).resolve().parents[2]
 TEX = {"Solid": 0, "Mask": 4, "Art": 5, "CollectionArt": 6, "Glyphs": 9}
 
 
-def cell_bytes(image: Image.Image) -> bytes:
-    """A 98x98 thumbnail cell: the 96x96 image with its edge replicated."""
-    cell = Image.new("RGBA", (98, 98))
-    cell.paste(image, (1, 1))
-    cell.paste(image.crop((0, 0, 96, 1)), (1, 0))
-    cell.paste(image.crop((0, 95, 96, 96)), (1, 97))
-    cell.paste(cell.crop((1, 0, 2, 98)), (0, 0))
-    cell.paste(cell.crop((96, 0, 97, 98)), (97, 0))
-    return cell.tobytes()
+# Mirrors reborn-graphics/src/lib.rs: ART_SIZE, THUMB_SIZE, level_cell and
+# level_source (a picture with its half and quarter copies, gutters replicated).
+ART_SIZE, THUMB_SIZE = 180, 128
+THUMB_CELL_W, THUMB_CELL_H = THUMB_SIZE + 2 + THUMB_SIZE // 2 + 2, THUMB_SIZE + 2
+THUMB_COLUMNS = 2048 // THUMB_CELL_W
+
+
+def level_at(n: int, i: int) -> tuple[int, int, int]:
+    return [(1, 1, n), (n + 3, 1, n // 2), (n + 3, n // 2 + 3, n // 4)][i]
+
+
+def level_source(n: int, edge: float) -> list[int]:
+    i = next((i for i in (2, 1, 0) if level_at(n, i)[2] >= edge), 0)
+    x, y, e = level_at(n, i)
+    return [x, y, e, e]
+
+
+def drawn_edge(q: dict) -> float:
+    if q.get("warp"):
+        c = q["warp"]["corners"]
+        return max(math.dist(c[i], c[(i + 1) % 4]) for i in range(4))
+    return max(q["w"], q["h"])
+
+
+def level_block(image: Image.Image, n: int) -> Image.Image:
+    """The picture and its box-filtered copies, each with a replicated gutter."""
+    block = Image.new("RGBA", (n + 2 + n // 2 + 2, n + 2))
+    level = image
+    for i in range(3):
+        x, y, e = level_at(n, i)
+        if i:
+            level = level.reduce(2)
+        padded = Image.new("RGBA", (e + 2, e + 2))
+        padded.paste(level, (1, 1))
+        padded.paste(level.crop((0, 0, e, 1)), (1, 0))
+        padded.paste(level.crop((0, e - 1, e, e)), (1, e + 1))
+        padded.paste(padded.crop((1, 0, 2, e + 2)), (0, 0))
+        padded.paste(padded.crop((e, 0, e + 1, e + 2)), (e + 1, 0))
+        block.paste(padded, (x - 1, y - 1))
+    return block
 
 
 def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Path) -> Image.Image:
@@ -48,26 +80,32 @@ def render_native(harness: Path, raster: Rasterizer, quads: list[dict], work: Pa
                 index = len(cells)
                 cells[key] = index
                 path = work / f"thumb-{index}.rgba"
-                path.write_bytes(cell_bytes(raster.cover_for(key, 96)))
-                lines.append(f"T {index % 10} {index // 10} {path}")
+                path.write_bytes(level_block(raster.cover_for(key, THUMB_SIZE), THUMB_SIZE).tobytes())
+                lines.append(f"T {index % THUMB_COLUMNS} {index // THUMB_COLUMNS} {path}")
             index = cells[key]
-            kind, src = 7, [index % 10 * 98 + 1, index // 10 * 98 + 1, 96, 96]
+            x, y, w, h = level_source(THUMB_SIZE, drawn_edge(q))
+            kind = 7
+            src = [index % THUMB_COLUMNS * THUMB_CELL_W + x, index // THUMB_COLUMNS * THUMB_CELL_H + y, w, h]
         elif isinstance(tex, dict) and "Font" in tex:
             kind, src = 1 + tex["Font"], q["src"]
         else:
             kind, src = TEX[tex], q.get("src", [0, 0, 0, 0])
+            if kind in (5, 6):
+                src = level_source(ART_SIZE, drawn_edge(q))
             if kind == 5 and not art:
                 path = work / "art.rgba"
-                path.write_bytes(raster.cover_for(0, 160).tobytes())
-                lines.insert(0, f"A {path}")
+                block = level_block(raster.cover_for(0, ART_SIZE), ART_SIZE)
+                path.write_bytes(block.tobytes())
+                lines.insert(0, f"A {block.width} {block.height} {path}")
                 art = True
             if kind == 9 and not glyphs:
                 lines.insert(0, f"G {raster.glyphs_path}")
                 glyphs = True
             if kind == 6 and not collection:
                 path = work / "collection.rgba"
-                path.write_bytes(raster.cover_for(0, 160).tobytes())
-                lines.insert(0, f"C {path}")
+                block = level_block(raster.cover_for(0, ART_SIZE), ART_SIZE)
+                path.write_bytes(block.tobytes())
+                lines.insert(0, f"C {block.width} {block.height} {path}")
                 collection = True
         if q.get("warp"):
             corners = " ".join(f"{v}" for point in q["warp"]["corners"] for v in point)

@@ -1,6 +1,7 @@
 use super::{
-    glyph_page, Quad, Tex, FONT_PAGE_WIDTH, GLYPH_PAGE, SKIN_ATLAS, THUMB_CELL, THUMB_COLUMNS,
-    THUMB_SIZE, THUMB_SLOTS,
+    drawn_edge, glyph_page, level_block, level_cell, level_source, Quad, Tex, ART_SIZE,
+    FONT_PAGE_WIDTH, GLYPH_PAGE, SKIN_ATLAS, THUMB_CELL_H, THUMB_CELL_W, THUMB_COLUMNS, THUMB_SIZE,
+    THUMB_SLOTS,
 };
 use reborn_observability::{HealthState, Level, Observer};
 use serde_json::json;
@@ -52,7 +53,13 @@ unsafe extern "C" {
         sh: c_int,
     );
     fn rb_graphics_thumb(p: *mut c_void, cx: c_int, cy: c_int, rgba: *const u8) -> c_int;
-    fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
+    fn rb_graphics_art(
+        p: *mut c_void,
+        b: *const u8,
+        w: c_int,
+        h: c_int,
+        collection: c_int,
+    ) -> c_int;
     fn rb_graphics_skin(p: *mut c_void, b: *const u8, w: c_int, h: c_int) -> c_int;
     fn rb_graphics_glyphs(p: *mut c_void, y: c_int, rows: c_int, a8: *const u8) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
@@ -220,8 +227,8 @@ impl Renderer {
                     Tex::Solid => (0, [0; 4]),
                     Tex::Font(page) => (1 + c_int::from(page), q.src),
                     Tex::Mask => (4, q.src),
-                    Tex::Art => (5, [0; 4]),
-                    Tex::CollectionArt => (6, [0; 4]),
+                    Tex::Art => (5, level_source(ART_SIZE, drawn_edge(q))),
+                    Tex::CollectionArt => (6, level_source(ART_SIZE, drawn_edge(q))),
                     Tex::Skin => (8, q.src),
                     // Not drawn while the page failed to upload.
                     Tex::Glyphs if !self.glyphs_resident => continue,
@@ -229,9 +236,10 @@ impl Renderer {
                     Tex::Thumb(key) => match self.thumbs.get_mut(&key) {
                         Some(slot) => {
                             slot.used = self.frame;
-                            let x = (slot.cell % THUMB_COLUMNS * THUMB_CELL + 1) as u16;
-                            let y = (slot.cell / THUMB_COLUMNS * THUMB_CELL + 1) as u16;
-                            (7, [x, y, THUMB_SIZE as u16, THUMB_SIZE as u16])
+                            let [x, y, w, h] = level_source(THUMB_SIZE, drawn_edge(q));
+                            let cx = (slot.cell % THUMB_COLUMNS * THUMB_CELL_W) as u16;
+                            let cy = (slot.cell / THUMB_COLUMNS * THUMB_CELL_H) as u16;
+                            (7, [cx + x, cy + y, w, h])
                         }
                         None => {
                             if !self.missing.contains(&key) && self.missing.len() < 64 {
@@ -388,7 +396,7 @@ impl Renderer {
     pub fn thumb_resident(&self, key: u64) -> bool {
         self.thumbs.contains_key(&key)
     }
-    /// Store a 96x96 RGBA thumbnail, evicting the least recently drawn cell
+    /// Store a `THUMB_SIZE` RGBA thumbnail, evicting the least recently drawn cell
     /// when the atlas is full. Cells drawn in the current frame are kept.
     pub fn upload_thumb(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
         if rgba.len() != THUMB_SIZE * THUMB_SIZE * 4 {
@@ -413,18 +421,9 @@ impl Renderer {
                 slot.cell
             }
         };
-        let mut block = vec![0u8; THUMB_CELL * THUMB_CELL * 4];
-        for y in 0..THUMB_CELL {
-            for x in 0..THUMB_CELL {
-                let sx = x.saturating_sub(1).min(THUMB_SIZE - 1);
-                let sy = y.saturating_sub(1).min(THUMB_SIZE - 1);
-                let from = (sy * THUMB_SIZE + sx) * 4;
-                let to = (y * THUMB_CELL + x) * 4;
-                block[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
-            }
-        }
-        // SAFETY: the block is exactly one validated 98x98 RGBA cell and the
-        // cell index is inside the atlas; GL copies it before returning.
+        let block = level_block(rgba, THUMB_SIZE).ok_or("thumbnail dimensions")?;
+        // SAFETY: the block is exactly one THUMB_CELL_W x THUMB_CELL_H RGBA
+        // cell and the cell index is inside the atlas; GL copies it before returning.
         let r = unsafe {
             rb_graphics_thumb(
                 self.raw.as_ptr(),
@@ -453,12 +452,19 @@ impl Renderer {
         self.upload_art(rgba, true)
     }
     fn upload_art(&mut self, rgba: &[u8], collection: bool) -> Result<(), String> {
-        if rgba.len() != 160 * 160 * 4 {
-            return Err("artwork dimensions".into());
-        }
+        let block = level_block(rgba, ART_SIZE).ok_or("artwork dimensions")?;
+        let (w, h) = level_cell(ART_SIZE);
         let started = Instant::now();
-        // SAFETY: exact RGBA dimensions validated; GL synchronously copies slice into owned texture.
-        let r = unsafe { rb_graphics_art(self.raw.as_ptr(), rgba.as_ptr(), i32::from(collection)) };
+        // SAFETY: the block holds exactly w*h RGBA texels; GL synchronously copies it into the owned texture.
+        let r = unsafe {
+            rb_graphics_art(
+                self.raw.as_ptr(),
+                block.as_ptr(),
+                w as c_int,
+                h as c_int,
+                i32::from(collection),
+            )
+        };
         self.log
             .gauge("artwork_upload_ms", started.elapsed().as_secs_f64() * 1000.);
         self.log.add("artwork_uploads", 1.);

@@ -4093,7 +4093,7 @@ fn run() -> Result<(), String> {
                     if let (Some(rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
                         let mut rounded = rgba;
-                        reborn_ui::art::round_corners(&mut rounded, 160);
+                        reborn_ui::art::round_corners(&mut rounded, reborn_graphics::ART_SIZE);
                         if renderer.artwork(&rounded).is_ok() {
                             rt.art = true;
                             rt.dirty.mark_render();
@@ -4104,7 +4104,7 @@ fn run() -> Result<(), String> {
                 if reply.full {
                     // Cover Flow's centre cover at full resolution.
                     if let (Some(mut rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
-                        reborn_ui::art::round_corners(&mut rgba, 160);
+                        reborn_ui::art::round_corners(&mut rgba, reborn_graphics::ART_SIZE);
                         if renderer.collection_artwork(&rgba).is_ok() {
                             rt.ui.collection_art.set(Some(reply.thumb));
                             rt.dirty.mark_render();
@@ -4514,7 +4514,7 @@ fn run() -> Result<(), String> {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&bytes);
                         if let Some(g) = &mut rt.graphics {
                             let mut rounded = bytes.to_vec();
-                            reborn_ui::art::round_corners(&mut rounded, 160);
+                            reborn_ui::art::round_corners(&mut rounded, reborn_graphics::ART_SIZE);
                             if g.artwork(&rounded).is_ok() {
                                 rt.art = true;
                                 rt.dirty.mark_render();

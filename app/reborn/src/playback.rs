@@ -1,6 +1,7 @@
 use crate::volume::VolumeRamp;
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
+use reborn_graphics::ART_SIZE;
 use reborn_media::{
     convert_pcm, crossfade_pcm, external_artwork, folder_artwork_candidates, Cancel, Decoder,
     DspConfig, OutputSpec, Pcm,
@@ -600,6 +601,9 @@ fn update_media_state(
     }
 }
 
+/// A cached embedded cover: `ART_SIZE` RGBA. A cover cached at another size
+/// (before Beta 8.18) is decoded again and replaced.
+const ART_BYTES: usize = ART_SIZE * ART_SIZE * 4;
 fn publish_artwork(
     cache: &std::path::Path,
     track: &Track,
@@ -632,15 +636,15 @@ fn publish_artwork(
         .artwork
         .then(|| std::fs::metadata(&path).ok())
         .flatten()
-        .filter(|meta| meta.len() == 160 * 160 * 4)
+        .filter(|meta| meta.len() == ART_BYTES as u64)
         .and_then(|_| std::fs::read(&path).ok())
-        .filter(|b| b.len() == 160 * 160 * 4);
+        .filter(|b| b.len() == ART_BYTES);
     let have_cached = cached.is_some();
     let embedded = cached.or_else(|| {
         decoder
             .metadata
             .artwork
-            .then(|| decoder.artwork())
+            .then(|| decoder.artwork(ART_SIZE as u32))
             .and_then(Result::ok)
     });
     if let Some(bytes) = &embedded {
@@ -655,7 +659,7 @@ fn pinned_folder_artwork(
 ) -> Result<Vec<u8>, String> {
     for name in folder_artwork_candidates(&source.sidecar_directory())? {
         if let Ok(file) = source.open_sidecar(&name) {
-            if let Ok(pixels) = external_artwork(file.path()) {
+            if let Ok(pixels) = external_artwork(file.path(), ART_SIZE as u32) {
                 return Ok(pixels);
             }
         }
@@ -1946,7 +1950,7 @@ mod tests {
         }
         assert_eq!(tested, 36);
         let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
-        assert!(external_artwork(pinned.path()).is_err());
+        assert!(external_artwork(pinned.path(), ART_SIZE as u32).is_err());
         for name in [
             "artwork-external.jpg",
             "artwork-external.png",
@@ -1954,8 +1958,8 @@ mod tests {
         ] {
             let file = pinned.open_sidecar(name).unwrap();
             assert_eq!(
-                external_artwork(file.path()).unwrap(),
-                external_artwork(&root.join(name)).unwrap(),
+                external_artwork(file.path(), ART_SIZE as u32).unwrap(),
+                external_artwork(&root.join(name), ART_SIZE as u32).unwrap(),
                 "{name}"
             );
         }
@@ -1987,7 +1991,7 @@ mod tests {
             ..Default::default()
         };
         let pinned = reborn_platform::storage::pin_track(&track, &root).unwrap();
-        let expected = external_artwork(&root.join("FoLdEr.PNG")).unwrap();
+        let expected = external_artwork(&root.join("FoLdEr.PNG"), ART_SIZE as u32).unwrap();
         assert_eq!(pinned_folder_artwork(&pinned).unwrap(), expected);
         assert!(pinned.open_sidecar("album.jpg").is_err());
         std::fs::rename(&root, &moved).unwrap();

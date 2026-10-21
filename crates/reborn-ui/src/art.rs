@@ -5,7 +5,7 @@ use reborn_graphics::THUMB_SIZE;
 /// Corner radius as a fraction of the picture's edge, baked into the pixels.
 const CORNER: f32 = 0.085;
 
-/// Accent colour for a 160x160 RGBA cover: the most vivid hue, lifted so text
+/// Accent colour for an RGBA cover: the most vivid hue, lifted so text
 /// in it stays readable on the near-black background. Dull or grey covers get
 /// a calm cool white instead of a muddy tint.
 pub fn accent_from_rgba(pixels: &[u8]) -> u32 {
@@ -105,42 +105,16 @@ pub fn round_corners(rgba: &mut [u8], edge: usize) {
     }
 }
 
-/// A 96x96 RGBA thumbnail (box-filtered) of a 160x160 RGBA cover, with rounded corners.
-pub fn thumbnail(rgba160: &[u8]) -> Option<Vec<u8>> {
-    const SRC: usize = 160;
-    if rgba160.len() != SRC * SRC * 4 {
+/// A library thumbnail from a `THUMB_SIZE` RGBA cover: opaque, with rounded corners.
+pub fn thumbnail(cover: &[u8]) -> Option<Vec<u8>> {
+    if cover.len() != THUMB_SIZE * THUMB_SIZE * 4 {
         return None;
     }
-    let mut out = vec![0u8; THUMB_SIZE * THUMB_SIZE * 4];
-    let scale = SRC as f32 / THUMB_SIZE as f32;
-    for y in 0..THUMB_SIZE {
-        for x in 0..THUMB_SIZE {
-            let (x0, x1) = (
-                (x as f32 * scale) as usize,
-                (((x + 1) as f32 * scale).ceil() as usize).min(SRC),
-            );
-            let (y0, y1) = (
-                (y as f32 * scale) as usize,
-                (((y + 1) as f32 * scale).ceil() as usize).min(SRC),
-            );
-            let mut acc = [0u32; 4];
-            let mut count = 0u32;
-            for sy in y0..y1 {
-                for sx in x0..x1 {
-                    let i = (sy * SRC + sx) * 4;
-                    for (c, a) in acc.iter_mut().enumerate() {
-                        *a += u32::from(rgba160[i + c]);
-                    }
-                    count += 1;
-                }
-            }
-            let o = (y * THUMB_SIZE + x) * 4;
-            for c in 0..4 {
-                out[o + c] = (acc[c] / count.max(1)) as u8;
-            }
-            out[o + 3] = 255;
-        }
-    }
+    let mut out = cover.to_vec();
+    out.as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .for_each(|p| p[3] = 255);
     round_corners(&mut out, THUMB_SIZE);
     Some(out)
 }
@@ -178,13 +152,16 @@ mod tests {
     }
 
     #[test]
-    fn thumbnails_are_96_square_with_clear_corners() {
-        let thumb = thumbnail(&flat(200, 40, 40)).unwrap();
-        assert_eq!(thumb.len(), 96 * 96 * 4);
+    fn thumbnails_are_opaque_squares_with_clear_corners() {
+        let n = THUMB_SIZE;
+        let mut cover: Vec<u8> = (0..n * n).flat_map(|_| [200, 40, 40, 90]).collect();
+        let thumb = thumbnail(&cover).unwrap();
+        assert_eq!(thumb.len(), n * n * 4);
         assert_eq!(thumb[3], 0, "top-left corner is transparent");
-        let centre = (48 * 96 + 48) * 4;
+        let centre = (n / 2 * n + n / 2) * 4;
         assert_eq!(&thumb[centre..centre + 4], &[200, 40, 40, 255]);
-        assert!(thumbnail(&[0; 10]).is_none());
+        cover.truncate(10);
+        assert!(thumbnail(&cover).is_none());
         let mut art = flat(1, 2, 3);
         round_corners(&mut art, 160);
         assert_eq!(art[3], 0);
@@ -192,21 +169,21 @@ mod tests {
     }
 }
 
-/// A station logo as a square 160x160 opaque tile. `fitted` is the whole
-/// logo centred in 160x160 with transparent margins (`logo_image`). A logo
+/// A station logo as a square opaque tile as large as `fitted`: the whole
+/// logo centred in a square with transparent margins (`logo_image`). A logo
 /// with a plain background of its own fills the tile in that colour; a
 /// transparent logo sits at 80 % on a light or dark tile, whichever it
 /// stands out on.
 pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
-    const N: usize = 160;
-    if fitted.len() != N * N * 4 {
+    let n = (fitted.len() / 4).isqrt();
+    if n == 0 || fitted.len() != n * n * 4 {
         return None;
     }
-    let alpha = |x: usize, y: usize| fitted[(y * N + x) * 4 + 3];
+    let alpha = |x: usize, y: usize| fitted[(y * n + x) * 4 + 3];
     // The logo's own extent (its non-transparent pixels).
-    let (mut x0, mut y0, mut x1, mut y1) = (N, N, 0, 0);
-    for y in 0..N {
-        for x in 0..N {
+    let (mut x0, mut y0, mut x1, mut y1) = (n, n, 0, 0);
+    for y in 0..n {
+        for x in 0..n {
             if alpha(x, y) > 16 {
                 x0 = x0.min(x);
                 y0 = y0.min(y);
@@ -232,7 +209,7 @@ pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
         .iter()
         .filter(|&&(x, y)| alpha(x, y) > 230)
         .map(|&(x, y)| {
-            let i = (y * N + x) * 4;
+            let i = (y * n + x) * 4;
             [fitted[i] as f32, fitted[i + 1] as f32, fitted[i + 2] as f32]
         })
         .collect();
@@ -276,7 +253,7 @@ pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
     } else {
         // Light logos on a dark tile, dark ones on a light tile.
         let (mut lum, mut weight) = (0f32, 0f32);
-        for i in (0..N * N * 4).step_by(4) {
+        for i in (0..n * n * 4).step_by(4) {
             let a = fitted[i + 3] as f32 / 255.;
             lum += a
                 * (0.2126 * fitted[i] as f32
@@ -294,15 +271,15 @@ pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
             0.8,
         )
     };
-    let mut out = vec![0u8; N * N * 4];
-    let centre = (N as f32 - 1.) / 2.;
-    for y in 0..N {
-        for x in 0..N {
+    let mut out = vec![0u8; n * n * 4];
+    let centre = (n as f32 - 1.) / 2.;
+    for y in 0..n {
+        for x in 0..n {
             // Bilinear sample of the logo shrunk around the centre.
             let sx = centre + (x as f32 - centre) / scale;
             let sy = centre + (y as f32 - centre) / scale;
             let mut px = [0f32; 4];
-            if (0.0..(N - 1) as f32).contains(&sx) && (0.0..(N - 1) as f32).contains(&sy) {
+            if (0.0..(n - 1) as f32).contains(&sx) && (0.0..(n - 1) as f32).contains(&sy) {
                 let (ix, iy) = (sx as usize, sy as usize);
                 let (fx, fy) = (sx - ix as f32, sy - iy as f32);
                 for (dx, dy, w) in [
@@ -311,7 +288,7 @@ pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
                     (0, 1, (1. - fx) * fy),
                     (1, 1, fx * fy),
                 ] {
-                    let i = ((iy + dy) * N + ix + dx) * 4;
+                    let i = ((iy + dy) * n + ix + dx) * 4;
                     let a = fitted[i + 3] as f32;
                     for c in 0..3 {
                         px[c] += w * fitted[i + c] as f32 * a / 255.;
@@ -320,7 +297,7 @@ pub fn logo_tile(fitted: &[u8]) -> Option<Vec<u8>> {
                 }
             }
             let a = px[3] / 255.;
-            let o = (y * N + x) * 4;
+            let o = (y * n + x) * 4;
             for c in 0..3 {
                 out[o + c] = (px[c] + background[c] * (1. - a)).round().clamp(0., 255.) as u8;
             }

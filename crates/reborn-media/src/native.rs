@@ -672,10 +672,13 @@ impl MediaFile {
             metadata: Metadata::from_raw(&meta),
         })
     }
-    pub fn artwork(&mut self) -> Result<Vec<u8>, String> {
-        let mut pixels = vec![0; 160 * 160 * 4];
+    /// The embedded cover, centre-cropped to a `side` x `side` RGBA square.
+    pub fn artwork(&mut self, side: u32) -> Result<Vec<u8>, String> {
+        let side = art_side(side)?;
+        let mut pixels = vec![0; side * side * 4];
         // SAFETY: uniquely borrowed context, side*side*4 writable buffer.
-        let r = unsafe { (self.api.artwork)(self.raw.as_ptr(), pixels.as_mut_ptr(), 160) };
+        let r =
+            unsafe { (self.api.artwork)(self.raw.as_ptr(), pixels.as_mut_ptr(), side as c_int) };
         if r < 0 {
             Err(error(self.api, r))
         } else {
@@ -827,10 +830,12 @@ impl Decoder {
             Ok(())
         }
     }
-    pub fn artwork(&mut self) -> Result<Vec<u8>, String> {
-        let mut b = vec![0; 160 * 160 * 4];
+    /// The embedded cover, centre-cropped to a `side` x `side` RGBA square.
+    pub fn artwork(&mut self, side: u32) -> Result<Vec<u8>, String> {
+        let side = art_side(side)?;
+        let mut b = vec![0; side * side * 4];
         // SAFETY: C receives exactly side*side*4 writable bytes.
-        let r = unsafe { (self.api.artwork)(self.raw.as_ptr(), b.as_mut_ptr(), 160) };
+        let r = unsafe { (self.api.artwork)(self.raw.as_ptr(), b.as_mut_ptr(), side as c_int) };
         if r < 0 {
             Err(error(self.api, r))
         } else {
@@ -838,13 +843,23 @@ impl Decoder {
         }
     }
 }
-pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
+/// Covers are decoded at most this large (the native decoder's bound).
+const ART_SIDE_MAX: u32 = 256;
+fn art_side(side: u32) -> Result<usize, String> {
+    if side == 0 || side > ART_SIDE_MAX {
+        return Err("artwork size".into());
+    }
+    Ok(side as usize)
+}
+/// A cover image file, centre-cropped to a `side` x `side` RGBA square.
+pub fn external_artwork(path: &Path, side: u32) -> Result<Vec<u8>, String> {
     use std::os::unix::ffi::OsStrExt;
+    let side = art_side(side)?;
     let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
     let api = api()?;
-    let mut b = vec![0; 160 * 160 * 4];
+    let mut b = vec![0; side * side * 4];
     // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
-    let r = unsafe { (api.artwork_file)(name.as_ptr(), b.as_mut_ptr(), 160) };
+    let r = unsafe { (api.artwork_file)(name.as_ptr(), b.as_mut_ptr(), side as c_int) };
     if r < 0 {
         Err(error(api, r))
     } else {
@@ -958,10 +973,10 @@ pub fn folder_artwork_candidates(parent: &Path) -> Result<Vec<String>, String> {
     }
     Ok(out)
 }
-pub fn folder_artwork(media: &Path) -> Result<Vec<u8>, String> {
+pub fn folder_artwork(media: &Path, side: u32) -> Result<Vec<u8>, String> {
     let parent = media.parent().ok_or("media has no parent")?;
     for name in folder_artwork_candidates(parent)? {
-        if let Ok(pixels) = external_artwork(&parent.join(name)) {
+        if let Ok(pixels) = external_artwork(&parent.join(name), side) {
             return Ok(pixels);
         }
     }
@@ -1913,7 +1928,7 @@ mod artwork_tests {
                 .join(name);
             let mut d = Decoder::open(&path, 48_000, Cancel::new().unwrap()).unwrap();
             assert!(d.metadata.artwork, "{name}");
-            let pixels = d.artwork().unwrap_or_else(|e| panic!("{name}: {e}"));
+            let pixels = d.artwork(160).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(pixels.len(), 160 * 160 * 4);
             assert!(
                 pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0),
@@ -1932,7 +1947,7 @@ mod artwork_tests {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../assets/fixtures")
                 .join(name);
-            let pixels = external_artwork(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let pixels = external_artwork(&path, 160).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(pixels.len(), 160 * 160 * 4);
             assert!(
                 pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0),
@@ -1960,7 +1975,7 @@ mod artwork_tests {
         {
             let path = root.join(format!("{i}"));
             std::fs::write(&path, bytes).unwrap();
-            assert!(external_artwork(&path).is_err(), "case {i}");
+            assert!(external_artwork(&path, 160).is_err(), "case {i}");
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
         }
         let fifo = root.join("fifo");
@@ -1971,9 +1986,9 @@ mod artwork_tests {
             .success());
         let socket = root.join("socket");
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        assert!(external_artwork(&fifo).is_err());
-        assert!(external_artwork(&socket).is_err());
-        assert!(external_artwork(&root).is_err());
+        assert!(external_artwork(&fifo, 160).is_err());
+        assert!(external_artwork(&socket, 160).is_err());
+        assert!(external_artwork(&root, 160).is_err());
         drop(listener);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2095,16 +2110,16 @@ mod metadata_tests {
             let mut m = MediaFile::open(&path(name), Cancel::new().unwrap()).unwrap();
             assert_eq!(m.metadata.info_runs, 0);
             assert_eq!(m.metadata.title, "日本語 – café");
-            assert!(m.artwork().is_err());
+            assert!(m.artwork(160).is_err());
         }
         // Invalid declared packet sizes are FFmpeg-owned: clean error or usable audio.
         if let Ok(mut m) = MediaFile::open(
             &path("metadata/huge-art-metadata.flac"),
             Cancel::new().unwrap(),
         ) {
-            assert!(m.artwork().is_err());
+            assert!(m.artwork(160).is_err());
         }
-        assert!(external_artwork(&path("metadata/huge.png")).is_err());
+        assert!(external_artwork(&path("metadata/huge.png"), 160).is_err());
         for name in [
             "metadata/art-jpg.flac",
             "metadata/art-png.flac",
@@ -2112,7 +2127,7 @@ mod metadata_tests {
         ] {
             let mut m = MediaFile::open(&path(name), Cancel::new().unwrap()).unwrap();
             assert!(m.metadata.artwork);
-            assert_eq!(m.artwork().unwrap().len(), 160 * 160 * 4);
+            assert_eq!(m.artwork(160).unwrap().len(), 160 * 160 * 4);
         }
     }
     #[test]
@@ -2122,7 +2137,7 @@ mod metadata_tests {
         std::fs::write(root.join("Cover.JPG"), b"corrupt").unwrap();
         std::fs::copy(path("artwork-external.webp"), root.join("Album.WEBP")).unwrap();
         assert_eq!(
-            folder_artwork(&root.join("track.flac")).unwrap().len(),
+            folder_artwork(&root.join("track.flac"), 160).unwrap().len(),
             160 * 160 * 4
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -2148,10 +2163,87 @@ mod metadata_tests {
             assert_eq!(decoder.metadata.duration_ms, 250, "{name}");
         }
     }
+    /// An uncompressed RGB PNG (stored deflate blocks), `f` colouring each pixel.
+    fn png(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> Vec<u8> {
+        fn crc(bytes: &[u8]) -> u32 {
+            let mut c = !0u32;
+            for &b in bytes {
+                c ^= u32::from(b);
+                for _ in 0..8 {
+                    c = if c & 1 == 1 {
+                        0xEDB8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        }
+        let mut raw = vec![];
+        for y in 0..h {
+            raw.push(0);
+            (0..w).for_each(|x| raw.extend(f(x, y)));
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &v in &raw {
+            a = (a + u32::from(v)) % 65521;
+            b = (b + a) % 65521;
+        }
+        let mut z = vec![0x78, 0x01];
+        let chunks: Vec<&[u8]> = raw.chunks(65535).collect();
+        for (i, part) in chunks.iter().enumerate() {
+            let len = part.len() as u16;
+            z.push(u8::from(i + 1 == chunks.len()));
+            z.extend(len.to_le_bytes());
+            z.extend((!len).to_le_bytes());
+            z.extend(*part);
+        }
+        z.extend((b << 16 | a).to_be_bytes());
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = w.to_be_bytes().to_vec();
+        ihdr.extend(h.to_be_bytes());
+        ihdr.extend([8, 2, 0, 0, 0]);
+        for (kind, data) in [(&b"IHDR"[..], ihdr), (b"IDAT", z), (b"IEND", vec![])] {
+            out.extend((data.len() as u32).to_be_bytes());
+            let mut body = kind.to_vec();
+            body.extend(&data);
+            out.extend(&body);
+            out.extend(crc(&body).to_be_bytes());
+        }
+        out
+    }
+    #[test]
+    fn a_wide_or_tall_cover_is_cropped_to_its_centre_not_stretched() {
+        let dir = std::env::temp_dir().join(format!("reborn-art-crop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        // Thirds: red, green, blue across a wide picture, down a tall one.
+        let third = |i: u32| [[220, 0, 0], [0, 200, 0], [0, 0, 220]][(i / 40) as usize];
+        std::fs::write(dir.join("wide.png"), png(120, 40, |x, _| third(x))).unwrap();
+        std::fs::write(dir.join("tall.png"), png(40, 120, |_, y| third(y))).unwrap();
+        for name in ["wide.png", "tall.png"] {
+            let pixels = external_artwork(&dir.join(name), 64).unwrap();
+            assert_eq!(pixels.len(), 64 * 64 * 4);
+            for p in pixels.as_chunks::<4>().0 {
+                assert!(
+                    p[1] > 190 && p[0] < 12 && p[2] < 12,
+                    "{name}: {p:?} outside the centre"
+                );
+            }
+        }
+        // The same picture at two sizes: the size is the caller's.
+        assert_eq!(
+            external_artwork(&dir.join("wide.png"), 180).unwrap().len(),
+            180 * 180 * 4
+        );
+        assert!(external_artwork(&dir.join("wide.png"), 0).is_err());
+        assert!(external_artwork(&dir.join("wide.png"), 257).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn large_jpeg_is_downscaled_and_small_jpeg_remains_usable() {
         for name in ["metadata/large.jpg", "artwork-external.jpg"] {
-            let pixels = external_artwork(&path(name)).unwrap();
+            let pixels = external_artwork(&path(name), 160).unwrap();
             assert_eq!(pixels.len(), 160 * 160 * 4);
             assert!(pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
             assert!(pixels.iter().any(|&v| v > 0));
@@ -2178,7 +2270,7 @@ mod metadata_tests {
                 if let Ok(mut media) = MediaFile::open(&file, Cancel::new().unwrap()) {
                     assert!((8000..=384000).contains(&media.metadata.sample_rate));
                     if media.metadata.artwork {
-                        let _ = media.artwork();
+                        let _ = media.artwork(160);
                     }
                 }
             }

@@ -79,11 +79,12 @@ int main(int argc, char **argv) {
         rb_graphics_quad_warp(g, c, colors, tex, sx, sy, sw, sh);
       }
     } else if (line[0] == 'C') {
+      int w, h;
       char file[400];
-      if (sscanf(line + 1, "%399s", file) == 1) {
+      if (sscanf(line + 1, "%d %d %399s", &w, &h, file) == 3) {
         size_t size;
         uint8_t *art = slurp(file, &size);
-        if (rb_graphics_art(g, art, 1) < 0) return 8;
+        if (size != (size_t)w * h * 4 || rb_graphics_art(g, art, w, h, 1) < 0) return 8;
         free(art);
       }
     } else if (line[0] == 'T') {
@@ -105,11 +106,12 @@ int main(int argc, char **argv) {
         free(page);
       }
     } else if (line[0] == 'A') {
+      int w, h;
       char file[400];
-      if (sscanf(line + 1, "%399s", file) == 1) {
+      if (sscanf(line + 1, "%d %d %399s", &w, &h, file) == 3) {
         size_t size;
         uint8_t *art = slurp(file, &size);
-        if (rb_graphics_art(g, art, 0) < 0) return 8;
+        if (size != (size_t)w * h * 4 || rb_graphics_art(g, art, w, h, 0) < 0) return 8;
         free(art);
       }
     }

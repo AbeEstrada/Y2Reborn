@@ -230,9 +230,13 @@ static GLuint texture(int w, int h, const uint8_t *p) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   return t;
 }
-/* Thumbnail atlas geometry; keep in step with reborn-graphics/src/lib.rs. */
-#define RB_THUMB_W 1024
-#define RB_THUMB_H 512
+/* Thumbnail atlas geometry; keep in step with reborn-graphics/src/lib.rs. A
+ * cell is a 128x128 thumbnail with its 64 and 32 copies, each with a
+ * replicated one-texel gutter (level_cell). */
+#define RB_THUMB_W 2048
+#define RB_THUMB_H 1024
+#define RB_THUMB_CELL_W 196
+#define RB_THUMB_CELL_H 130
 /* Coverage masks (glyph pages, shapes, icons) arrive as one byte per texel and
  * are sampled as luminance-alpha (1,1,1,a): the unchanged fragment program then
  * tints them exactly like the former RGBA atlases at half the video memory. */
@@ -516,12 +520,14 @@ void rb_graphics_begin(RbGraphics *g) {
 /* `tex` selects the texture (0 white, 1..3 glyph pages, 4 masks, 5 artwork,
  * 6 collection artwork, 7 thumbnails, 8 skin atlas, 9 runtime glyph page);
  * (sx, sy, sw, sh) is the source rectangle
- * in texels of a mask/glyph/thumbnail texture and is ignored otherwise. */
+ * in texels of a mask/glyph/thumbnail texture, and of an artwork texture
+ * unless empty (the whole texture). Ignored for 0 (white). */
 /* Texture-space source rectangle (u, v, uw, vh) for `tex`. */
 static void source_uv(RbGraphics *g, int tex, int sx, int sy, int sw, int sh,
                       float uv[4]) {
   uv[0] = 0; uv[1] = 0; uv[2] = 1; uv[3] = 1;
-  if ((tex >= 1 && tex <= 4) || tex >= 7) {
+  if ((tex >= 1 && tex <= 4) || tex >= 7 ||
+      ((tex == 5 || tex == 6) && sw > 0 && sh > 0)) {
     uv[0] = (float)sx / g->tex_w[tex];
     uv[1] = (float)sy / g->tex_h[tex];
     uv[2] = (float)sw / g->tex_w[tex];
@@ -607,23 +613,35 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
     put_vertex(g, k[0], k[1], k[2], k[3], 1, color);
   }
 }
-/* Upload one 98x98 RGBA thumbnail cell (a 96x96 image with a replicated
- * one-pixel gutter) at atlas cell (cx, cy). */
+/* Upload one RB_THUMB_CELL_W x RB_THUMB_CELL_H RGBA thumbnail cell at atlas
+ * cell (cx, cy). */
 int rb_graphics_thumb(RbGraphics *g, int cx, int cy, const uint8_t *rgba) {
-  if (cx < 0 || cy < 0 || (cx + 1) * 98 > RB_THUMB_W ||
-      (cy + 1) * 98 > RB_THUMB_H)
+  if (cx < 0 || cy < 0 || (cx + 1) * RB_THUMB_CELL_W > RB_THUMB_W ||
+      (cy + 1) * RB_THUMB_CELL_H > RB_THUMB_H)
     return -EINVAL;
   glBindTexture(GL_TEXTURE_2D, g->tex[7]);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-  glTexSubImage2D(GL_TEXTURE_2D, 0, cx * 98, cy * 98, 98, 98, GL_RGBA,
-                  GL_UNSIGNED_BYTE, rgba);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, cx * RB_THUMB_CELL_W, cy * RB_THUMB_CELL_H,
+                  RB_THUMB_CELL_W, RB_THUMB_CELL_H, GL_RGBA, GL_UNSIGNED_BYTE,
+                  rgba);
   return glGetError() == GL_NO_ERROR ? 0 : -EIO;
 }
-int rb_graphics_art(RbGraphics *g, const uint8_t *p, int collection) {
-  glBindTexture(GL_TEXTURE_2D, collection ? g->tex[6] : g->tex[5]);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 160, 160, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, p);
-  return glGetError() == GL_NO_ERROR ? 0 : -EIO;
+/* Replace the (collection) artwork: a w x h RGBA block holding the cover and
+ * its smaller copies; quads address it in texels. */
+int rb_graphics_art(RbGraphics *g, const uint8_t *p, int w, int h,
+                    int collection) {
+  if (!p || w < 1 || h < 1 || w > 512 || h > 512)
+    return -EINVAL;
+  int tex = collection ? 6 : 5;
+  glBindTexture(GL_TEXTURE_2D, g->tex[tex]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               p);
+  if (glGetError() != GL_NO_ERROR)
+    return -EIO;
+  g->tex_w[tex] = w;
+  g->tex_h[tex] = h;
+  return 0;
 }
 /* Replace the skin atlas (w x h RGBA, at most RB_SKIN_MAX square); a 1x1
  * upload releases the previous atlas's video memory. */

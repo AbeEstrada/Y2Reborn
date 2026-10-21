@@ -1,7 +1,7 @@
 //! Library thumbnails: bounded background decoding with an on-disk cache.
 //! Native decoding never runs on the UI thread.
 use reborn_core::Track;
-use reborn_graphics::THUMB_SIZE;
+use reborn_graphics::{ART_SIZE, THUMB_SIZE};
 use reborn_media::{external_artwork, folder_artwork_candidates, Cancel, MediaFile};
 use reborn_observability::isolated;
 use reborn_platform::storage::{pin_track, PinnedTrack};
@@ -42,11 +42,11 @@ impl Key {
     fn revision(&self) -> (u64, i64) {
         (self.size, self.mtime)
     }
-    /// The cover as 160x160 RGBA, if the file is still the one this key names.
-    pub fn load_cover(&self, cancel: &Cancel) -> Option<Vec<u8>> {
+    /// The cover as `side` x `side` RGBA, if the file is still the one this key names.
+    pub fn load_cover(&self, side: usize, cancel: &Cancel) -> Option<Vec<u8>> {
         let source = self.pin()?;
-        let (pixels, _) = load(self, &source, cancel);
-        let pixels = pixels.filter(|v| v.len() == 160 * 160 * 4)?;
+        let (pixels, _) = load(self, &source, side, cancel);
+        let pixels = pixels.filter(|v| v.len() == side * side * 4)?;
         source.is_current().then_some(pixels)
     }
     fn pin(&self) -> Option<Arc<PinnedTrack>> {
@@ -75,15 +75,15 @@ impl From<Key> for Art {
     }
 }
 impl Art {
-    /// The picture as a 160x160 RGBA square: a cover, or a logo on its tile.
-    fn load(&self, cancel: &Cancel) -> Option<Vec<u8>> {
+    /// The picture as a `side` x `side` RGBA square: a cover, or a logo on its tile.
+    fn load(&self, side: usize, cancel: &Cancel) -> Option<Vec<u8>> {
         match self {
-            Self::Track(key) => key.load_cover(cancel),
+            Self::Track(key) => key.load_cover(side, cancel),
             Self::Logo(path) => {
                 let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
                     reborn_platform::workload::Class::ArtworkDecode,
                 );
-                reborn_media::logo_image(path, 160)
+                reborn_media::logo_image(path, side as u32)
                     .ok()
                     .and_then(|fitted| reborn_ui::art::logo_tile(&fitted))
             }
@@ -117,10 +117,10 @@ pub struct Job {
 }
 pub struct Reply {
     pub thumb: u64,
-    /// A full-resolution (160x160) cover for Cover Flow's centre, not a thumbnail.
+    /// A full-resolution (`ART_SIZE`) cover for Cover Flow's centre, not a thumbnail.
     #[allow(dead_code)]
     pub full: bool,
-    /// 96x96 RGBA with rounded corners, or `None` when the track has no cover.
+    /// `THUMB_SIZE` RGBA with rounded corners, or `None` when the track has no cover.
     pub rgba: Option<Vec<u8>>,
     pub decode_ms: f64,
     pub cache_hit: bool,
@@ -140,8 +140,14 @@ struct Shared {
     /// hold their pixels in memory.
     unread: HashMap<(u64, bool), u32>,
 }
-/// Cached thumbnails are at most this many files (about 55 MB).
-const CACHE_LIMIT: usize = 1500;
+/// Cached thumbnails are at most this many files, one per album (about 72 MB):
+/// a 30 000-song library has about 2 500 albums.
+const CACHE_LIMIT: usize = 3000;
+/// When the cache is full, this many of the least recently shown thumbnails
+/// make room, so the albums someone browses stay cached.
+const CACHE_EVICT: usize = CACHE_LIMIT / 10;
+/// A shown thumbnail's file is marked recent (one inode write) at most this often.
+const TOUCH_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
 pub struct Worker {
     shared: Arc<(Mutex<Shared>, Condvar)>,
@@ -254,16 +260,118 @@ impl Drop for Worker {
     }
 }
 
-/// 31: folder covers now win over embedded pictures, so thumbnails made under
-/// the old order ("thumb-") are rebuilt once and the old files removed.
-const THUMB_PREFIX: &str = "thumb2-";
-const LEGACY_THUMB_PREFIX: &str = "thumb-";
+/// 31: folder covers won over embedded pictures ("thumb-" files rebuilt).
+/// Beta 8.18: thumbnails are 128x128, decoded straight from the picture and
+/// cached as 4:2:0 YCbCr (corners are rounded after reading); older files are
+/// rebuilt once and removed.
+const THUMB_PREFIX: &str = "thumb3-";
+const LEGACY_THUMB_PREFIXES: [&str; 2] = ["thumb-", "thumb2-"];
+const CACHED_BYTES: usize = THUMB_SIZE * THUMB_SIZE * 3 / 2;
 fn cache_path(job: &Job) -> PathBuf {
     let (size, mtime) = job.art.revision();
     job.cache.join(format!(
-        "{THUMB_PREFIX}{:016x}-{mtime:x}-{size:x}.t96",
+        "{THUMB_PREFIX}{:016x}-{mtime:x}-{size:x}.t128",
         job.thumb
     ))
+}
+/// A `THUMB_SIZE` cover as JPEG's 4:2:0 YCbCr (BT.601, full range): luma per
+/// texel, then Cb and Cr per 2x2 block. Half the bytes of RGB; at thumbnail
+/// size the shared colour is not visible.
+fn encode_420(rgba: &[u8]) -> Vec<u8> {
+    const N: usize = THUMB_SIZE;
+    let rgb = |x: usize, y: usize| {
+        let i = (y * N + x) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]].map(f32::from)
+    };
+    let byte = |v: f32| v.round().clamp(0., 255.) as u8;
+    let mut out = Vec::with_capacity(CACHED_BYTES);
+    for y in 0..N {
+        for x in 0..N {
+            let [r, g, b] = rgb(x, y);
+            out.push(byte(0.299 * r + 0.587 * g + 0.114 * b));
+        }
+    }
+    let (mut cb, mut cr) = (vec![], vec![]);
+    for y in (0..N).step_by(2) {
+        for x in (0..N).step_by(2) {
+            let mut m = [0f32; 3];
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let p = rgb(x + dx, y + dy);
+                (0..3).for_each(|c| m[c] += p[c] / 4.);
+            }
+            let [r, g, b] = m;
+            cb.push(byte(128. - 0.168_736 * r - 0.331_264 * g + 0.5 * b));
+            cr.push(byte(128. + 0.5 * r - 0.418_688 * g - 0.081_312 * b));
+        }
+    }
+    out.extend(cb);
+    out.extend(cr);
+    out
+}
+/// Opaque RGBA from `encode_420`, chroma interpolated between block centres.
+fn decode_420(bytes: &[u8]) -> Vec<u8> {
+    const N: usize = THUMB_SIZE;
+    const H: usize = N / 2;
+    let (luma, chroma) = bytes.split_at(N * N);
+    let (cb, cr) = chroma.split_at(H * H);
+    let sample = |plane: &[u8], x: usize, y: usize| {
+        // Block centres sit at texel 2i + 0.5.
+        let fx = ((x as f32 - 0.5) / 2.).clamp(0., (H - 1) as f32);
+        let fy = ((y as f32 - 0.5) / 2.).clamp(0., (H - 1) as f32);
+        let (x0, y0) = (fx as usize, fy as usize);
+        let (x1, y1) = ((x0 + 1).min(H - 1), (y0 + 1).min(H - 1));
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let at = |x: usize, y: usize| f32::from(plane[y * H + x]);
+        let top = at(x0, y0) * (1. - tx) + at(x1, y0) * tx;
+        let bottom = at(x0, y1) * (1. - tx) + at(x1, y1) * tx;
+        top * (1. - ty) + bottom * ty - 128.
+    };
+    let byte = |v: f32| v.round().clamp(0., 255.) as u8;
+    let mut out = Vec::with_capacity(N * N * 4);
+    for y in 0..N {
+        for x in 0..N {
+            let l = f32::from(luma[y * N + x]);
+            let (b, r) = (sample(cb, x, y), sample(cr, x, y));
+            out.extend([
+                byte(l + 1.402 * r),
+                byte(l - 0.344_136 * b - 0.714_136 * r),
+                byte(l + 1.772 * b),
+                255,
+            ]);
+        }
+    }
+    out
+}
+/// Remove the `count` least recently shown thumbnails; how many went.
+fn evict(dir: &Path, count: usize) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(THUMB_PREFIX))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .take(count)
+        .filter(|(_, path)| std::fs::remove_file(path).is_ok())
+        .count()
+}
+/// Mark a cached thumbnail as shown now, unless it was marked recently.
+fn touch(path: &Path) {
+    let now = std::time::SystemTime::now();
+    let Ok(file) = std::fs::File::options().write(true).open(path) else {
+        return;
+    };
+    let stale = file
+        .metadata()
+        .and_then(|m| m.modified())
+        .is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age > TOUCH_AFTER));
+    if stale {
+        let _ = file.set_modified(now);
+    }
 }
 
 fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
@@ -302,7 +410,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
                         .filter(|e| {
                             let name = e.file_name();
                             let name = name.to_string_lossy();
-                            if name.starts_with(LEGACY_THUMB_PREFIX) {
+                            if LEGACY_THUMB_PREFIXES.iter().any(|p| name.starts_with(p)) {
                                 let _ = std::fs::remove_file(e.path());
                                 return false;
                             }
@@ -316,7 +424,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         if full {
             let rgba = Cancel::new()
                 .ok()
-                .and_then(|cancel| isolated(|| job.art.load(&cancel)).ok().flatten());
+                .and_then(|cancel| isolated(|| job.art.load(ART_SIZE, &cancel)).ok().flatten());
             if let Ok(mut guard) = lock.lock() {
                 guard.current = None;
                 *guard.unread.entry((job.thumb, true)).or_insert(0) += 1;
@@ -336,25 +444,28 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
         let path = cache_path(&job);
         let hit = std::fs::read(&path)
             .ok()
-            .filter(|bytes| bytes.len() == THUMB_SIZE * THUMB_SIZE * 4);
+            .filter(|bytes| bytes.len() == CACHED_BYTES);
         let (rgba, cache_hit) = match hit {
-            Some(bytes) => (Some(bytes), true),
+            Some(bytes) => {
+                touch(&path);
+                (reborn_ui::art::thumbnail(&decode_420(&bytes)), true)
+            }
             None => {
                 let cancel = Cancel::new().ok();
                 // A bug on one odd picture costs its cover, not the player.
-                let rgba = cancel.and_then(|cancel| {
-                    isolated(|| {
-                        job.art
-                            .load(&cancel)
-                            .and_then(|cover| reborn_ui::art::thumbnail(&cover))
-                    })
-                    .ok()
-                    .flatten()
+                let cover = cancel.and_then(|cancel| {
+                    isolated(|| job.art.load(THUMB_SIZE, &cancel))
+                        .ok()
+                        .flatten()
                 });
-                if let Some(bytes) = &rgba {
+                let rgba = cover.as_deref().and_then(reborn_ui::art::thumbnail);
+                if let (Some(cover), Some(_)) = (&cover, &rgba) {
+                    if cached >= CACHE_LIMIT {
+                        cached -= evict(&job.cache, CACHE_EVICT).min(cached);
+                    }
                     if cached < CACHE_LIMIT {
                         let temp = path.with_extension("tmp");
-                        if std::fs::write(&temp, bytes).is_ok()
+                        if std::fs::write(&temp, encode_420(cover)).is_ok()
                             && std::fs::rename(&temp, &path).is_ok()
                         {
                             cached += 1;
@@ -383,7 +494,7 @@ fn run(shared: &(Mutex<Shared>, Condvar), tx: &Sender<Reply>) {
     }
 }
 
-fn load(key: &Key, source: &PinnedTrack, cancel: &Cancel) -> (Option<Vec<u8>>, bool) {
+fn load(key: &Key, source: &PinnedTrack, side: usize, cancel: &Cancel) -> (Option<Vec<u8>>, bool) {
     let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::ArtworkDecode,
     );
@@ -394,14 +505,14 @@ fn load(key: &Key, source: &PinnedTrack, cancel: &Cancel) -> (Option<Vec<u8>>, b
             break;
         }
         if let Ok(file) = source.open_sidecar(&name) {
-            if let Ok(pixels) = external_artwork(file.path()) {
+            if let Ok(pixels) = external_artwork(file.path(), side as u32) {
                 return (Some(pixels), false);
             }
         }
     }
     if key.embedded && !cancel.is_cancelled() {
         if let Ok(mut media) = MediaFile::open(source.path(), cancel.clone()) {
-            if let Ok(pixels) = media.artwork() {
+            if let Ok(pixels) = media.artwork(side as u32) {
                 return (Some(pixels), true);
             }
         }
@@ -495,16 +606,28 @@ mod tests {
         let track = fixture_track(&root, "song.flac", 1, true);
         // A thumbnail made under the old embedded-first order is discarded.
         std::fs::write(root.join("cache/thumb-0000000000000007-1-1.t96"), b"old").unwrap();
+        // So is a 96x96 one from before Beta 8.18.
+        std::fs::write(root.join("cache/thumb2-0000000000000007-1-1.t96"), b"old").unwrap();
         let mut worker = Worker::spawn().unwrap();
         let first = reply(&mut worker, job(&root, &track, 7));
         assert!(!root.join("cache/thumb-0000000000000007-1-1.t96").exists());
+        assert!(!root.join("cache/thumb2-0000000000000007-1-1.t96").exists());
+        let cached: Vec<_> = std::fs::read_dir(root.join("cache"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| std::fs::metadata(e.path()).unwrap().len())
+            .collect();
+        assert_eq!(cached, [CACHED_BYTES as u64], "one 4:2:0 file");
         let rgba = first.rgba.expect("embedded cover decodes");
         assert_eq!(rgba.len(), THUMB_SIZE * THUMB_SIZE * 4);
         assert_eq!(rgba[3], 0, "rounded corner is transparent");
         assert!(!first.cache_hit);
         let again = reply(&mut worker, job(&root, &track, 7));
         assert!(again.cache_hit);
-        assert_eq!(again.rgba.unwrap(), rgba);
+        let again = again.rgba.unwrap();
+        assert_eq!(again.len(), rgba.len());
+        let worst = again.iter().zip(&rgba).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(3), "4:2:0 keeps the cover: {worst:?}");
         let open_pins = std::fs::read_dir("/proc/self/fd")
             .unwrap()
             .filter_map(Result::ok)
@@ -555,7 +678,7 @@ mod tests {
             .set_times(std::fs::FileTimes::new().set_modified(modified))
             .unwrap();
         assert!(!source.is_current());
-        assert!(key.load_cover(&Cancel::new().unwrap()).is_none());
+        assert!(key.load_cover(ART_SIZE, &Cancel::new().unwrap()).is_none());
         drop(worker);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -579,14 +702,20 @@ mod tests {
         )
         .unwrap();
         let key = Key::new(&fixture_track(&root, "song.flac", 1, false), None, &root);
-        let old = key.load_cover(&Cancel::new().unwrap()).unwrap();
-        assert_eq!(old, external_artwork(&root.join("FoLdEr.PNG")).unwrap());
+        let old = key.load_cover(ART_SIZE, &Cancel::new().unwrap()).unwrap();
+        assert_eq!(
+            old,
+            external_artwork(&root.join("FoLdEr.PNG"), ART_SIZE as u32).unwrap()
+        );
         let cancel = Cancel::new().unwrap();
         cancel.cancel();
         assert!(cancel.is_cancelled());
-        assert_eq!(load(&key, &key.pin().unwrap(), &cancel), (None, false));
+        assert_eq!(
+            load(&key, &key.pin().unwrap(), ART_SIZE, &cancel),
+            (None, false)
+        );
         std::fs::remove_file(root.join("FoLdEr.PNG")).unwrap();
-        assert!(key.load_cover(&Cancel::new().unwrap()).is_none());
+        assert!(key.load_cover(ART_SIZE, &Cancel::new().unwrap()).is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -605,24 +734,99 @@ mod tests {
         ];
         std::fs::write(root.join("cover.png"), RED).unwrap();
         let key = Key::new(&fixture_track(&root, "song.flac", 1, true), None, &root);
-        let folder = key.load_cover(&Cancel::new().unwrap()).unwrap();
-        assert_eq!(folder, external_artwork(&root.join("cover.png")).unwrap());
+        let folder = key.load_cover(ART_SIZE, &Cancel::new().unwrap()).unwrap();
+        assert_eq!(
+            folder,
+            external_artwork(&root.join("cover.png"), ART_SIZE as u32).unwrap()
+        );
         let embedded = MediaFile::open(&root.join("song.flac"), Cancel::new().unwrap())
             .unwrap()
-            .artwork()
+            .artwork(ART_SIZE as u32)
             .unwrap();
         assert_ne!(
             folder, embedded,
             "fixtures must differ for this test to mean anything"
         );
         std::fs::remove_file(root.join("cover.png")).unwrap();
-        assert_eq!(key.load_cover(&Cancel::new().unwrap()).unwrap(), embedded);
+        assert_eq!(
+            key.load_cover(ART_SIZE, &Cancel::new().unwrap()).unwrap(),
+            embedded
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cached_thumbnails_keep_their_colours_in_half_the_bytes() {
+        let n = THUMB_SIZE;
+        // A smooth gradient and a flat colour block, as covers mostly are.
+        let cover: Vec<u8> = (0..n * n)
+            .flat_map(|i| {
+                let (x, y) = (i % n, i / n);
+                if x < n / 2 {
+                    [(x * 4) as u8, (y * 2) as u8, 160, 255]
+                } else {
+                    [30, 140, 200, 255]
+                }
+            })
+            .collect();
+        let bytes = encode_420(&cover);
+        assert_eq!(bytes.len(), CACHED_BYTES);
+        assert_eq!(CACHED_BYTES * 2, n * n * 3);
+        let back = decode_420(&bytes);
+        assert_eq!(back.len(), cover.len());
+        let worst = cover
+            .iter()
+            .zip(&back)
+            .enumerate()
+            // Away from the one hard colour edge in the middle.
+            .filter(|(i, _)| (i / 4 % n).abs_diff(n / 2) > 2)
+            .map(|(_, (a, b))| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 3, "largest channel error {worst}");
+        assert!(back.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+    }
+    #[test]
+    fn a_full_cache_drops_the_least_recently_shown_thumbnails() {
+        let root = std::env::temp_dir().join(format!("reborn-thumbs-lru-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
+        for i in 0..5u64 {
+            let path = root.join(format!("{THUMB_PREFIX}{i:016x}-1-1.t128"));
+            std::fs::write(&path, b"x").unwrap();
+            let when = old + std::time::Duration::from_secs(i * 3600);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        }
+        std::fs::write(root.join("other.rgba"), b"not a thumbnail").unwrap();
+        // Showing the oldest one makes it recent.
+        touch(&root.join(format!("{THUMB_PREFIX}{:016x}-1-1.t128", 0)));
+        assert_eq!(evict(&root, 2), 2);
+        let mut left: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "other.rgba".to_string(),
+                format!("{THUMB_PREFIX}{:016x}-1-1.t128", 0),
+                format!("{THUMB_PREFIX}{:016x}-1-1.t128", 3),
+                format!("{THUMB_PREFIX}{:016x}-1-1.t128", 4),
+            ]
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
     /// Real logos end to end (needs the internet):
     /// `REBORN_LOGO_OUT=dir cargo test -p reborn -- --ignored live_logos`
-    /// writes each 160x160 tile as raw RGBA next to a list of the stations.
+    /// writes each `ART_SIZE` tile as raw RGBA next to a list of the stations.
     #[test]
     #[ignore]
     fn live_logos_download_decode_and_tile() {
@@ -645,7 +849,7 @@ mod tests {
                 names.push_str(&format!("{key:016x}\tno logo\t{}\n", s.name));
                 continue;
             };
-            let tile = Art::Logo(file).load(&Cancel::new().unwrap());
+            let tile = Art::Logo(file).load(ART_SIZE, &Cancel::new().unwrap());
             if let Some(tile) = &tile {
                 tiles += 1;
                 std::fs::write(out.join(format!("{key:016x}.rgba")), tile).unwrap();
