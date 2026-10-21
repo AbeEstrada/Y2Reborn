@@ -634,6 +634,12 @@ fn modal(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
 
 /// For a song's options sheet: the song's title and artist.
 pub(crate) fn context_song(ui: &Ui, m: &AppModel, tracks: &[Track]) -> (Option<String>, String) {
+    // A book playing: its title and author, not the file's tags.
+    if m.screen == Screen::NowPlaying {
+        if let Some((book, _)) = m.book_part() {
+            return (Some(book.title.clone()), book.author.clone());
+        }
+    }
     let song = if m.screen == Screen::NowPlaying {
         m.current()
     } else {

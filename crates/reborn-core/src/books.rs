@@ -472,6 +472,19 @@ impl Shelf {
     ) {
         let old = self.find(book, tracks).map(|(k, _)| k.to_owned());
         let started = part > 0 || position_ms >= 10_000;
+        // Saving a place that did not move (a pause, a shutdown) keeps the
+        // time it was last listened at: the rewind and the order follow it.
+        let kept_time = old
+            .as_ref()
+            .and_then(|k| self.books.get(k))
+            .filter(|p| {
+                book.parts
+                    .get(part)
+                    .is_some_and(|&i| tracks[i].path == p.part_path)
+                    && p.position_ms == position_ms
+                    && (p.speed - speed).abs() < 0.001
+            })
+            .map(|p| p.updated);
         let finished = old
             .as_ref()
             .and_then(|k| self.books.get(k))
@@ -493,7 +506,7 @@ impl Shelf {
                 part_name: t.filename.clone(),
                 part_size: t.size,
                 position_ms,
-                updated: now,
+                updated: kept_time.unwrap_or(now),
                 finished,
                 speed,
             },
@@ -797,6 +810,9 @@ mod tests {
         shelf.record(&book, &tracks, 0, 4_000, 1.0, 1_000);
         assert!(shelf.books.is_empty(), "the first seconds are no place");
         shelf.record(&book, &tracks, 1, 40_000, 1.25, 1_000);
+        // Saved again unmoved (a shutdown while paused): the time stays.
+        shelf.record(&book, &tracks, 1, 40_000, 1.25, 1_900);
+        assert_eq!(shelf.books[&book.key].updated, 1_000);
         assert_eq!(shelf.resume(&book, &tracks, 1_060), (1, 35_000), "5 s back");
         assert_eq!(shelf.resume(&book, &tracks, 1_000 + 3_600), (1, 25_000));
         assert_eq!(shelf.resume(&book, &tracks, 1_000 + 200_000), (1, 10_000));

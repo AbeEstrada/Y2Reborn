@@ -213,7 +213,18 @@ pub(crate) fn book_page(
         cover_rounded(c, ui, art, 24., 44., 104., 9.);
         c.text_mid(144., 72., 316., &book.title, Face::S25, color::TEXT);
         c.text_mid(144., 98., 310., &book.author, Face::R15, color::TEXT);
-        let mut line = status(m, tracks, &book);
+        // The author stands above: a new book's line is its length alone.
+        let mut line = match place(m, tracks, &book) {
+            None if !finished(m, tracks, &book) => {
+                let parts = components::count(l.chapters.len(), "chapter", "chapters");
+                if book.duration_ms > 0 {
+                    format!("{} · {parts}", length(book.duration_ms))
+                } else {
+                    parts
+                }
+            }
+            _ => status(m, tracks, &book),
+        };
         if let Some((done, total)) = place(m, tracks, &book)
             .and_then(|(part, pos)| l.progress(part, pos))
             .filter(|(d, t)| *t > *d)
