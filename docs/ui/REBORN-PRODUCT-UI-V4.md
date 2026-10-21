@@ -268,3 +268,29 @@ Everything here is released (Beta 7 to 7.6) and checked on the host (previews, t
 device only the motion frame rate is measured (Beta 7.3: 62 fps median). Hold-menu
 discoverability without hints, the fixed accent, the Beta 7.5 status bar and the Beta 7.6
 update screens on the panel need the device walk-through in phase 4.
+
+## Customize and Wrap Around (Beta 8.18)
+
+Settings gains a ninth place, **Customize** (how Reborn behaves; Display keeps how the
+screen looks): **Wrap Around**, **Home Menu** and **Album View**, the last two moved from
+Display. The Settings root shrinks its rows (44 px down to 34 px for nine) so every place
+stays in view.
+
+Wrap Around (`Settings::wrap_around`, `reborn_core::WrapAround`) continues a list at the
+other end: past the last row to the first, before the first to the last. One press on the
+row steps Off → Menus → Everywhere. **Menus** (the default) covers Home, Music, Settings and
+its pages, and the hold and context menus; **Everywhere** adds the long lists
+(`Ui::is_long_list`: the library catalogs, Queue, Playlists, a playlist, Stations, Time
+Zone). All of it lives in `Ui::move_focus`, the one place every list moves.
+
+- Only a single step taken at an end wraps; an accelerated wheel step stops at the end.
+- A list of 40 rows or more (`ACCELERATED_LIST_MINIMUM`) also needs the wheel to rest at the
+  end for `WRAP_REST` (350 ms), so a fast spin through a long library stops at the last song
+  and one more deliberate detent goes to the top.
+- A scale never wraps (an equalizer band's dB picker); Now Playing's wheel stays volume, and
+  the keyboard keeps its own grid.
+- A wrapped jump snaps instead of animating across the list (the motion layer already
+  shortens long jumps).
+
+Previews: `20b-settings-last`, `51c-customize`, `51d-customize-everywhere`. On the player,
+the feel of the 350 ms rest and of the default still need checking.

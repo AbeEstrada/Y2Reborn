@@ -95,7 +95,7 @@ fn music(ui: &Ui, tracks: &[Track]) -> Vec<Item> {
     ]
 }
 
-/// Display's Home Menu value: "Standard", or the pinned lists.
+/// Customize's Home Menu value: "Standard", or the pinned lists.
 fn home_summary(m: &AppModel) -> String {
     let pinned: Vec<&str> = HOME_PINNABLE
         .iter()
@@ -186,14 +186,18 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 )
                 .with_kind(RowKind::Chevron),
             );
-            rows.push(row("Album View", "album_view", m.settings.album_view.label()));
-            rows.push(row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron));
             rows.push(
                 row("Time Zone", "time_zone", crate::time_zone::summary(m))
                     .with_kind(RowKind::Chevron),
             );
             Page::rows(rows)
         }
+        // Beta 8.18: how Reborn behaves, apart from how the screen looks.
+        Screen::Customize => Page::rows(vec![
+            row("Wrap Around", "wrap_around", m.settings.wrap_around.label()),
+            row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
+            row("Album View", "album_view", m.settings.album_view.label()),
+        ]),
         Screen::TimeZone => Page::rows(crate::time_zone::rows(ui, m)),
         Screen::SettingsSystem => system(ui, m),
         Screen::Battery => battery(m),
@@ -262,6 +266,12 @@ fn settings(ui: &Ui, m: &AppModel) -> Page {
             "Skin",
             "theme",
             ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
+        )
+        .with_kind(RowKind::Chevron),
+        row(
+            "Customize",
+            "customize",
+            format!("Wrap: {}", m.settings.wrap_around.label()),
         )
         .with_kind(RowKind::Chevron),
         row("Storage", "storage", storage).with_kind(RowKind::Chevron),

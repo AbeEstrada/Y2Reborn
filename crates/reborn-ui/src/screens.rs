@@ -79,6 +79,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::TimeZone
         | Screen::HomeMenu
         | Screen::SettingsDisplay
+        | Screen::Customize
         | Screen::Storage
         | Screen::LastFm
         | Screen::ErrorReports
@@ -133,6 +134,7 @@ fn native_screen(
         | Screen::TimeZone
         | Screen::HomeMenu
         | Screen::SettingsDisplay
+        | Screen::Customize
         | Screen::Storage
         | Screen::LastFm
         | Screen::ErrorReports
@@ -204,6 +206,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::HomeMenu => keys!("home_menu"),
         Screen::SettingsLibrary => keys!("library"),
         Screen::SettingsDisplay => keys!("display"),
+        Screen::Customize => keys!("customize"),
         Screen::SettingsSystem => keys!("service"),
         Screen::Battery => keys!("battery"),
         Screen::Sleep => keys!("sleep"),
@@ -708,6 +711,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
+        Screen::Customize => "Customize".into(),
         Screen::SettingsSystem => "Service".into(),
         Screen::Battery => "Battery".into(),
         Screen::Sleep => "Sleep".into(),

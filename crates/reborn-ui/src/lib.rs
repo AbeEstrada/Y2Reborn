@@ -38,7 +38,7 @@ mod views_system;
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
     Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal, NavigationFrame,
-    PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, Track,
+    PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, Track, WrapAround,
 };
 use reborn_graphics::Quad;
 use std::{
@@ -368,6 +368,9 @@ pub struct Ui {
     pub power_hold: Option<Instant>,
     /// Fast list scrolling shows the current letter until this moment.
     pub fast_scroll_until: Option<Instant>,
+    /// The last wheel or arrow step in a list, even one held at its end: a
+    /// long list wraps around only after the wheel rested there (`WRAP_REST`).
+    last_step: Option<Instant>,
     /// Taps on the version row; the service menu opens after a deliberate run.
     version_taps: u8,
     resident: HashSet<u64>,
@@ -456,6 +459,10 @@ pub enum Alert {
 
 /// Library lists at least this long may use cadence-based wheel acceleration.
 const ACCELERATED_LIST_MINIMUM: usize = 40;
+/// A list longer than this that reaches an end stops there; one more step
+/// after the wheel rested this long continues at the other end, so a fast
+/// spin through a long library never flies past its end.
+const WRAP_REST: Duration = Duration::from_millis(350);
 /// Volume change per wheel detent on Now Playing.
 const WHEEL_VOLUME_STEP: i8 = 2;
 /// Taps on the version row that open the service menu.
@@ -1103,6 +1110,20 @@ impl Ui {
             self.rows(m, tracks).len()
         }
     }
+    /// Lists that wrap around only when Wrap Around is Everywhere: the
+    /// library, the queue, playlists, stations and the time zones.
+    fn is_long_list(s: Screen) -> bool {
+        Self::is_catalog(s)
+            || matches!(
+                s,
+                Screen::Queue
+                    | Screen::Playlists
+                    | Screen::Playlist
+                    | Screen::RadioStations
+                    | Screen::TimeZone
+            )
+    }
+
     fn is_catalog(s: Screen) -> bool {
         matches!(
             s,
@@ -1761,17 +1782,50 @@ impl Ui {
         if count == 0 {
             return;
         }
+        // A scale (an equalizer band's dB) never jumps from one end to the other.
+        let scale = matches!(m.navigation.modal, Some(Modal::EqBand(_)));
+        let wraps = match m.settings.wrap_around {
+            _ if scale => false,
+            WrapAround::Off => false,
+            WrapAround::Menus => modal || !Self::is_long_list(m.screen),
+            WrapAround::Everywhere => true,
+        };
+        // A long list wraps only from a single step taken at its end after a
+        // rest; a short menu at once.
+        let now = Instant::now();
+        let rested = count < ACCELERATED_LIST_MINIMUM
+            || self
+                .last_step
+                .is_none_or(|at| now.duration_since(at) >= WRAP_REST);
+        self.last_step = Some(now);
         let focus = if modal {
             &mut m.navigation.modal_focus
         } else {
             &mut m.navigation.focus
         };
-        let mut next = (*focus as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        let last = count as i32 - 1;
+        let target = *focus as i32 + delta;
+        let at_end = (*focus == 0 && delta < 0) || (*focus as i32 == last && delta > 0);
+        let wrap = wraps && rested && delta.abs() == 1 && at_end;
+        let mut next = if wrap {
+            if delta > 0 {
+                0
+            } else {
+                last as usize
+            }
+        } else {
+            target.clamp(0, last) as usize
+        };
         if let Some(rows) = rows {
             let step = delta.signum();
+            let mut skipped = 0;
             while !rows[next].enabled {
-                let n = next as i32 + step;
-                if n < 0 || n >= count as i32 {
+                let mut n = next as i32 + step;
+                if wraps && rested && delta.abs() == 1 && (n < 0 || n > last) {
+                    n = n.rem_euclid(count as i32);
+                }
+                skipped += 1;
+                if n < 0 || n > last || skipped >= count {
                     return;
                 }
                 next = n as usize;
@@ -2200,6 +2254,7 @@ impl Ui {
                 self.keyboard = Some(keyboard::Keyboard::new(keyboard::Purpose::LastFmUser, ""));
                 Effect::None
             }
+            "wrap_around" => Effect::SetWrapAround(m.settings.wrap_around.next()),
             "album_view" => Effect::SetAlbumView(match m.settings.album_view {
                 reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
                 reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,
@@ -2951,6 +3006,7 @@ fn route(key: &str) -> Option<Screen> {
         "theme" => Screen::Theme,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
+        "customize" => Screen::Customize,
         "home_menu" => Screen::HomeMenu,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,

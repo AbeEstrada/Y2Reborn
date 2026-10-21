@@ -479,6 +479,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     // Settings
     case!("20-settings", at(Screen::Settings, ""));
+    // Beta 8.18: nine places, the last one in view.
+    case!("20b-settings-last", at(Screen::Settings, ""), |_, m| {
+        m.navigation.focus = 8;
+    });
     case!(
         "21-bluetooth-pairing",
         at(Screen::Bluetooth, ""),
@@ -1385,14 +1389,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     case!("50-song-info", at(Screen::TrackInfo, "0"));
     case!("51-display", at(Screen::SettingsDisplay, ""), |_, m| {
-        m.navigation.focus = 3;
+        m.navigation.focus = 1;
     });
     // Beta 7.5: the last row fits under the brightness card, no scrolling.
     case!(
         "51b-display-last-row",
         at(Screen::SettingsDisplay, ""),
         |_, m| {
-            m.navigation.focus = 4;
+            m.navigation.focus = 2;
+        }
+    );
+    // Beta 8.18: Customize (Wrap Around, Home Menu, Album View).
+    case!("51c-customize", at(Screen::Customize, ""));
+    case!(
+        "51d-customize-everywhere",
+        at(Screen::Customize, ""),
+        |_, m| {
+            m.settings.wrap_around = reborn_core::WrapAround::Everywhere;
+            m.navigation.focus = 2;
         }
     );
     // Home and Music (UI v4 phase 2)

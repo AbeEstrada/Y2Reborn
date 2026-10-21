@@ -720,10 +720,12 @@ pub enum Screen {
     Theme,
     /// Time zone picker (Settings > Display).
     TimeZone,
-    /// Which Music lists also stand on Home (Settings > Display).
+    /// Which Music lists also stand on Home (Settings > Customize).
     HomeMenu,
     SettingsLibrary,
     SettingsDisplay,
+    /// How Reborn behaves: wrap-around lists, Home Menu, Album View.
+    Customize,
     SettingsSystem,
     Battery,
     Sleep,
@@ -914,6 +916,9 @@ pub struct Settings {
     /// How Albums presents its covers.
     #[serde(default)]
     pub album_view: AlbumView,
+    /// Whether lists continue at the other end (Beta 8.18; Menus by default).
+    #[serde(default)]
+    pub wrap_around: WrapAround,
     /// 1 once the codec default became Auto. Older sessions stored SBC only
     /// as the default (the choice was never offered), so they move to Auto.
     #[serde(default)]
@@ -981,6 +986,36 @@ impl AlbumView {
         }
     }
 }
+/// Which lists continue at the other end: past the last row to the first and
+/// before the first to the last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapAround {
+    /// Every list stops at its ends.
+    Off,
+    /// Home, Music, Settings and their pages, and the hold and context menus.
+    #[default]
+    Menus,
+    /// Also the library, the queue, playlists, stations and the time zones.
+    Everywhere,
+}
+impl WrapAround {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Menus => "Menus",
+            Self::Everywhere => "Everywhere",
+        }
+    }
+    /// The next choice, as one press on its row steps through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Menus,
+            Self::Menus => Self::Everywhere,
+            Self::Everywhere => Self::Off,
+        }
+    }
+}
 fn default_true() -> bool {
     true
 }
@@ -1016,6 +1051,7 @@ impl Default for Settings {
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
+            wrap_around: WrapAround::Menus,
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
@@ -1187,6 +1223,7 @@ pub enum Effect {
     SetCrossfade(u32),
     SetGapless(bool),
     SetAlbumView(AlbumView),
+    SetWrapAround(WrapAround),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),

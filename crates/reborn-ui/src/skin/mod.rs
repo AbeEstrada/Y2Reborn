@@ -569,6 +569,7 @@ pub const LAYOUTS: &[&str] = &[
     "home_menu",
     "library",
     "display",
+    "customize",
     "service",
     "battery",
     "sleep",

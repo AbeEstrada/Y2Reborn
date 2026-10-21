@@ -336,9 +336,9 @@ fn pinned_music_lists_stand_after_music_on_home() {
 }
 
 #[test]
-fn home_menu_switches_pin_and_unpin_from_display() {
+fn home_menu_switches_pin_and_unpin_from_customize() {
     let mut ui = radios();
-    let mut m = app(Screen::SettingsDisplay);
+    let mut m = app(Screen::Customize);
     let tracks = m.library.tracks.clone();
     let rows = ui.rows(&m, &tracks);
     m.navigation.focus = rows.iter().position(|r| r.key == "home_menu").unwrap();
@@ -616,6 +616,8 @@ fn every_interactive_screen_draws_exactly_one_focus() {
 fn modals_trap_focus_and_show_one_focus_over_the_screen() {
     let mut ui = radios();
     let mut m = app(Screen::Tracks);
+    // Ends hold here; wrap_around_continues_menus_at_the_other_end covers wrapping.
+    m.settings.wrap_around = WrapAround::Off;
     ui.model_action(&mut m, Action::ContextMenu);
     assert_eq!(m.navigation.modal, Some(Modal::ContextMenu));
     for _ in 0..20 {
@@ -915,6 +917,109 @@ fn wheel_one_detent_is_one_step_outside_long_library_lists() {
     assert_eq!(m.navigation.focus, 1, "isolated detent");
     ui.model_action(&mut m, Action::WheelClockwise(4));
     assert_eq!(m.navigation.focus, 5, "sustained rotation");
+}
+
+#[test]
+fn customize_holds_wrap_around_home_menu_and_album_view() {
+    let mut ui = radios();
+    let mut m = app(Screen::Settings);
+    let tracks = m.library.tracks.clone();
+    let row =
+        |ui: &Ui, m: &AppModel, key: &str| ui.rows(m, &tracks).into_iter().find(|r| r.key == key);
+    assert_eq!(row(&ui, &m, "customize").unwrap().secondary, "Wrap: Menus");
+    select_key(&mut ui, &mut m, "customize");
+    assert_eq!(m.screen, Screen::Customize);
+    let keys: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.key).collect();
+    assert_eq!(keys, ["wrap_around", "home_menu", "album_view"]);
+    assert_eq!(row(&ui, &m, "wrap_around").unwrap().secondary, "Menus");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "wrap_around"),
+        Effect::SetWrapAround(WrapAround::Everywhere)
+    );
+    m.settings.wrap_around = WrapAround::Everywhere;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "wrap_around"),
+        Effect::SetWrapAround(WrapAround::Off)
+    );
+    // Display keeps how the screen looks; the behaviour moved here.
+    m.screen = Screen::SettingsDisplay;
+    for key in ["home_menu", "album_view"] {
+        assert!(row(&ui, &m, key).is_none(), "{key} left Display");
+    }
+    // Settings draws every place, Customize included, without scrolling.
+    m.screen = Screen::Settings;
+    m.navigation.focus = ui.rows(&m, &tracks).len() - 1;
+    assert!(visible_text(&ui, &m).contains("About & Updates"));
+    assert!(visible_text(&ui, &m).contains("Customize"));
+}
+
+#[test]
+fn wrap_around_continues_menus_at_the_other_end() {
+    let mut ui = radios();
+    let mut m = app(Screen::Settings);
+    let tracks = m.library.tracks.clone();
+    let last = ui.rows(&m, &tracks).len() - 1;
+    // Menus (the default): Settings wraps both ways.
+    assert_eq!(m.settings.wrap_around, WrapAround::Menus);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, last, "before the first: the last");
+    ui.model_action(&mut m, Action::NavigateDown);
+    assert_eq!(m.navigation.focus, 0, "past the last: the first");
+    // A context menu too.
+    let mut menu = app(Screen::Tracks);
+    menu.navigation.modal = Some(Modal::ContextMenu);
+    menu.navigation.context_key = Some("track:0".into());
+    ui.model_action(&mut menu, Action::NavigateUp);
+    assert!(menu.navigation.modal_focus > 0, "context menu wrapped");
+    // Library lists keep their ends unless Everywhere.
+    let mut songs = app(Screen::Tracks);
+    ui.model_action(&mut songs, Action::NavigateUp);
+    assert_eq!(songs.navigation.focus, 0);
+    songs.settings.wrap_around = WrapAround::Everywhere;
+    ui.model_action(&mut songs, Action::NavigateUp);
+    assert!(songs.navigation.focus > 0, "Everywhere wraps the songs");
+    // Off: every list stops.
+    m.settings.wrap_around = WrapAround::Off;
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(m.navigation.focus, 0);
+    m.navigation.focus = last;
+    ui.model_action(&mut m, Action::NavigateDown);
+    assert_eq!(m.navigation.focus, last);
+}
+
+#[test]
+fn a_fast_spin_stops_at_the_end_of_a_long_list_before_wrapping() {
+    let mut ui = radios();
+    let tracks: Vec<_> = (0..500)
+        .map(|i| Track {
+            id: i,
+            title: format!("T{i:03}"),
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    let mut m = app(Screen::Tracks);
+    m.library.tracks = tracks;
+    m.settings.wrap_around = WrapAround::Everywhere;
+    ui.invalidate_catalog();
+    m.navigation.focus = 495;
+    ui.model_action(&mut m, Action::WheelClockwise(8));
+    assert_eq!(m.navigation.focus, 499, "the spin stops at the end");
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 499, "still turning: it stays");
+    ui.model_action(&mut m, Action::WheelClockwise(3));
+    assert_eq!(m.navigation.focus, 499, "an accelerated step never wraps");
+    // The wheel rested at the end: one more detent goes to the top.
+    ui.last_step = Some(Instant::now() - WRAP_REST);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 0);
+    assert_eq!(m.navigation.scroll, 0, "the top is in view");
+    ui.last_step = Some(Instant::now() - WRAP_REST);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 499);
+    let visible = ui.visible_count(&m, &m.library.tracks.clone());
+    assert_eq!(m.navigation.scroll, 500 - visible, "the end is in view");
 }
 
 #[test]
@@ -1556,6 +1661,11 @@ fn custom_equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
         ui.model_action(&mut m, Action::WheelClockwise(5));
     }
     assert_eq!(m.navigation.modal_focus, 24);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(
+        m.navigation.modal_focus, 24,
+        "a dB scale never wraps around"
+    );
     let quads = ui.draw(&m, &m.library.tracks, false);
     assert_eq!(focus_target_count(&quads), 1);
     for q in quads
@@ -2209,8 +2319,8 @@ fn albums_use_cover_flow_by_default_and_the_grid_by_setting() {
     m.settings.album_view = reborn_core::AlbumView::Grid;
     let grid = ui.draw(&m, &tracks, false);
     assert!(grid.iter().all(|q| q.warp.is_none()));
-    // The setting toggles from Settings > Display.
-    let mut m = app(Screen::SettingsDisplay);
+    // The setting toggles from Settings > Customize.
+    let mut m = app(Screen::Customize);
     let rows = ui.rows(&m, &tracks);
     m.navigation.focus = rows.iter().position(|r| r.key == "album_view").unwrap();
     assert_eq!(rows[m.navigation.focus].secondary, "Cover Flow");
@@ -3288,8 +3398,8 @@ fn lastfm_settings_follow_the_account_and_the_sign_in() {
     assert_eq!(row(&ui, &m).secondary, "Off");
     m.settings.scrobble_log = true;
     assert_eq!(row(&ui, &m).secondary, "Log file");
-    // Eight places fit on the Settings root.
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 8);
+    // Nine places fit on the Settings root (Beta 8.18: Customize).
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 9);
     assert_eq!(select_key(&mut ui, &mut m, "lastfm"), Effect::None);
     assert_eq!(m.screen, Screen::LastFm);
     // A build without the app key: the log still works.

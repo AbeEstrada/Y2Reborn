@@ -126,19 +126,21 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
 
 fn root(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
     let _ = ui;
-    // Eight places fit without scrolling (Beta 7.5: Skin; Last.fm then).
-    let row_h: f32 = if page.rows.len() > 7 { 39. } else { 44. };
+    // Every place fits without scrolling: rows shrink from 44 px as places
+    // are added (Beta 7.5: Skin, then Last.fm; Beta 8.18: Customize).
+    let rows = page.rows.len().max(1);
+    let row_h = ((HEIGHT - 46.) / rows as f32).floor().min(44.);
     let tile = |key: &str| match key {
         "bluetooth" => (0x3E82FFFF, Icon::Bluetooth),
         "wifi" => (0x3CBE78FF, Icon::Wifi),
         "audio" => (0xFF6E5AFF, Icon::Speaker),
         "display" => (0xFFBE3CFF, Icon::Sun),
         "theme" => (0xEE6AB4FF, Icon::Palette),
+        "customize" => (0x2EB8C8FF, Icon::Sliders),
         "storage" => (0x9678FFFF, Icon::Drive),
         "lastfm" => (0xD51007FF, Icon::Note),
         _ => (0x828CA0FF, Icon::Info),
     };
-    let rows = page.rows.len().min(8);
     components::card(c, 10., 38., WIDTH - 20., rows as f32 * row_h + 4.);
     for (i, row) in page.rows.iter().enumerate().take(rows) {
         let y = 40. + i as f32 * row_h;

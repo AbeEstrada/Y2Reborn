@@ -2550,6 +2550,10 @@ impl Runtime {
                 self.model.settings.album_view = view;
                 self.checkpoint();
             }
+            Effect::SetWrapAround(wrap) => {
+                self.model.settings.wrap_around = wrap;
+                self.checkpoint();
+            }
             Effect::SetShuffle(enabled) => {
                 self.model.settings.shuffle = enabled;
                 self.checkpoint();
