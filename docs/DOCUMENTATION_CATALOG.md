@@ -9,7 +9,7 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](https://github.com/SchulzCode/Y2Linux/blob/main/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **64**. Explicit historical/contract scope notices:
+Indexed pages: **66**. Explicit historical/contract scope notices:
 **40**.
 
 ## Entry
@@ -92,6 +92,7 @@ Indexed pages: **64**. Explicit historical/contract scope notices:
 | [Reborn UI v1 navigation and focus map](ui/REBORN-UI-V1-NAVIGATION.md) | UI design / scoped candidate |
 | [Reborn UI v1 owner qualification](ui/REBORN-UI-V1-QUALIFICATION.md) | UI design / scoped candidate |
 | [Reborn UI v1 implementation and candidate report](ui/REBORN-UI-V1-REPORT.md) | UI design / scoped candidate |
+| [Reborn audiobooks: plan, code map and device test](ui/REBORN-AUDIOBOOKS.md) | Source contract |
 | [Reborn Product UI v4 plan](ui/REBORN-PRODUCT-UI-V4.md) | Planned design contract |
 | [Reborn Product UI v3](ui/REBORN-PRODUCT-UI-V3.md) | Source contract |
 | [Reborn Product UI v2](ui/REBORN-PRODUCT-UI-V2.md) | Superseded source contract |
@@ -113,6 +114,7 @@ Indexed pages: **64**. Explicit historical/contract scope notices:
 | Page | Scope |
 | --- | --- |
 | [Reborn audio fixtures](../assets/fixtures/README.md) | Source asset reference |
+| [Headphone profile sources](../assets/eq/SOURCES.md) | Source asset reference |
 | [Reborn UI v1 font](../assets/fonts/README.md) | Source asset reference |
 | [Pixelify Sans (Bunny Bow skin font)](../assets/fonts/pixelify/README.md) | Source asset reference |
 | [Reborn Simple icon atlas](../assets/icons/README.md) | Source asset reference |

@@ -1,6 +1,13 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.19 — Y2Linux 1.0 Beta 8.19 (Baseline 118), 2026-10-21 (latest): audiobooks, covers, Customize
+## 1.0.0-beta.8.20 — Y2Linux 1.0 Beta 8.20 (Baseline 119), 2026-10-22 (latest): headphone crystal (#52)
+
+Published as `baseline-119` (Reborn `cdae78e`, sequence 8400), installed on the owner's player before publishing. The
+sink open deadline is 5 s (`34a07b6`): on a player whose CS43131 crystal misses its start, the kernel's tries and rail
+cycle take ≈1.4–1.9 s per open and the sink opens twice, so 2 s gave up during the second open (#52). The crystal
+itself is the kernel's (Y2Linux overlay 0030: 15 µA bias after a failure).
+
+## 1.0.0-beta.8.19 — Y2Linux 1.0 Beta 8.19 (Baseline 118), 2026-10-21: audiobooks, covers, Customize
 
 Published as `baseline-118` (Reborn `da5b777`, sequence 8302; 8.18 was a test build, never published), installed on
 the owner's player before publishing. Audiobooks (`11febec`…`da5b777`, plan, code map and device test in
