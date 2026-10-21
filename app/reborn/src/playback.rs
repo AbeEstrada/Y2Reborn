@@ -1948,7 +1948,8 @@ mod tests {
             assert_eq!(actual.position_ms, expected.position_ms, "{name}");
             tested += 1;
         }
-        assert_eq!(tested, 36);
+        // 36 music fixtures and the three audiobook specimens (book-*).
+        assert_eq!(tested, 39);
         let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
         assert!(external_artwork(pinned.path(), ART_SIZE as u32).is_err());
         for name in [

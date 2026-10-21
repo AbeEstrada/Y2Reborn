@@ -99,7 +99,7 @@ impl Catalog {
             Screen::Albums => {
                 let mut albums = BTreeMap::new();
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| {
-                    t.online
+                    t.is_music()
                         && (m.navigation.filter.is_empty()
                             || track_matches(t, &m.navigation.filter))
                 }) {
@@ -131,7 +131,7 @@ impl Catalog {
             }
             Screen::Genres => {
                 let mut genres: BTreeMap<&str, GenreStats> = BTreeMap::new();
-                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.online) {
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
                     let entry = genres.entry(t.genre.as_str()).or_insert((
                         i,
                         BTreeSet::new(),
@@ -162,7 +162,7 @@ impl Catalog {
             }
             Screen::Artists => {
                 let mut artists: BTreeMap<&str, (usize, BTreeSet<&str>, bool)> = BTreeMap::new();
-                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.online) {
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
                     let entry =
                         artists
                             .entry(t.artist.as_str())
@@ -196,14 +196,14 @@ impl Catalog {
                         children.insert(s.root.clone());
                     }
                     if children.is_empty() {
-                        for t in tracks.iter().filter(|t| t.online) {
+                        for t in tracks.iter().filter(|t| t.is_music()) {
                             if let Some(p) = t.path.parent() {
                                 children.insert(p.to_path_buf());
                             }
                         }
                     }
                 } else {
-                    for t in tracks.iter().filter(|t| t.online) {
+                    for t in tracks.iter().filter(|t| t.is_music()) {
                         if let Ok(suffix) = t.path.strip_prefix(parent) {
                             if let Some(first) = suffix.components().next() {
                                 let child = parent.join(first);
@@ -235,7 +235,7 @@ impl Catalog {
                     for (i, _) in tracks
                         .iter()
                         .enumerate()
-                        .filter(|(_, t)| t.online && t.path.parent() == Some(parent))
+                        .filter(|(_, t)| t.is_music() && t.path.parent() == Some(parent))
                     {
                         self.rows.push(Row::Track(i));
                     }
@@ -251,7 +251,7 @@ impl Catalog {
                 let mut ids: Vec<_> = tracks
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| t.online && track_matches(t, &m.navigation.filter))
+                    .filter(|(_, t)| t.is_music() && track_matches(t, &m.navigation.filter))
                     .collect();
                 if ids.is_empty() {
                     self.rows.clear();

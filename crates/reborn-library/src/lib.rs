@@ -240,7 +240,7 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
     Ok(c)
 }
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
-    Ok(Track {
+    let mut track = Track {
         id: r.get(0)?,
         source_id: r.get(1)?,
         path: PathBuf::from(r.get::<_, String>(2)?),
@@ -261,7 +261,10 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         artwork: r.get(17)?,
         online: r.get(18)?,
         genre: r.get(19)?,
-    })
+        book: false,
+    };
+    track.book = reborn_core::books::is_book(&track);
+    Ok(track)
 }
 const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online,t.genre FROM tracks t JOIN sources s ON s.id=t.source_id";
 fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
@@ -1251,6 +1254,19 @@ fn scan_workers() -> usize {
         .clamp(1, 3)
 }
 
+/// An MP4 (a long M4B audiobook) at least this large builds a frame index of
+/// tens of MB while its tags are read (24 bytes a frame, ≈140 MB at peak for
+/// 10 h); such files are read one at a time, never three at once.
+const HEAVY_MP4_BYTES: u64 = 64 * 1024 * 1024;
+fn heavy_mp4(path: &Path, bytes: u64) -> bool {
+    bytes >= HEAVY_MP4_BYTES
+        && path.extension().is_some_and(|e| {
+            ["m4a", "m4b", "mp4"]
+                .iter()
+                .any(|x| e.eq_ignore_ascii_case(x))
+        })
+}
+
 /// `read_tags` for every pending file on up to `workers` threads, results in
 /// input order. Workers run at a lower priority than playback and the UI.
 fn read_parallel(
@@ -1260,12 +1276,15 @@ fn read_parallel(
 ) -> Vec<TagRead> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let slots: Vec<Mutex<Option<TagRead>>> = pending.iter().map(|_| Mutex::new(None)).collect();
+    let heavy = Mutex::new(());
     let work = || loop {
         let i = next.fetch_add(1, Ordering::Relaxed);
         if i >= pending.len() || stop.load(Ordering::Relaxed) {
             break;
         }
         let (file, _, path) = &pending[i];
+        let _alone =
+            heavy_mp4(path, file.size).then(|| heavy.lock().unwrap_or_else(|e| e.into_inner()));
         let read = reborn_observability::isolated(|| read_tags(path, file.metadata.as_ref()))
             .unwrap_or(TagRead::Panicked);
         *slots[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(read);
@@ -1464,6 +1483,8 @@ impl ScanBatch<'_> {
                     artwork: m.artwork,
                     online: true,
                     genre: m.genre.trim().to_owned(),
+                    // Not stored: `from_row` derives it when the catalog loads.
+                    book: false,
                 }
             }
             Err(e) => {
@@ -1743,6 +1764,17 @@ fn scan_sources_with_identity_and_reuse(
 mod tests {
     use super::*;
     use std::cell::Cell;
+    #[test]
+    fn large_mp4_audiobooks_are_read_one_at_a_time() {
+        let big = HEAVY_MP4_BYTES;
+        assert!(heavy_mp4(Path::new("/m/Audiobooks/Dune.M4B"), big));
+        assert!(heavy_mp4(Path::new("/m/Long.m4a"), big + 1));
+        assert!(!heavy_mp4(Path::new("/m/Short.m4b"), big - 1));
+        assert!(
+            !heavy_mp4(Path::new("/m/Concert.flac"), big * 4),
+            "only MP4 builds the index"
+        );
+    }
     #[test]
     fn schema_and_rollback() {
         let p = std::env::temp_dir().join(format!("reborn-db-{}.sqlite", std::process::id()));

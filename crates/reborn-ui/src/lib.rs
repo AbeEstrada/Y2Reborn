@@ -885,7 +885,7 @@ impl Ui {
         let mut albums = std::collections::BTreeSet::new();
         let mut genres = std::collections::BTreeSet::new();
         let mut songs = 0;
-        for t in tracks.iter().filter(|t| t.online) {
+        for t in tracks.iter().filter(|t| t.is_music()) {
             artists.insert(t.artist.as_str());
             albums.insert((t.album.as_str(), t.album_artist.as_str()));
             genres.insert(t.genre.as_str());

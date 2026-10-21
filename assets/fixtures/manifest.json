@@ -7,6 +7,31 @@
     "external PNG",
     "external WebP"
   ],
+  "book_cases": {
+    "chapters_ms": [
+      [
+        0,
+        2000,
+        "Opening"
+      ],
+      [
+        2000,
+        4000,
+        "Chapter 1: The Start"
+      ],
+      [
+        4000,
+        6000,
+        "Kapitel 2: \u00dcber Umwege"
+      ]
+    ],
+    "files": [
+      "book-chapters.m4b",
+      "book-chapters.mp3",
+      "book-cover-track.m4b"
+    ],
+    "generator_ffmpeg_version": "9.0.2"
+  },
   "ffmpeg_required": "9.0.2",
   "files": {
     "aac.aac": {
@@ -48,6 +73,18 @@
     "artwork.flac": {
       "bytes": 11910,
       "sha256": "19d2b69e03bf58492b5c1417d10ceece0c8ec8aa39f30ba14bad881cdd51949e"
+    },
+    "book-chapters.m4b": {
+      "bytes": 20493,
+      "sha256": "6c7f7bf36fa4c67f3e7b7fed0c41aa595cdc6cf63aca4216aeb1d79e506f3e97"
+    },
+    "book-chapters.mp3": {
+      "bytes": 18702,
+      "sha256": "cd24224730305d5de7738ab79fc8d05ba012f7bacdd872dcadf975e4cdf532da"
+    },
+    "book-cover-track.m4b": {
+      "bytes": 21369,
+      "sha256": "ad69ad2c2845060d6c9989329a34c6993c2e56cd8e783337db3aa3c6c00eb6d3"
     },
     "corrupt-metadata.mp3": {
       "bytes": 5160,

@@ -358,6 +358,57 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
 }
 
 #[test]
+fn audiobooks_stay_out_of_the_music_lists_counts_and_search() {
+    let ui = radios();
+    let mut m = app(Screen::Tracks);
+    let mut book = m.library.tracks[0].clone();
+    book.id = 100;
+    book.title = "Kapitel Eins".into();
+    book.album = "Momo".into();
+    book.artist = "Michael Ende".into();
+    book.album_artist = "Michael Ende".into();
+    book.path = "/data/music/Hörbücher/Momo/01.mp3".into();
+    book.book = reborn_core::books::is_book(&book);
+    assert!(book.book);
+    m.library.tracks.push(book);
+    ui.invalidate_catalog();
+    let tracks = m.library.tracks.clone();
+    let text = |ui: &Ui, m: &AppModel| {
+        ui.rows(m, &tracks)
+            .iter()
+            .map(|r| format!("{} {}", r.label, r.secondary))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for screen in [
+        Screen::Tracks,
+        Screen::Albums,
+        Screen::Artists,
+        Screen::Folders,
+    ] {
+        m.screen = screen;
+        ui.invalidate_catalog();
+        let shown = text(&ui, &m);
+        assert!(
+            !shown.contains("Momo") && !shown.contains("Kapitel"),
+            "{screen:?}: {shown}"
+        );
+        assert!(
+            !shown.contains("Michael Ende") && !shown.contains("Hörbücher"),
+            "{screen:?}"
+        );
+    }
+    m.screen = Screen::Music;
+    assert!(text(&ui, &m).contains("9 songs"), "{}", text(&ui, &m));
+    m.screen = Screen::Search;
+    m.navigation.filter = "Momo".into();
+    ui.invalidate_catalog();
+    assert!(!text(&ui, &m).contains("Kapitel"));
+    // Books are not scrobbled.
+    assert!(reborn_core::scrobble::play_of(&tracks[9]).is_none());
+}
+
+#[test]
 fn root_is_a_small_music_player_menu() {
     let ui = radios();
     let m = app(Screen::Home);

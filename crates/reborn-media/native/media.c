@@ -98,7 +98,10 @@ void rb_media_logging(void (*callback)(int, const char *),
 
 }
 /* Called exactly once by Rust before exposing the loaded API to workers. */
-void rb_media_limits(void) { av_max_alloc(32 * 1024 * 1024); }
+/* One allocation's ceiling. The MP4 demuxer keeps a whole file's frame
+ * index in one block (24 bytes a frame): 128 MiB holds a ≈36-hour AAC-LC
+ * audiobook at 44.1 kHz (32 MiB stopped at ≈9 h: no audio, no seeking). */
+void rb_media_limits(void) { av_max_alloc(128 * 1024 * 1024); }
 const char *rb_media_version(void) { return av_version_info(); }
 void rb_media_error(int code, char *out, int size) {
   av_strerror(code, out, size);
@@ -1067,6 +1070,24 @@ static int stream_fd_from_path(const char *path) {
   }
   return value > 2 && value <= 65535 ? (int)value : -1;
 }
+/* Video is refused, except a cover: an attached picture, or in MP4/M4B
+ * beside audio a picture track (audiobook tools store the cover as a
+ * one-frame video stream). Such a track is never read or decoded. */
+static int admit_streams(RbMedia *m) {
+  unsigned audio = 0;
+  for (unsigned i = 0; i < m->f->nb_streams; i++)
+    audio += m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
+  int mov = !strncmp(m->f->iformat->name, "mov,", 4);
+  for (unsigned i = 0; i < m->f->nb_streams; i++) {
+    AVStream *s = m->f->streams[i];
+    if (s->codecpar->codec_type != AVMEDIA_TYPE_VIDEO ||
+        (s->disposition & AV_DISPOSITION_ATTACHED_PIC))
+      continue;
+    if (!mov || !audio) return AVERROR_INVALIDDATA;
+    s->discard = AVDISCARD_ALL;
+  }
+  return 0;
+}
 static int open_stream(RbMedia *m, int fd) {
   struct stat info;
   if (fstat(fd, &info) < 0 || !S_ISFIFO(info.st_mode)) return AVERROR(EINVAL);
@@ -1092,11 +1113,7 @@ static int open_stream(RbMedia *m, int fd) {
   m->open_us = micros() - start;
   av_dict_free(&options);
   if (ret < 0) return ret;
-  for (unsigned i = 0; i < m->f->nb_streams; i++)
-    if (m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
-        !(m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC))
-      return AVERROR_INVALIDDATA;
-  return 0;
+  return admit_streams(m);
 }
 static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
   deadline(cancel);
@@ -1135,11 +1152,7 @@ static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
   av_dict_free(&options);
   if (ret < 0) return ret;
   if (m->io->error == AVERROR(EFBIG) || m->io->error == AVERROR_EXIT) return m->io->error;
-  for (unsigned i = 0; i < m->f->nb_streams; i++)
-    if (m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
-        !(m->f->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC))
-      return AVERROR_INVALIDDATA;
-  return 0;
+  return admit_streams(m);
 }
 static int stream_info(RbMedia *m) {
   /* Attached images do not supply audio properties. Discard them during
@@ -1542,6 +1555,35 @@ static int decode_art(enum AVCodecID id, AVCodecParameters *params,
   }
   avcodec_free_context(&ctx); av_frame_free(&frame);
   return r < 0 ? r : 0;
+}
+
+/* A chapter of the file, in milliseconds, with its title (UTF-8). */
+typedef struct {
+  int64_t start_ms, end_ms;
+  char title[256];
+} RbChapter;
+_Static_assert(sizeof(RbChapter) == 272, "RbChapter ABI");
+
+/* The file's chapters as FFmpeg's demuxers read them (MP4/M4B chapter track
+ * or Nero chpl, MP3 ID3 CHAP, Ogg CHAPTERxx), in order, at most `max`.
+ * Returns how many were written; an unordered or empty one is skipped. */
+int rb_media_chapters(RbMedia *m, RbChapter *out, int max) {
+  if (!m || !m->f || !out || max < 0) return AVERROR(EINVAL);
+  int n = 0;
+  int64_t last = -1;
+  for (unsigned i = 0; i < m->f->nb_chapters && n < max; i++) {
+    const AVChapter *c = m->f->chapters[i];
+    int64_t start = av_rescale_q(c->start, c->time_base, (AVRational){1, 1000});
+    int64_t end = av_rescale_q(c->end, c->time_base, (AVRational){1, 1000});
+    if (start < 0 || end <= start || start < last) continue;
+    last = start;
+    const AVDictionaryEntry *title = av_dict_get(c->metadata, "title", NULL, 0);
+    out[n].start_ms = start;
+    out[n].end_ms = end;
+    text(out[n].title, sizeof(out[n].title), title ? title->value : "");
+    n++;
+  }
+  return n;
 }
 
 int rb_media_art(RbMedia *m, uint8_t *out, int side) {

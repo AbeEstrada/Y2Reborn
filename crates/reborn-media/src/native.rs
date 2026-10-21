@@ -115,6 +115,7 @@ type MediaRead =
     unsafe extern "C" fn(*mut c_void, *mut u8, c_int, *mut u64, *mut u64, *mut i64) -> c_int;
 type MediaSeek = unsafe extern "C" fn(*mut c_void, i64) -> c_int;
 type MediaArtwork = unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int;
+type MediaChapters = unsafe extern "C" fn(*mut c_void, *mut RawChapter, c_int) -> c_int;
 type MediaArtworkFile = unsafe extern "C" fn(*const c_char, *mut u8, c_int) -> c_int;
 type MediaImageFile =
     unsafe extern "C" fn(*const c_char, *mut u8, c_int, c_int, *mut c_int, *mut c_int) -> c_int;
@@ -148,6 +149,7 @@ struct MediaApi {
     read: MediaRead,
     seek: MediaSeek,
     artwork: MediaArtwork,
+    chapters: MediaChapters,
     artwork_file: MediaArtworkFile,
     logo_file: MediaArtworkFile,
     image_file: MediaImageFile,
@@ -221,6 +223,7 @@ impl MediaApi {
                     read: Self::symbol(handle, b"rb_media_read\0")?,
                     seek: Self::symbol(handle, b"rb_media_seek\0")?,
                     artwork: Self::symbol(handle, b"rb_media_art\0")?,
+                    chapters: Self::symbol(handle, b"rb_media_chapters\0")?,
                     artwork_file: Self::symbol(handle, b"rb_media_art_file\0")?,
                     logo_file: Self::symbol(handle, b"rb_media_logo_file\0")?,
                     image_file: Self::symbol(handle, b"rb_media_image_file\0")?,
@@ -584,13 +587,6 @@ pub struct Metadata {
 
 impl Metadata {
     fn from_raw(meta: &RawMetadata) -> Self {
-        fn text(b: &[c_char]) -> String {
-            let length = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-            // SAFETY: c_char and u8 are one-byte types with identical alignment;
-            // the initialized ABI buffer stays borrowed for this conversion.
-            let bytes = unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<u8>(), length) };
-            String::from_utf8_lossy(bytes).into_owned()
-        }
         Metadata {
             title: text(&meta.title),
             artist: text(&meta.artist),
@@ -647,6 +643,34 @@ impl Metadata {
 
 /// Demux-only local metadata/artwork context, closed exactly once on every path.
 /// Retains encoded pictures only for its lifetime; library rows contain no blobs.
+/// A NUL-terminated C text field as UTF-8 (invalid bytes replaced).
+fn text(b: &[c_char]) -> String {
+    let length = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+    // SAFETY: c_char and u8 are one-byte types with identical alignment;
+    // the initialized ABI buffer stays borrowed for this conversion.
+    let bytes = unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<u8>(), length) };
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawChapter {
+    start_ms: i64,
+    end_ms: i64,
+    title: [c_char; 256],
+}
+const _: () = assert!(std::mem::size_of::<RawChapter>() == 272);
+
+/// A chapter inside a file (an audiobook's M4B or MP3), as FFmpeg reads it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Chapter {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub title: String,
+}
+/// More chapters than any real book has; the rest are left out.
+pub const MAX_CHAPTERS: usize = 2048;
+
 pub struct MediaFile {
     raw: NonNull<c_void>,
     api: &'static MediaApi,
@@ -671,6 +695,30 @@ impl MediaFile {
             _cancel: cancel,
             metadata: Metadata::from_raw(&meta),
         })
+    }
+    /// The file's chapters, in order (empty when it has none).
+    pub fn chapters(&mut self) -> Result<Vec<Chapter>, String> {
+        let empty = RawChapter {
+            start_ms: 0,
+            end_ms: 0,
+            title: [0; 256],
+        };
+        let mut raw = vec![empty; MAX_CHAPTERS];
+        // SAFETY: uniquely borrowed context; C writes at most MAX_CHAPTERS records.
+        let n = unsafe {
+            (self.api.chapters)(self.raw.as_ptr(), raw.as_mut_ptr(), MAX_CHAPTERS as c_int)
+        };
+        if n < 0 {
+            return Err(error(self.api, n));
+        }
+        Ok(raw[..n as usize]
+            .iter()
+            .map(|c| Chapter {
+                start_ms: c.start_ms as u64,
+                end_ms: c.end_ms as u64,
+                title: text(&c.title),
+            })
+            .collect())
     }
     /// The embedded cover, centre-cropped to a `side` x `side` RGBA square.
     pub fn artwork(&mut self, side: u32) -> Result<Vec<u8>, String> {
@@ -2239,6 +2287,55 @@ mod metadata_tests {
         assert!(external_artwork(&dir.join("wide.png"), 0).is_err());
         assert!(external_artwork(&dir.join("wide.png"), 257).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn audiobook_chapters_are_read_from_m4b_and_mp3() {
+        for name in [
+            "book-chapters.m4b",
+            "book-chapters.mp3",
+            "book-cover-track.m4b",
+        ] {
+            let mut file = MediaFile::open(&path(name), Cancel::new().unwrap())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let chapters = file.chapters().unwrap();
+            let summary: Vec<_> = chapters
+                .iter()
+                .map(|c| (c.start_ms, c.end_ms, c.title.as_str()))
+                .collect();
+            assert_eq!(
+                summary,
+                [
+                    (0, 2000, "Opening"),
+                    (2000, 4000, "Chapter 1: The Start"),
+                    (4000, 6000, "Kapitel 2: Über Umwege"),
+                ],
+                "{name}"
+            );
+        }
+        // Music has no chapters.
+        let mut song = MediaFile::open(&path("m4a-aac.m4a"), Cancel::new().unwrap()).unwrap();
+        assert!(song.chapters().unwrap().is_empty());
+    }
+    #[test]
+    fn an_m4b_with_its_cover_as_a_video_track_plays_without_the_video() {
+        let mut decoder = Decoder::open(
+            &path("book-cover-track.m4b"),
+            44_100,
+            Cancel::new().unwrap(),
+        )
+        .unwrap();
+        decoder.seek(4500).unwrap();
+        let block = decoder.read().unwrap().expect("audio after the seek");
+        assert!(
+            (4400..4600).contains(&block.position_ms),
+            "{}",
+            block.position_ms
+        );
+        let mut frames = block.frames;
+        while let Some(block) = decoder.read().unwrap() {
+            frames += block.frames;
+        }
+        assert!(frames > 0);
     }
     #[test]
     fn large_jpeg_is_downscaled_and_small_jpeg_remains_usable() {

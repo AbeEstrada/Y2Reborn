@@ -28,7 +28,7 @@ TARGET_FFMPEG_VERSION = (ROOT / "FFMPEG_VERSION").read_text().strip()
 
 def ffmpeg_version() -> str:
     output = subprocess.check_output([FFMPEG, "-version"], text=True, stderr=subprocess.STDOUT)
-    match = re.search(r"\bversion\s+([0-9]+(?:\.[0-9]+){1,2})", output.splitlines()[0])
+    match = re.search(r"\bversion\s+n?([0-9]+(?:\.[0-9]+){1,2})", output.splitlines()[0])
     if not match:
         raise RuntimeError(f"cannot read FFmpeg generator version from {FFMPEG!r}")
     return match.group(1)
@@ -138,6 +138,53 @@ def make_loud_flac(path: Path) -> None:
         "-fflags", "+bitexact", str(path))
 
 
+BOOK_CHAPTERS = [(0, 2000, "Opening"), (2000, 4000, "Chapter 1: The Start"),
+                 (4000, 6000, "Kapitel 2: Über Umwege")]
+
+
+def make_books(temp: Path) -> list[str]:
+    """Audiobook specimens (2026-10-21): 6 s with three chapters as M4B (MP4
+    chapter track) and MP3 (ID3 CHAP), and an M4B carrying its cover as an
+    MPEG-4 video track, which Reborn must play without reading the video."""
+    meta = temp / "chapters.txt"
+    lines = [";FFMETADATA1", "title=Fixture Book", "artist=Y2 fixture",
+             "album=Fixture Book", "genre=Audiobook"]
+    for start, end, title in BOOK_CHAPTERS:
+        lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={title}"]
+    meta.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source = ["-f", "lavfi", "-i", "sine=frequency=330:sample_rate=22050:duration=6",
+              "-i", str(meta), "-map_metadata", "1", "-map_chapters", "1",
+              "-af", "volume=0.04", "-ac", "1"]
+    run(*source, "-c:a", "aac", "-b:a", "24k", "-fflags", "+bitexact", str(OUT / "book-chapters.m4b"))
+    run(*source, "-c:a", "libmp3lame", "-b:a", "24k", "-id3v2_version", "3",
+        "-fflags", "+bitexact", str(OUT / "book-chapters.mp3"))
+    cover = temp / "cover.png"
+    png(cover)
+    run("-i", str(OUT / "book-chapters.m4b"), "-loop", "1", "-framerate", "1", "-t", "6",
+        "-i", str(cover), "-map", "0:a", "-map", "1:v", "-c:a", "copy", "-c:v", "mpeg4",
+        "-pix_fmt", "yuv420p", "-map_metadata", "0", "-map_chapters", "0",
+        "-fflags", "+bitexact", "-f", "mp4", str(OUT / "book-cover-track.m4b"))
+    return ["book-chapters.m4b", "book-chapters.mp3", "book-cover-track.m4b"]
+
+
+def update_books() -> None:
+    """Write only the audiobook specimens and record them in the manifest,
+    leaving every other fixture (and its hash) as it is."""
+    with tempfile.TemporaryDirectory(prefix="reborn-books-") as directory:
+        names = make_books(Path(directory))
+    path = OUT / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for name in names:
+        data = (OUT / name).read_bytes()
+        manifest["files"][name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+    manifest["book_cases"] = {
+        "generator_ffmpeg_version": ffmpeg_version(),
+        "chapters_ms": [[s, e, t] for s, e, t in BOOK_CHAPTERS],
+        "files": names,
+    }
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="reborn-fixtures-") as directory:
@@ -215,6 +262,7 @@ def main() -> None:
         gapless = make_gapless(temp)
         make_precision_flac(temp)
         make_loud_flac(OUT / "loud-24-96000-rg.flac")
+        make_books(temp)
 
     # An intentionally malformed ID3 size precedes valid MP3 frames. FFmpeg
     # must preserve the useful stream or return a clean error, never crash.
@@ -261,4 +309,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    update_books() if sys.argv[1:] == ["--books"] else main()

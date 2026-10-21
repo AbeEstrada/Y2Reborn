@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+pub mod books;
 pub mod clock;
 mod countries;
 pub mod eq;
@@ -381,6 +382,10 @@ pub struct Track {
     /// Genre tag as read from the file; empty when the file has none.
     #[serde(default)]
     pub genre: String,
+    /// An audiobook part (`books::is_book`), set when the library loads; never
+    /// stored, so the rule can change without a rescan.
+    #[serde(default)]
+    pub book: bool,
 }
 
 /// `Track::source_id` of an internet radio station in the queue.
@@ -390,6 +395,11 @@ impl Track {
     /// the directory id (if any), `album` a short description.
     pub fn is_radio(&self) -> bool {
         self.source_id == RADIO_SOURCE
+    }
+    /// Shown in the music lists, counts and search: available and not part
+    /// of an audiobook (books have their own place).
+    pub fn is_music(&self) -> bool {
+        self.online && !self.book
     }
     pub fn radio(station: &RadioStation) -> Self {
         Self {

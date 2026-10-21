@@ -159,8 +159,9 @@ impl Index {
         self.ensure(tracks);
         let folded = fold(query);
         let found = self.matches(&folded);
-        // Offline tracks (an SD card taken out) are left out at reading time.
-        let online = |i: usize| tracks.get(i).is_some_and(|t| t.online);
+        // Offline tracks (an SD card taken out) and audiobook parts are left
+        // out at reading time.
+        let online = |i: usize| tracks.get(i).is_some_and(|t| t.is_music());
         Results {
             artists: found
                 .artists

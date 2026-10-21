@@ -146,7 +146,7 @@ fn recently_added(c: &mut Canvas, ui: &Ui, tracks: &[Track]) {
         .iter()
         .enumerate()
         .rev()
-        .filter(|(_, t)| t.online && t.artwork && seen.insert(components::art_key(t)))
+        .filter(|(_, t)| t.is_music() && t.artwork && seen.insert(components::art_key(t)))
         .take(4)
         .collect();
     if recent.is_empty() {
@@ -747,7 +747,7 @@ fn songs_under(tracks: &[Track], key: &str) -> usize {
     };
     tracks
         .iter()
-        .filter(|t| t.online && t.path.parent().is_some_and(|p| p.starts_with(path)))
+        .filter(|t| t.is_music() && t.path.parent().is_some_and(|p| p.starts_with(path)))
         .count()
 }
 
