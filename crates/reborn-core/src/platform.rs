@@ -261,6 +261,9 @@ pub enum SdCard {
     /// (a repair on a computer fixes it). A card only pulled out while in use
     /// is not this: it is mounted.
     NeedsRepair,
+    /// Inserted, but its filesystem check did not finish in time (a slow or
+    /// very full card): not damage, and inserting it again checks it again.
+    CheckTimedOut,
     Ready(VolumeSpace),
 }
 

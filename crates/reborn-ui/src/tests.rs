@@ -130,6 +130,7 @@ fn radio_bluetooth() -> BluetoothView {
             connected: true,
             audio_ready: true,
             codec: Some("SBC".into()),
+            connecting: false,
         }],
         ..Default::default()
     }
@@ -1114,12 +1115,22 @@ fn bluetooth_device_states_and_select_actions() {
         name: "New Speaker".into(),
         ..Default::default()
     });
+    ui.bluetooth.devices.push(BluetoothDeviceView {
+        path: "/bt/waiting".into(),
+        name: "Soundbar".into(),
+        paired: true,
+        bonded: true,
+        connecting: true,
+        ..Default::default()
+    });
     let mut m = app(Screen::Bluetooth);
     m.output = AudioOutput::Bluetooth("AA".into());
     let rows = ui.rows(&m, &m.library.tracks);
     // State only; the codec is on Sound > Output (UI v4).
     assert_eq!(rows[1].secondary, "Connected");
-    assert_eq!(rows[2].secondary, "Not paired");
+    // A Connect waiting for the automatic reconnect is not shown as idle.
+    assert_eq!(rows[2].secondary, "Connecting…");
+    assert_eq!(rows[3].secondary, "Not paired");
     assert_eq!(
         select_key(&mut ui, &mut m, "bt_device:/bt/new"),
         Effect::BluetoothDevice {

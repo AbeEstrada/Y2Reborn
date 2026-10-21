@@ -178,6 +178,8 @@ struct Runtime {
     bt_state: bluetooth::Status,
     graphics: Option<Renderer>,
     graphics_recovery: graphics_recovery::Recovery,
+    /// The last screen wake, until its first frame was presented or retried.
+    woke_at: Option<Instant>,
     power: Value,
     kernel_events: Arc<Mutex<Vec<String>>>,
     background: background::Gate,
@@ -825,6 +827,19 @@ impl Runtime {
             None => return,
         };
         if self.radio_live.as_deref() != Some(line.as_str()) {
+            if let Some((StreamState::Failed(reason), _)) = reborn_platform::radio::live() {
+                // Only the Now Playing line showed why a station failed (F19).
+                let (status, content_type) = reborn_platform::radio::last_reply().unzip();
+                self.log.emit(
+                    Level::Warn,
+                    "radio",
+                    "station_failed",
+                    &reason,
+                    None,
+                    json!({"http_status":status,"content_type":content_type,
+                        "directory":self.radio_current.as_ref().map(|s| !s.uuid.is_empty())}),
+                );
+            }
             let position = self.model.queue_position;
             if let Some(track) = self.model.queue.get_mut(position) {
                 track.artist = line.clone();
@@ -974,14 +989,40 @@ impl Runtime {
     }
 
     fn fail(&mut self, sub: &str, error: String) {
-        self.ui.flash(friendly_error(&error));
+        let peer_gone = selected_peer_gone(&self.model.output, &self.bt_state, &error);
+        self.ui.flash(
+            refused_card_error(&error, self.model.platform.snapshot.storage.sd)
+                .map_or_else(|| friendly_error(&error), str::to_owned),
+        );
         self.log.emit(
             Level::Error,
             sub,
             "operation_failed",
             &error,
             None,
-            json!({"state":self.model.playback,"recovery_attempted":false}),
+            json!({"state":self.model.playback,"recovery_attempted":peer_gone}),
+        );
+        if peer_gone {
+            // The disconnect itself was never seen: recover as if it had been.
+            self.bluetooth_peer_lost("paused_after_failed_start");
+        }
+        self.dirty.mark_render();
+    }
+    /// The selected Bluetooth peer is gone: back to the jack, paused.
+    fn bluetooth_peer_lost(&mut self, recovery: &str) {
+        self.abandon_pending_reconfiguration();
+        if let AudioOutput::Bluetooth(address) = self.model.output.clone() {
+            self.model.apply(Event::BluetoothDisconnected(address));
+        }
+        self.pause();
+        self.ui.flash("Bluetooth disconnected. Playback paused.");
+        self.log.emit(
+            Level::Warn,
+            "bluetooth",
+            "transport_lost",
+            "Selected audio peer disconnected",
+            None,
+            json!({"recovery":recovery}),
         );
         self.dirty.mark_render();
     }
@@ -1063,11 +1104,18 @@ impl Runtime {
         self.model.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Waking;
         self.effect_inner(Effect::ScreenWake)?;
         if let Some(graphics) = self.graphics.as_mut() {
-            graphics.render(
-                &self
-                    .ui
-                    .draw(&self.model, &self.model.library.tracks, self.art),
-            )?;
+            let presented = graphics.render(&self.ui.draw(
+                &self.model,
+                &self.model.library.tracks,
+                self.art,
+            ));
+            if let Err(error) = presented {
+                // Not retried here: a screen off/on can block for seconds
+                // (flip_done timeouts) and the platform's sleep_restore call
+                // gives up after 5 s. The main loop's next frame tries it.
+                self.dirty.mark_render();
+                return Err(error);
+            }
             self.graphics_recovery.presented();
         } else if !self.headless {
             return Err("display_restoration_failed".into());
@@ -1076,6 +1124,47 @@ impl Runtime {
         self.last_activity = Instant::now();
         self.dirty.mark_render();
         Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
+    }
+
+    /// The first frames after a wake can fail when the display link came back
+    /// lagging (report 51f3b06d: vblank timeouts, presentation -16, a dark
+    /// screen); the next screen off/on cleared it there. That cycle is tried
+    /// once per wake before the frame counts as failed.
+    fn retry_after_wake(&mut self, error: &str) -> bool {
+        let Some(woke) = self.woke_at.take() else {
+            return false;
+        };
+        if woke.elapsed() > Duration::from_secs(30) {
+            return false;
+        }
+        let draw = self
+            .ui
+            .draw(&self.model, &self.model.library.tracks, self.art);
+        let Some(graphics) = self.graphics.as_mut() else {
+            return false;
+        };
+        let result = graphics
+            .sleep(true)
+            .and_then(|()| graphics.sleep(false))
+            .and_then(|()| graphics.render(&draw));
+        self.log.emit(
+            if result.is_ok() {
+                Level::Info
+            } else {
+                Level::Warn
+            },
+            "graphics",
+            "wake_presentation_retry",
+            "Screen off/on after a failed frame following a wake",
+            None,
+            json!({"error":error,"recovery_attempted":true,"recovered":result.is_ok(),
+                "retry_error":result.as_ref().err()}),
+        );
+        if result.is_ok() {
+            self.graphics_recovery.presented();
+            self.dirty.mark_render();
+        }
+        result.is_ok()
     }
 
     fn recreate_graphics(&mut self) -> Result<(), String> {
@@ -2227,6 +2316,7 @@ impl Runtime {
                     }
                 }
                 self.model.apply(Event::ScreenWake);
+                self.woke_at = Some(Instant::now());
                 self.last_activity = Instant::now();
                 self.dark_since = None;
                 self.wifi_idle_restore();
@@ -3229,6 +3319,7 @@ fn bluetooth_view(s: &bluetooth::Status) -> BluetoothView {
                 connected: d.connected,
                 audio_ready: s.pcms.iter().any(|pcm| pcm.is_a2dp_playback_for(&d.path)),
                 codec: s.active_codec(&d.path),
+                connecting: s.waiting.as_deref() == Some(d.path.as_str()),
             })
             .collect(),
         codec_choices: s.codec_choices(),
@@ -3427,8 +3518,43 @@ fn platform_refresh_interval(screen: Screen) -> Duration {
     })
 }
 
+/// A start failed because the selected Bluetooth peer is not connected, and
+/// the last observation agrees: the disconnect was missed, not just late.
+fn selected_peer_gone(output: &AudioOutput, state: &bluetooth::Status, error: &str) -> bool {
+    let AudioOutput::Bluetooth(address) = output else {
+        return false;
+    };
+    error.contains("A2DP peer required")
+        && state.available
+        && !state
+            .devices
+            .iter()
+            .any(|d| d.address.eq_ignore_ascii_case(address) && d.connected)
+}
+
+/// A song on a card the platform refused: reinserting a damaged card does not
+/// help (F12: the user swapped cards eight times on that advice).
+fn refused_card_error(error: &str, sd: reborn_core::platform::SdCard) -> Option<&'static str> {
+    use reborn_core::platform::SdCard;
+    let lower = error.to_ascii_lowercase();
+    if !(lower.contains("source offline") || lower.contains("source unavailable")) {
+        return None;
+    }
+    match sd {
+        SdCard::NeedsRepair => Some("The SD card needs repair. Check it on a computer."),
+        SdCard::CheckTimedOut => {
+            Some("The SD card took too long to check. Remove it and insert it again.")
+        }
+        _ => None,
+    }
+}
+
 fn friendly_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
+    if lower.contains("a2dp peer required") {
+        return "Bluetooth headphones aren't connected. Connect them or choose the headphone jack."
+            .into();
+    }
     if lower.contains("connect bluetooth") || lower.contains("pause music") {
         // Already user language.
         return error.to_owned();
@@ -3761,6 +3887,7 @@ fn run() -> Result<(), String> {
         bt_state: Default::default(),
         graphics,
         graphics_recovery: graphics_recovery::Recovery::default(),
+        woke_at: None,
         power: power::status(),
         kernel_events: Arc::new(Mutex::new(Vec::new())),
         background,
@@ -4597,8 +4724,12 @@ fn run() -> Result<(), String> {
                         codec_reconnect.sent(address);
                     }
                 }
+                // Several snapshots can arrive in one tick (after a wake, or a
+                // burst when a peer drops): a later one must not hide an earlier
+                // disconnect (reports 61caa81e/297f1032: output stayed Bluetooth
+                // and every Play failed until a restart).
                 if let AudioOutput::Bluetooth(address) = &rt.model.output {
-                    bt_lost = rt
+                    bt_lost |= rt
                         .bt_state
                         .devices
                         .iter()
@@ -4636,20 +4767,7 @@ fn run() -> Result<(), String> {
             }
         }
         if bt_lost {
-            rt.abandon_pending_reconfiguration();
-            if let AudioOutput::Bluetooth(address) = rt.model.output.clone() {
-                rt.model.apply(Event::BluetoothDisconnected(address));
-            }
-            rt.pause();
-            rt.ui.flash("Bluetooth disconnected. Playback paused.");
-            log.emit(
-                Level::Warn,
-                "bluetooth",
-                "transport_lost",
-                "Selected audio peer disconnected",
-                None,
-                json!({"recovery":"paused"}),
-            );
+            rt.bluetooth_peer_lost("paused");
         }
         if rt.pending_reconfiguration.is_none() {
             if let Some(address) = auto_output.next(&rt.bt_state, &rt.model.output) {
@@ -5114,16 +5232,18 @@ fn run() -> Result<(), String> {
             let mut presentation_failed = false;
             if let Some(g) = &mut rt.graphics {
                 if let Err(e) = g.render(&draw) {
-                    presentation_failed = true;
-                    rt.fail("graphics", e);
-                    rt.graphics = None;
-                    // One bounded recreation attempt. Further attempts wait for an explicit wake.
-                    if rt.graphics_recovery.failed() {
-                        if let Err(error) = rt.recreate_graphics() {
-                            rt.fail("graphics", error);
+                    if !rt.retry_after_wake(&e) {
+                        presentation_failed = true;
+                        rt.fail("graphics", e);
+                        rt.graphics = None;
+                        // One bounded recreation attempt. Further attempts wait for an explicit wake.
+                        if rt.graphics_recovery.failed() {
+                            if let Err(error) = rt.recreate_graphics() {
+                                rt.fail("graphics", error);
+                            }
                         }
+                        let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                     }
-                    let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                 } else {
                     rt.graphics_recovery.presented();
                     if performance.enabled() {
@@ -5741,6 +5861,49 @@ mod bluetooth_epoch_tests {
             ..Default::default()
         }];
         status
+    }
+
+    #[test]
+    fn a_start_refused_for_a_missing_peer_counts_as_a_disconnect() {
+        let output = AudioOutput::Bluetooth("01:02:03:04:05:06".into());
+        let refused = "connected A2DP peer required";
+        let mut gone = status(10);
+        gone.available = true;
+        gone.devices[0].connected = false;
+        assert!(super::selected_peer_gone(&output, &gone, refused));
+        // Still connected (audio not ready yet), another error, the jack, or no
+        // observation at all: not a disconnect.
+        let mut connected = status(10);
+        connected.available = true;
+        assert!(!super::selected_peer_gone(&output, &connected, refused));
+        assert!(!super::selected_peer_gone(
+            &output,
+            &gone,
+            "BlueALSA unavailable"
+        ));
+        assert!(!super::selected_peer_gone(
+            &AudioOutput::Wired,
+            &gone,
+            refused
+        ));
+        gone.available = false;
+        assert!(!super::selected_peer_gone(&output, &gone, refused));
+        assert!(super::friendly_error(refused).starts_with("Bluetooth headphones aren't connected"));
+    }
+
+    #[test]
+    fn a_song_on_a_refused_card_does_not_ask_for_a_reinsert() {
+        use reborn_core::platform::SdCard;
+        let missing = "track source unavailable";
+        assert!(super::refused_card_error(missing, SdCard::NeedsRepair)
+            .is_some_and(|m| m.contains("needs repair")));
+        assert!(super::refused_card_error(missing, SdCard::CheckTimedOut)
+            .is_some_and(|m| m.contains("too long")));
+        assert_eq!(super::refused_card_error(missing, SdCard::Absent), None);
+        assert_eq!(
+            super::refused_card_error("queue is empty", SdCard::NeedsRepair),
+            None
+        );
     }
 
     #[test]

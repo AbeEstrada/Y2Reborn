@@ -484,6 +484,12 @@ pub fn storage(status: &Value) -> StorageState {
                 SdCard::Absent
             }
             // Inserted, but refused by its filesystem check (still this card).
+            // A check that ran out of time found nothing (F12).
+            Some("filesystem_check_failed")
+                if entries(&v["findings"]).any(|f| f.as_str() == Some("timeout")) =>
+            {
+                SdCard::CheckTimedOut
+            }
             Some("filesystem_check_failed") => SdCard::NeedsRepair,
             _ if v["state"] == "Unavailable" => SdCard::Absent,
             _ => SdCard::Error,
@@ -1498,6 +1504,16 @@ mod tests {
             }
         }
         assert_eq!(snapshot(&refused, &caps()).storage.sd, SdCard::NeedsRepair);
+        // The same refusal after a check that only ran out of time.
+        for v in refused["storage"]["volumes"].as_array_mut().unwrap() {
+            if v["path"] == "/media/sd" {
+                v["findings"] = json!(["timeout"]);
+            }
+        }
+        assert_eq!(
+            snapshot(&refused, &caps()).storage.sd,
+            SdCard::CheckTimedOut
+        );
         assert_eq!(s.usb, UsbTransfer::Developer);
         assert_eq!(
             s.update.phase,

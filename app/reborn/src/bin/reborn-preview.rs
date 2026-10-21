@@ -241,6 +241,7 @@ fn ui() -> Ui {
                 connected: true,
                 audio_ready: true,
                 codec: Some("AAC".into()),
+                connecting: false,
             },
             BluetoothDeviceView {
                 name: "Living Room Speaker with an Unusually Long Name".into(),

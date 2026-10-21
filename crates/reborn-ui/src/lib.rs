@@ -172,6 +172,8 @@ pub struct BluetoothDeviceView {
     pub audio_ready: bool,
     /// Actually negotiated codec, never the preference.
     pub codec: Option<String>,
+    /// A Connect waiting for another Bluetooth operation to finish.
+    pub connecting: bool,
 }
 
 impl BluetoothDeviceView {
@@ -203,6 +205,8 @@ impl BluetoothDeviceView {
             "Connected".into()
         } else if self.connected {
             "Connecting audio…".into()
+        } else if self.connecting {
+            "Connecting…".into()
         } else {
             "Paired".into()
         }

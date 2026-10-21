@@ -961,6 +961,7 @@ fn library(m: &AppModel, tracks: &[Track]) -> Page {
         match m.platform.snapshot.storage.sd {
             SdCard::Error => "Card can't be read".into(),
             SdCard::NeedsRepair => "Card needs repair".into(),
+            SdCard::CheckTimedOut => "Card check took too long".into(),
             _ => "No SD card".into(),
         }
     };
@@ -1359,6 +1360,7 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
             SdCard::Absent => "No SD card".into(),
             SdCard::Error => "SD card error · Reinsert the card".into(),
             SdCard::NeedsRepair => "Needs repair · Check it on a computer".into(),
+            SdCard::CheckTimedOut => "Check took too long · Insert it again".into(),
             SdCard::Unknown => "Checking…".into(),
         },
     );

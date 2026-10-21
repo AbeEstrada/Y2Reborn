@@ -136,6 +136,54 @@ fn is_hls(text: &str) -> bool {
     text.contains("#EXT-X-")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sniffed {
+    Playlist,
+    Hls,
+    Audio,
+}
+
+/// A reply whose type says nothing useful (text/plain, octet-stream, none) or
+/// that answers a playlist address with a non-audio type is looked at: many
+/// servers send .m3u/.pls files that way, and they went to the decoder.
+fn ambiguous(content_type: &str, url: &str) -> bool {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
+    let playlist_address = [".m3u", ".m3u8", ".pls"].iter().any(|e| path.ends_with(e));
+    content_type.is_empty()
+        || content_type.starts_with("text/plain")
+        || content_type.starts_with("application/octet-stream")
+        || content_type.starts_with("binary/")
+        || (playlist_address && !content_type.starts_with("audio/"))
+}
+
+/// What the first bytes of an ambiguous reply are.
+fn sniff(head: &[u8]) -> Sniffed {
+    let text = String::from_utf8_lossy(&head[..head.len().min(4096)]);
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    if is_hls(text) {
+        return Sniffed::Hls;
+    }
+    let first = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if first.starts_with("#extm3u")
+        || first == "[playlist]"
+        || first.starts_with("http://")
+        || first.starts_with("https://")
+    {
+        Sniffed::Playlist
+    } else {
+        Sniffed::Audio
+    }
+}
+
 /// The owner's stations: every .m3u, .m3u8 and .pls file in a folder named
 /// Radio (any letter case) at the top of Internal Storage or the SD card.
 pub fn own_stations(storage_roots: &[PathBuf]) -> Vec<Station> {
@@ -495,6 +543,8 @@ struct Shared {
     child: Mutex<Option<Child>>,
     state: Mutex<StreamState>,
     title: Mutex<Option<String>>,
+    /// HTTP status and content type of the last reply, for diagnostics.
+    reply: Mutex<Option<(u16, String)>>,
 }
 
 /// The station most recently started, for the player's Now Playing line.
@@ -506,6 +556,13 @@ pub fn live() -> Option<(StreamState, Option<String>)> {
     let state = shared.state.lock().ok()?.clone();
     let title = shared.title.lock().ok()?.clone();
     Some((state, title))
+}
+
+/// HTTP status and content type of the current station's last reply.
+pub fn last_reply() -> Option<(u16, String)> {
+    let shared = LIVE.lock().ok()?.as_ref()?.upgrade()?;
+    let reply = shared.reply.lock().ok()?.clone();
+    reply
 }
 
 /// One station being received. Dropping it stops the network transfer.
@@ -536,6 +593,7 @@ impl Stream {
             child: Mutex::new(None),
             state: Mutex::new(StreamState::Connecting),
             title: Mutex::new(None),
+            reply: Mutex::new(None),
         });
         if let Ok(mut live) = LIVE.lock() {
             *live = Some(Arc::downgrade(&shared));
@@ -671,6 +729,9 @@ fn receive(url: &str, pipe: &mut std::fs::File, shared: &Shared) -> Receive {
             };
         }
     };
+    if let Ok(mut reply) = shared.reply.lock() {
+        *reply = Some((response.status, response.content_type.clone()));
+    }
     if !(200..300).contains(&response.status) {
         finish(shared);
         return if response.status == 404 || response.status == 410 {
@@ -682,18 +743,25 @@ fn receive(url: &str, pipe: &mut std::fs::File, shared: &Shared) -> Receive {
         };
     }
     let kind = &response.content_type;
+    let sniffed = if ambiguous(kind, url) {
+        reader.fill_buf().map(sniff).unwrap_or(Sniffed::Audio)
+    } else {
+        Sniffed::Audio
+    };
     if kind.contains("mpegurl")
         || kind.contains("scpls")
         || kind.contains("x-pls")
         || kind.contains("dash+xml")
+        || sniffed != Sniffed::Audio
     {
         let mut text = Vec::new();
         let _ = reader.take(1 << 20).read_to_end(&mut text);
         finish(shared);
         let text = String::from_utf8_lossy(&text);
         if is_hls(&text) || kind.contains("dash") {
+            // BBC stations, for example, stream only this way now.
             return Receive::Unsupported(
-                "This station only offers HLS/DASH, which isn't supported yet.".into(),
+                "This station only streams as HLS/DASH, which isn't supported yet.".into(),
             );
         }
         return match parse_playlist(&text).into_iter().next() {
@@ -1008,6 +1076,35 @@ mod tests {
     /// `live()` names the station started last in this process; tests that
     /// start one take turns, or a parallel test's station replaces theirs.
     static STREAMS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn playlists_served_as_plain_text_or_bytes_are_recognised() {
+        assert!(ambiguous("text/plain", "http://example.org/live"));
+        assert!(ambiguous(
+            "application/octet-stream",
+            "http://example.org/x"
+        ));
+        assert!(ambiguous("", "http://example.org/x"));
+        assert!(ambiguous("text/html", "http://example.org/radio2.pls?x=1"));
+        assert!(!ambiguous("audio/mpeg", "http://example.org/stream.m3u"));
+        assert!(!ambiguous("audio/aac", "http://example.org/live"));
+        assert_eq!(
+            sniff(b"#EXTM3U\r\n#EXTINF:-1,Radio\r\nhttp://a/b\r\n"),
+            Sniffed::Playlist
+        );
+        assert_eq!(
+            sniff("\u{feff}[playlist]\nFile1=http://a/b\n".as_bytes()),
+            Sniffed::Playlist
+        );
+        assert_eq!(sniff(b"\nhttps://a.example/stream\n"), Sniffed::Playlist);
+        assert_eq!(
+            sniff(b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=1\nx.m3u8\n"),
+            Sniffed::Hls
+        );
+        // MP3 frames and ID3 tags are audio.
+        assert_eq!(sniff(&[0xff, 0xfb, 0x90, 0x64, 0x00]), Sniffed::Audio);
+        assert_eq!(sniff(b"ID3\x04\x00\x00\x00\x00\x00\x00"), Sniffed::Audio);
+    }
 
     #[test]
     fn icy_blocks_are_removed_and_titles_kept_across_any_split() {

@@ -803,6 +803,8 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
                     "Card can't be read"
                 } else if matches!(snapshot.storage.sd, SdCard::NeedsRepair) && i == 1 {
                     "Needs repair · Check it on a computer"
+                } else if matches!(snapshot.storage.sd, SdCard::CheckTimedOut) && i == 1 {
+                    "Check took too long · Insert it again"
                 } else if i == 1 {
                     "No SD card"
                 } else {

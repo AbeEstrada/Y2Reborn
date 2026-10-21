@@ -537,6 +537,12 @@ int rb_sink_pause(RbSink *s, int on, int device_pause) {
       return 0;
     /* Non-blocking: -EAGAIN means the drain continues by itself. */
     int r = snd_pcm_drain(s->pcm);
+    /* BlueALSA 5.0 gives up waiting after ~100 ms plus the queued periods,
+     * stops the stream and leaves it in SETUP with -EIO ("Drain timed out").
+     * The stream is stopped as a pause wants, and resume prepares it again:
+     * not a failure (it logged pause_failed on every Bluetooth pause). */
+    if (r == -EIO && !device_pause && snd_pcm_state(s->pcm) == SND_PCM_STATE_SETUP)
+      return 0;
     return r < 0 && r != -EAGAIN ? r : 0;
   }
   if (state == SND_PCM_STATE_PAUSED)
