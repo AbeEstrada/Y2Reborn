@@ -10,6 +10,7 @@ pub mod sort;
 mod zones;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -888,6 +889,13 @@ pub struct LibraryState {
     pub last_scan: Option<ScanSummary>,
     #[serde(skip)]
     pub error: Option<String>,
+    /// Where every audiobook was left (`state/books.json`, kept apart from
+    /// the session and the library database).
+    #[serde(skip)]
+    pub shelf: books::Shelf,
+    /// Chapter marks read from book files, by path (filled in the background).
+    #[serde(skip)]
+    pub chapters: HashMap<PathBuf, Vec<books::ChapterMark>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1193,6 +1201,20 @@ pub struct AppModel {
     pub navigation: NavigationState,
     #[serde(skip)]
     pub platform: PlatformState,
+    /// The audiobook being listened to, while the queue is its parts.
+    #[serde(default)]
+    pub book: Option<books::Listening>,
+}
+
+/// How an audiobook starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookStart {
+    /// Where it was left, a little before.
+    Resume,
+    /// From its first chapter.
+    Beginning,
+    /// At the start of chapter `n`.
+    Chapter(usize),
 }
 
 /// Effects are requests to the application/service boundary. They carry no
@@ -1269,6 +1291,14 @@ pub enum Effect {
     SetAlbumView(AlbumView),
     SetWrapAround(WrapAround),
     SetScreenOffButtons(ScreenOffButtons),
+    /// Play the audiobook with this key.
+    PlayBook(String, BookStart),
+    /// Mark the book finished (it starts over) or not.
+    SetBookFinished(String, bool),
+    /// Forget where the book was left.
+    ForgetBook(String),
+    /// Read the chapter marks of this book's files (its page opened).
+    LoadChapters(String),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
@@ -1365,8 +1395,16 @@ impl AppModel {
             .collect();
         self.queue_position = index;
         self.position_ms = 0;
+        // A new queue is no longer the book (starting a book sets it again).
+        self.book = None;
         self.invalidate();
         Ok(())
+    }
+    /// The playing book and which of its parts is current, when the current
+    /// queue entry is one of its parts.
+    pub fn book_part(&self) -> Option<(&books::Listening, usize)> {
+        let book = self.book.as_ref()?;
+        Some((book, book.part_of(self.current()?)?))
     }
     pub fn current_entry_id(&self) -> Option<QueueEntryId> {
         self.queue_entry_ids.get(self.queue_position).copied()

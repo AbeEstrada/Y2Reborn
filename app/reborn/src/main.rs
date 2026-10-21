@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod artwork;
 mod background;
+mod books;
 mod diagnostics;
 mod graphics_recovery;
 mod performance;
@@ -150,6 +151,14 @@ enum RadioReply {
 struct Runtime {
     /// Look the time zone up again (Automatic was just turned on).
     zone_lookup_again: bool,
+    /// Reads chapter marks of audiobook files in the background.
+    chapter_reader: Option<books::ChapterReader>,
+    /// Book files whose chapter marks were asked for (each once).
+    chapters_asked: HashSet<PathBuf>,
+    /// The audiobook shelf as last written to `state/books.json`.
+    shelf_written: reborn_core::books::Shelf,
+    /// When playback was last paused (a book rewinds after a long pause).
+    paused_at: Option<Instant>,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -409,10 +418,16 @@ impl Runtime {
                 self.dirty.mark_render();
                 return Err("audio reconfiguration is still pending".into());
             }
+            // The library, book progress and chapter marks are not rolled
+            // back (and not copied for every action).
             let tracks = std::mem::take(&mut self.model.library.tracks);
+            let shelf = std::mem::take(&mut self.model.library.shelf);
+            let chapters = std::mem::take(&mut self.model.library.chapters);
             let platform = std::mem::take(&mut self.model.platform);
             self.action_before = Some(self.model.clone());
             self.model.library.tracks = tracks;
+            self.model.library.shelf = shelf;
+            self.model.library.chapters = chapters;
             self.model.platform = platform;
             self.action_dirty_before = Some(self.dirty);
             self.reconfiguration_attempted = false;
@@ -465,6 +480,8 @@ impl Runtime {
         transition_generation: Option<u64>,
     ) {
         previous.library.tracks = std::mem::take(&mut self.model.library.tracks);
+        previous.library.shelf = std::mem::take(&mut self.model.library.shelf);
+        previous.library.chapters = std::mem::take(&mut self.model.library.chapters);
         previous.platform = std::mem::take(&mut self.model.platform);
         if !sink_release_started {
             self.model = previous;
@@ -681,6 +698,7 @@ impl Runtime {
         if self.ui.wifi.status == WifiStatus::Disconnected {
             return Err("Connect to Wi-Fi to listen to radio".into());
         }
+        self.save_book();
         self.model.replace_queue(vec![Track::radio(&station)], 0)?;
         self.radio_live = None;
         // Previous/Next move through the list the station was chosen from.
@@ -986,6 +1004,7 @@ impl Runtime {
             .iter()
             .filter_map(|&member| tracks.get(member).cloned())
             .collect::<Vec<_>>();
+        self.save_book();
         self.model.replace_queue(queue, start)?;
         self.load()
     }
@@ -1375,6 +1394,9 @@ impl Runtime {
     }
 
     fn checkpoint(&mut self) {
+        // Where the playing audiobook is, with every session checkpoint.
+        self.save_book();
+        self.write_shelf();
         self.dirty.mark_persistence();
         if self.playback.has_pending_start() || self.pending_reconfiguration.is_some() {
             return;
@@ -1461,7 +1483,12 @@ impl Runtime {
             eq_enabled: eq.is_some(),
             preamp_db: eq.as_ref().map_or(0.0, |(preamp, _)| *preamp),
             eq_bands: eq.map(|(_, bands)| bands).unwrap_or_default(),
-            crossfade_ms: self.model.settings.crossfade_ms,
+            // A book's parts follow each other without a crossfade.
+            crossfade_ms: if self.model.book_part().is_some() {
+                0
+            } else {
+                self.model.settings.crossfade_ms
+            },
         };
         let request_parts = (
             track,
@@ -1671,6 +1698,7 @@ impl Runtime {
         true
     }
     fn pause(&mut self) {
+        self.paused_at = Some(Instant::now());
         self.playback_hints.clear();
         // A file paused while it plays holds in place: resume is instant. A
         // station (live), a start in progress or a pending seek release.
@@ -1738,6 +1766,12 @@ impl Runtime {
         ) {
             self.pause();
             Ok(())
+        } else if let Some(back) = self.book_rewind() {
+            // A book continues a little before where it was left.
+            self.release_hold();
+            self.model.position_ms = self.model.position_ms.saturating_sub(back);
+            self.paused_at = None;
+            self.load()
         } else if self.resume_in_place() {
             Ok(())
         } else {
@@ -1749,6 +1783,10 @@ impl Runtime {
         self.with_model_action(Self::finish_track_inner)
     }
     fn finish_track_inner(&mut self) -> Result<(), String> {
+        // A book plays its parts in order once, whatever Repeat says.
+        if let Some(result) = self.finish_book_part() {
+            return result;
+        }
         match self.model.settings.repeat {
             reborn_core::RepeatMode::Track => {
                 self.model.position_ms = 0;
@@ -1821,7 +1859,12 @@ impl Runtime {
                     _ => now,
                 };
                 self.seek_run = Some((start, now));
-                let step = seek_step(now.duration_since(start), length) as i64;
+                let held = now.duration_since(start);
+                let step = if self.model.book_part().is_some() {
+                    books::seek_step(held)
+                } else {
+                    seek_step(held, length)
+                } as i64;
                 self.seek_by(direction.signum() * step);
                 return Ok(());
             }
@@ -2139,8 +2182,11 @@ impl Runtime {
                 } else {
                     -1
                 };
+                // A book moves by chapter.
+                if let Some(result) = self.book_step(delta) {
+                    result?;
                 // A station has no next track: the next station of its list.
-                if self.model.current().is_some_and(Track::is_radio) {
+                } else if self.model.current().is_some_and(Track::is_radio) {
                     self.zap(delta)?;
                 } else if self.model.step(delta) {
                     self.load()?
@@ -2555,6 +2601,14 @@ impl Runtime {
             Effect::SetWrapAround(wrap) => {
                 self.model.settings.wrap_around = wrap;
                 self.checkpoint();
+            }
+            Effect::PlayBook(key, start) => self.start_book(&key, start)?,
+            Effect::SetBookFinished(key, finished) => self.set_book_finished(&key, finished)?,
+            Effect::ForgetBook(key) => self.forget_book(&key)?,
+            Effect::LoadChapters(key) => {
+                if let Some(book) = self.book_by_key(&key) {
+                    self.request_chapters(&book);
+                }
             }
             Effect::SetScreenOffButtons(mode) => {
                 self.model.settings.screen_off_buttons = mode;
@@ -3884,6 +3938,14 @@ fn run() -> Result<(), String> {
     let background = background::Gate::new(&model.settings.music_directory, &model.sources);
     let mut rt = Runtime {
         zone_lookup_again: false,
+        chapter_reader: if headless {
+            None
+        } else {
+            books::ChapterReader::spawn().ok()
+        },
+        chapters_asked: HashSet::new(),
+        shelf_written: Default::default(),
+        paused_at: None,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -3968,6 +4030,8 @@ fn run() -> Result<(), String> {
         wifi_idle_off: false,
         wifi_idle_failed: false,
     };
+    rt.model.library.shelf = books::load_shelf(&root.join("state/books.json"));
+    rt.shelf_written = rt.model.library.shelf.clone();
     rt.ui.radio.favorites = rt
         .radio_favorites
         .iter()
@@ -4103,6 +4167,7 @@ fn run() -> Result<(), String> {
         ) {
             observation_pending = None;
         }
+        rt.receive_chapters();
         if let Some(worker) = &mut rt.thumbs {
             // Upload finished thumbnails (a few per pass, so a burst never
             // stalls a frame), then queue what the last frame could not show.

@@ -13,6 +13,7 @@
 //! (`Book Part 1.m4b`, `Book Part 2.m4b`). A file lying directly in the
 //! Audiobooks folder is a book of its own.
 use crate::{sort::fold, Track};
+use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap, path::Path};
 
 /// Folder names (folded) that hold audiobooks.
@@ -265,6 +266,274 @@ pub fn natural(a: &str, b: &str) -> Ordering {
     }
 }
 
+// ------------------------------------------------------------- listening
+
+/// A chapter mark inside a file, as the media layer reads it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChapterMark {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub title: String,
+}
+
+/// One chapter of a book: which part (file) holds it and where in that part.
+/// `end_ms` 0 means "to the part's end".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    pub part: usize,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub title: String,
+}
+
+/// The chapters of a book: a part's own chapter marks when it has any, else
+/// the part itself. `marks[i]` belongs to `parts[i]`.
+pub fn spans(parts: &[&Track], marks: &[Vec<ChapterMark>]) -> Vec<Span> {
+    let mut out = vec![];
+    for (i, track) in parts.iter().enumerate() {
+        let number = out.len();
+        match marks.get(i).filter(|m| !m.is_empty()) {
+            Some(marks) => out.extend(marks.iter().enumerate().map(|(n, m)| Span {
+                part: i,
+                start_ms: if n == 0 { 0 } else { m.start_ms },
+                end_ms: if n + 1 == marks.len() { 0 } else { m.end_ms },
+                title: if m.title.trim().is_empty() {
+                    format!("Chapter {}", number + n + 1)
+                } else {
+                    m.title.trim().to_owned()
+                },
+            })),
+            None => out.push(Span {
+                part: i,
+                start_ms: 0,
+                end_ms: 0,
+                title: track.title.clone(),
+            }),
+        }
+    }
+    out
+}
+
+/// Previous restarts the chapter after this long in it, else goes back one.
+pub const RESTART_AFTER_MS: u64 = 5_000;
+
+/// The book being listened to: its parts (by path, so songs added to the
+/// queue never confuse it) and its chapters.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Listening {
+    pub key: String,
+    pub title: String,
+    pub author: String,
+    pub parts: Vec<std::path::PathBuf>,
+    /// Lengths of the parts (0 unknown), for book time and percent.
+    pub part_ms: Vec<u64>,
+    pub chapters: Vec<Span>,
+    /// Playback speed of this book (1.0 normal).
+    #[serde(default = "normal_speed")]
+    pub speed: f32,
+}
+fn normal_speed() -> f32 {
+    1.0
+}
+impl Listening {
+    pub fn new(book: &Book, tracks: &[Track], speed: f32) -> Self {
+        let parts: Vec<&Track> = book.parts.iter().map(|&i| &tracks[i]).collect();
+        Self {
+            key: book.key.clone(),
+            title: book.title.clone(),
+            author: book.author.clone(),
+            parts: parts.iter().map(|t| t.path.clone()).collect(),
+            part_ms: parts.iter().map(|t| t.duration_ms).collect(),
+            chapters: spans(&parts, &[]),
+            speed,
+        }
+    }
+    /// Which part `track` is, if it belongs to this book.
+    pub fn part_of(&self, track: &Track) -> Option<usize> {
+        self.parts.iter().position(|p| *p == track.path)
+    }
+    fn end_of(&self, span: &Span) -> u64 {
+        if span.end_ms > 0 {
+            span.end_ms
+        } else {
+            self.part_ms.get(span.part).copied().unwrap_or(0)
+        }
+    }
+    /// The chapter playing at `position_ms` of `part`.
+    pub fn chapter_at(&self, part: usize, position_ms: u64) -> Option<usize> {
+        self.chapters
+            .iter()
+            .rposition(|c| c.part == part && c.start_ms <= position_ms)
+            .or_else(|| self.chapters.iter().position(|c| c.part == part))
+    }
+    /// Chapter `index`'s start, its length and how far `position_ms` is in it.
+    pub fn chapter_span(&self, index: usize) -> Option<(u64, u64)> {
+        let c = self.chapters.get(index)?;
+        Some((c.start_ms, self.end_of(c).saturating_sub(c.start_ms)))
+    }
+    /// Where Next goes: the start of the following chapter, `None` at the end.
+    pub fn next(&self, part: usize, position_ms: u64) -> Option<(usize, u64)> {
+        let at = self.chapter_at(part, position_ms)?;
+        self.chapters.get(at + 1).map(|c| (c.part, c.start_ms))
+    }
+    /// Where Previous goes: this chapter's start after `RESTART_AFTER_MS` in
+    /// it (or in the first chapter), else the previous chapter's start.
+    pub fn previous(&self, part: usize, position_ms: u64) -> Option<(usize, u64)> {
+        let at = self.chapter_at(part, position_ms)?;
+        let c = &self.chapters[at];
+        if at == 0 || position_ms.saturating_sub(c.start_ms) > RESTART_AFTER_MS {
+            return Some((c.part, c.start_ms));
+        }
+        let p = &self.chapters[at - 1];
+        Some((p.part, p.start_ms))
+    }
+    /// Milliseconds of the book before `part` plus `position_ms`; with the
+    /// whole length, `None` when a part's length is unknown.
+    pub fn progress(&self, part: usize, position_ms: u64) -> Option<(u64, u64)> {
+        if self.part_ms.contains(&0) {
+            return None;
+        }
+        let before: u64 = self.part_ms.iter().take(part).sum();
+        Some((before + position_ms, self.part_ms.iter().sum()))
+    }
+}
+
+// --------------------------------------------------------------- progress
+
+/// Where a book was left. The part is kept by path and by name + size, so
+/// a renamed or moved folder finds its place again.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Progress {
+    pub part_path: std::path::PathBuf,
+    pub part_name: String,
+    pub part_size: u64,
+    pub position_ms: u64,
+    /// Unix seconds of the last listening.
+    pub updated: i64,
+    #[serde(default)]
+    pub finished: bool,
+    #[serde(default = "normal_speed")]
+    pub speed: f32,
+}
+
+/// Every book's progress, by book key (`state/books.json`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Shelf {
+    #[serde(default)]
+    pub books: std::collections::BTreeMap<String, Progress>,
+}
+
+/// Rewind on resume: a little after a short pause, more after a long one.
+pub fn rewind_ms(paused_seconds: i64) -> u64 {
+    match paused_seconds {
+        ..600 => 5_000,
+        600..86_400 => 15_000,
+        _ => 30_000,
+    }
+}
+
+impl Shelf {
+    /// This book's progress and the key it is stored under: its own key, or
+    /// a record whose part is one of the book's files (by name and size).
+    pub fn find<'a>(&'a self, book: &Book, tracks: &[Track]) -> Option<(&'a str, &'a Progress)> {
+        if let Some((key, p)) = self.books.get_key_value(&book.key) {
+            return Some((key.as_str(), p));
+        }
+        self.books.iter().find_map(|(key, p)| {
+            book.parts
+                .iter()
+                .any(|&i| tracks[i].filename == p.part_name && tracks[i].size == p.part_size)
+                .then_some((key.as_str(), p))
+        })
+    }
+    /// Remember `book` at `part` (an index into its parts), `position_ms`.
+    /// The first seconds of a book are not worth a place; a renamed book's
+    /// old record moves to its new key.
+    pub fn record(
+        &mut self,
+        book: &Book,
+        tracks: &[Track],
+        part: usize,
+        position_ms: u64,
+        speed: f32,
+        now: i64,
+    ) {
+        let old = self.find(book, tracks).map(|(k, _)| k.to_owned());
+        let started = part > 0 || position_ms >= 10_000;
+        let finished = old
+            .as_ref()
+            .and_then(|k| self.books.get(k))
+            .is_some_and(|p| p.finished && part == 0 && position_ms < 10_000);
+        if let Some(old) = old {
+            self.books.remove(&old);
+        }
+        if !started && !finished {
+            return;
+        }
+        let Some(&index) = book.parts.get(part) else {
+            return;
+        };
+        let t = &tracks[index];
+        self.books.insert(
+            book.key.clone(),
+            Progress {
+                part_path: t.path.clone(),
+                part_name: t.filename.clone(),
+                part_size: t.size,
+                position_ms,
+                updated: now,
+                finished,
+                speed,
+            },
+        );
+    }
+    /// Mark `book` finished (or not): finished books start over.
+    pub fn set_finished(&mut self, book: &Book, tracks: &[Track], finished: bool, now: i64) {
+        let speed = self.find(book, tracks).map_or(1.0, |(_, p)| p.speed);
+        self.forget(book, tracks);
+        if finished {
+            let t = &tracks[book.parts[0]];
+            self.books.insert(
+                book.key.clone(),
+                Progress {
+                    part_path: t.path.clone(),
+                    part_name: t.filename.clone(),
+                    part_size: t.size,
+                    position_ms: 0,
+                    updated: now,
+                    finished: true,
+                    speed,
+                },
+            );
+        }
+    }
+    pub fn forget(&mut self, book: &Book, tracks: &[Track]) {
+        if let Some(key) = self.find(book, tracks).map(|(k, _)| k.to_owned()) {
+            self.books.remove(&key);
+        }
+    }
+    /// Where `book` continues: (part index, position) with the rewind, the
+    /// start for a new or finished book. A place within 5 s of a part's end
+    /// continues at the next part.
+    pub fn resume(&self, book: &Book, tracks: &[Track], now: i64) -> (usize, u64) {
+        let Some((_, p)) = self.find(book, tracks).filter(|(_, p)| !p.finished) else {
+            return (0, 0);
+        };
+        let Some(part) = book.parts.iter().position(|&i| {
+            tracks[i].path == p.part_path
+                || (tracks[i].filename == p.part_name && tracks[i].size == p.part_size)
+        }) else {
+            return (0, 0);
+        };
+        let length = tracks[book.parts[part]].duration_ms;
+        if length > 0 && p.position_ms + 5_000 >= length && part + 1 < book.parts.len() {
+            return (part + 1, 0);
+        }
+        let back = rewind_ms(now - p.updated);
+        (part, p.position_ms.saturating_sub(back))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +701,121 @@ mod tests {
         // An unknown length leaves the book's length unknown.
         tracks[1].duration_ms = 0;
         assert_eq!(books(&tracks)[0].duration_ms, 0);
+    }
+
+    fn mark(start_ms: u64, end_ms: u64, title: &str) -> ChapterMark {
+        ChapterMark {
+            start_ms,
+            end_ms,
+            title: title.into(),
+        }
+    }
+
+    #[test]
+    fn chapters_come_from_marks_or_from_the_parts() {
+        let a = file("/m/Audiobooks/B/1.mp3");
+        let b = file("/m/Audiobooks/B/2.m4b");
+        let spans = spans(
+            &[&a, &b],
+            &[
+                vec![],
+                vec![mark(0, 20_000, "Intro"), mark(20_000, 60_000, " ")],
+            ],
+        );
+        let shown: Vec<_> = spans
+            .iter()
+            .map(|s| (s.part, s.start_ms, s.end_ms, s.title.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (0, 0, 0, "1"),
+                (1, 0, 20_000, "Intro"),
+                (1, 20_000, 0, "Chapter 3")
+            ],
+            "a part without marks is one chapter; the last mark runs to the end"
+        );
+    }
+
+    #[test]
+    fn next_and_previous_move_by_chapter_and_previous_restarts_after_five_seconds() {
+        let tracks = vec![file("/m/Audiobooks/B/1.mp3"), file("/m/Audiobooks/B/2.mp3")];
+        let book = &books(&tracks)[0];
+        let mut l = Listening::new(book, &tracks, 1.0);
+        let parts: Vec<&Track> = book.parts.iter().map(|&i| &tracks[i]).collect();
+        l.chapters = spans(
+            &parts,
+            &[
+                vec![mark(0, 30_000, "One"), mark(30_000, 60_000, "Two")],
+                vec![],
+            ],
+        );
+        assert_eq!(l.chapter_at(0, 31_000), Some(1));
+        assert_eq!(l.next(0, 1_000), Some((0, 30_000)), "same file: a seek");
+        assert_eq!(l.next(0, 31_000), Some((1, 0)), "into the next file");
+        assert_eq!(l.next(1, 5_000), None, "the end stays where it is");
+        assert_eq!(
+            l.previous(0, 40_000),
+            Some((0, 30_000)),
+            "restart after 5 s"
+        );
+        assert_eq!(
+            l.previous(0, 33_000),
+            Some((0, 0)),
+            "early: the chapter before"
+        );
+        assert_eq!(
+            l.previous(0, 2_000),
+            Some((0, 0)),
+            "the first chapter restarts"
+        );
+        assert_eq!(l.previous(1, 1_000), Some((0, 30_000)));
+        assert_eq!(l.chapter_span(1), Some((30_000, 30_000)));
+        assert_eq!(l.progress(1, 30_000), Some((90_000, 120_000)));
+    }
+
+    #[test]
+    fn progress_is_kept_rewound_and_found_again_after_a_rename() {
+        let mut tracks = vec![file("/m/Audiobooks/B/1.mp3"), file("/m/Audiobooks/B/2.mp3")];
+        for (t, size) in tracks.iter_mut().zip([100, 200]) {
+            t.size = size;
+        }
+        let book = books(&tracks).remove(0);
+        let mut shelf = Shelf::default();
+        shelf.record(&book, &tracks, 0, 4_000, 1.0, 1_000);
+        assert!(shelf.books.is_empty(), "the first seconds are no place");
+        shelf.record(&book, &tracks, 1, 40_000, 1.25, 1_000);
+        assert_eq!(shelf.resume(&book, &tracks, 1_060), (1, 35_000), "5 s back");
+        assert_eq!(shelf.resume(&book, &tracks, 1_000 + 3_600), (1, 25_000));
+        assert_eq!(shelf.resume(&book, &tracks, 1_000 + 200_000), (1, 10_000));
+        // A place at a part's very end continues with the next part.
+        shelf.record(&book, &tracks, 0, 58_000, 1.0, 1_000);
+        assert_eq!(shelf.resume(&book, &tracks, 1_001), (1, 0));
+        // The folder is renamed: same files, new key and paths.
+        let mut moved = tracks.clone();
+        for t in &mut moved {
+            t.path = std::path::PathBuf::from(
+                t.path.to_string_lossy().replace("/B/", "/Book B/").as_ref() as &str,
+            );
+        }
+        let renamed = books(&moved).remove(0);
+        assert_ne!(renamed.key, book.key);
+        assert_eq!(shelf.resume(&renamed, &moved, 1_001), (1, 0));
+        shelf.record(&renamed, &moved, 1, 20_000, 1.0, 2_000);
+        assert_eq!(shelf.books.len(), 1, "the record moved to the new key");
+        assert!(shelf.books.contains_key(&renamed.key));
+        // Finished books start over; a few seconds in, still finished.
+        shelf.set_finished(&renamed, &moved, true, 3_000);
+        assert_eq!(shelf.resume(&renamed, &moved, 3_001), (0, 0));
+        shelf.record(&renamed, &moved, 0, 3_000, 1.0, 3_010);
+        assert!(shelf.books[&renamed.key].finished);
+        shelf.record(&renamed, &moved, 0, 30_000, 1.0, 3_100);
+        assert!(
+            !shelf.books[&renamed.key].finished,
+            "listening again unfinishes it"
+        );
+        shelf.forget(&renamed, &moved);
+        assert!(shelf.books.is_empty());
     }
 
     #[test]

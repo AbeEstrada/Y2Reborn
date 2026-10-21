@@ -71,6 +71,36 @@ impl View {
     pub fn model(model: &AppModel) -> Self {
         let track = model.current();
         let bounded = |s: &str| s.chars().take(256).collect::<String>();
+        let mut view = Self::track(model, track, bounded);
+        // An audiobook: the chapter is the title, the book the album, its
+        // author the artist; length and position are the chapter's.
+        if let Some((book, part)) = model.book_part() {
+            if let Some(at) = book.chapter_at(part, model.position_ms) {
+                let (start, length) = book.chapter_span(at).unwrap_or((0, 0));
+                view.title = bounded(&book.chapters[at].title);
+                view.album = bounded(&book.title);
+                if !book.author.is_empty() {
+                    view.artist = bounded(&book.author);
+                }
+                if length > 0 {
+                    view.length_us = length.saturating_mul(1000).min(i64::MAX as u64) as i64;
+                    view.position_us = model
+                        .position_ms
+                        .saturating_sub(start)
+                        .saturating_mul(1000)
+                        .min(i64::MAX as u64) as i64;
+                }
+                // A new chapter is a new item for the remote.
+                view.track = track.map(|t| t.id.saturating_mul(4096) + at as i64);
+            }
+        }
+        view
+    }
+    fn track(
+        model: &AppModel,
+        track: Option<&reborn_core::Track>,
+        bounded: impl Fn(&str) -> String,
+    ) -> Self {
         Self {
             status: match model.playback {
                 PlaybackState::Playing => "Playing",
@@ -405,6 +435,63 @@ mod tests {
         model.playback = PlaybackState::Paused;
         assert_eq!(RemoteAction::Pause.semantic(&model), None);
         assert_eq!(View::model(&model).status, "Paused");
+    }
+
+    #[test]
+    fn an_audiobook_shows_its_chapter_book_and_author() {
+        use reborn_core::{books, Track};
+        let part = Track {
+            id: 7,
+            title: "Momo 01".into(),
+            artist: "Reader".into(),
+            album: "Momo".into(),
+            path: "/m/Audiobooks/Momo/01.m4b".into(),
+            duration_ms: 120_000,
+            online: true,
+            ..Default::default()
+        };
+        let mut model = AppModel::default();
+        model.replace_queue(vec![part.clone()], 0).unwrap();
+        let mut listening = books::Listening {
+            key: "k".into(),
+            title: "Momo".into(),
+            author: "Michael Ende".into(),
+            parts: vec![part.path.clone()],
+            part_ms: vec![120_000],
+            ..Default::default()
+        };
+        listening.chapters = books::spans(
+            &[&part],
+            &[vec![
+                books::ChapterMark {
+                    start_ms: 0,
+                    end_ms: 50_000,
+                    title: "Die Stadt".into(),
+                },
+                books::ChapterMark {
+                    start_ms: 50_000,
+                    end_ms: 120_000,
+                    title: "Die Zeit".into(),
+                },
+            ]],
+        );
+        model.book = Some(listening);
+        model.position_ms = 60_000;
+        let v = View::model(&model);
+        assert_eq!(
+            (v.title.as_str(), v.album.as_str(), v.artist.as_str()),
+            ("Die Zeit", "Momo", "Michael Ende")
+        );
+        assert_eq!((v.length_us, v.position_us), (70_000_000, 10_000_000));
+        model.position_ms = 1_000;
+        assert_ne!(
+            View::model(&model).track,
+            v.track,
+            "a new chapter is a new item"
+        );
+        // Music is unchanged.
+        model.book = None;
+        assert_eq!(View::model(&model).title, "Momo 01");
     }
 
     #[test]
