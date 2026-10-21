@@ -1,6 +1,17 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.16 — Y2Linux 1.0 Beta 8.16 (Baseline 113), 2026-10-20 (latest): large libraries
+## 1.0.0-beta.8.17 — Y2Linux 1.0 Beta 8.17 (Baseline 114), 2026-10-21 (latest): report fixes
+
+Published as `baseline-114` (Reborn `6d5458c`, sequence 8100). Bluetooth (`6a31a53`): a disconnect seen in either of
+two snapshots of a tick is kept (`bt_lost |=`), `StartDiscovery` 15 s with InProgress/late NoReply as scanning, intents
+go to `/run/y2/bt-intent/bt-control.ini` (the reconnect owner never read `/run/y2`), `BusyRetry` for a busy lock or a
+busy BlueZ Connect answer (45 s window), a definite failure writes `failed` (only NoReply/timeouts `uncertain`). Player
+(`d6523b5`): a Play refused for a missing A2DP peer pauses as a disconnect; `SdCard::CheckTimedOut` and refused-card
+wording instead of "Reinsert"; BlueALSA drain -EIO leaving SETUP is a pause; radio `sniff()` for text/bytes playlists,
+`station_failed` with HTTP status and content type; one renderer off/on retry for a failed frame within 30 s of a wake
+(main loop only, not inside `sleep_restore`).
+
+## 1.0.0-beta.8.16 — Y2Linux 1.0 Beta 8.16 (Baseline 113), 2026-10-20: large libraries
 
 Published as `baseline-113` (Reborn `eea9312`, sequence 8000). From a 28 600-song report: `MAX_QUEUE` is 5 000
 (`queue_window`: the chosen song with a tenth before it; Shuffle a random 5 000; `play_members` picks positions before
