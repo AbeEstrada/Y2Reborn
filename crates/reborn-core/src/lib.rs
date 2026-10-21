@@ -1308,6 +1308,8 @@ pub enum Effect {
     /// Read the chapter marks of this book's files (its page opened).
     LoadChapters(String),
     SetAudiobooksOnHome(bool),
+    /// The playing book's speed (kept for that book).
+    SetBookSpeed(u16),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),

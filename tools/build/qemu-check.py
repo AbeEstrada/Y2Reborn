@@ -29,7 +29,7 @@ try:
   'audio_decoders':{'flac','mp3','mp3float','aac','alac','vorbis','opus','ape','wavpack','pcm_s16le','pcm_s16be','pcm_s24le','pcm_s24be','pcm_s32le','pcm_s32be','pcm_f32le','pcm_f32be'},
   'artwork_decoders':{'mjpeg','png','webp'},
   'parsers':{'flac','mpegaudio','aac','opus','vorbis'},
-  'filters':{'abuffer','abuffersink','aformat','aresample','volume','equalizer','lowshelf','highshelf','alimiter','acrossfade','amix','atrim','afade','asetnsamples'},
+  'filters':{'abuffer','abuffersink','aformat','aresample','volume','equalizer','lowshelf','highshelf','alimiter','acrossfade','amix','atrim','afade','asetnsamples','atempo'},
  }
  for field,names in required.items(): assert names.issubset(set(runtime[field])),(field,names-set(runtime[field]))
  assert set(runtime['protocols'])=={'file'},runtime['protocols']

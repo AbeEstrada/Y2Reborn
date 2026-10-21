@@ -135,13 +135,15 @@ typedef struct {
   } eq[RB_EQ_BANDS];
   uint32_t crossfade_ms;
   double preamp_db; /* <= 0, before the equalizer */
+  double speed;     /* playback speed (an audiobook's), 0.5..2; 1 is none */
 } RbDspConfig;
 /* Pinned with RawDspConfig in src/native.rs (same numbers on ARM and x86-64). */
-_Static_assert(sizeof(RbDspConfig) == 352 && offsetof(RbDspConfig, eq) == 16 &&
+_Static_assert(sizeof(RbDspConfig) == 360 && offsetof(RbDspConfig, eq) == 16 &&
                    sizeof(((RbDspConfig *)0)->eq[0]) == 32 &&
                    offsetof(RbDspConfig, eq[0].kind) == 40 &&
                    offsetof(RbDspConfig, crossfade_ms) == 336 &&
-                   offsetof(RbDspConfig, preamp_db) == 344,
+                   offsetof(RbDspConfig, preamp_db) == 344 &&
+                   offsetof(RbDspConfig, speed) == 352,
                "RbDspConfig layout differs from RawDspConfig");
 
 typedef struct {
@@ -728,6 +730,11 @@ static int make_filter_graph(RbMedia *m) {
                       "aformat=sample_fmts=fltp:channel_layouts=stereo");
   if (used < 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
+  /* Speed without a pitch change (WSOLA). Positions stay in the source's
+   * time: the decoder's timestamps come before the filter. */
+  if (m->dsp.speed >= 0.5 && m->dsp.speed <= 2.0 && fabs(m->dsp.speed - 1.0) > 0.001)
+    used += snprintf(chain + used, sizeof(chain) - (size_t)used,
+                     ",atempo=tempo=%.4f", m->dsp.speed);
   if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0 || preamp != 0.0) {
     double linear = pow(10.0, applied / 20.0);
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
@@ -760,10 +767,13 @@ static int make_filter_graph(RbMedia *m) {
                      ",alimiter=limit=0.98:latency=1:level=0");
   if (used <= 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
+  char speed[32] = "";
+  if (strstr(chain, ",atempo="))
+    snprintf(speed, sizeof(speed), ",atempo=%.2f", m->dsp.speed);
   snprintf(m->filter_description, sizeof(m->filter_description),
-           "ReplayGain=%s,volume=%u,EQ=%s,preamp=%.1fdB,%s,acrossfade=%ums",
+           "ReplayGain=%s,volume=%u,EQ=%s,preamp=%.1fdB,%s,acrossfade=%ums%s",
            rg_name, m->dsp.volume, m->dsp.eq_count ? "configured" : "off", preamp,
-           limiter ? "alimiter" : "no-limiter", m->dsp.crossfade_ms);
+           limiter ? "alimiter" : "no-limiter", m->dsp.crossfade_ms, speed);
   AVFilterInOut *inputs = NULL, *outputs = NULL;
   r = avfilter_graph_parse2(m->graph, chain, &inputs, &outputs);
   if (r < 0)

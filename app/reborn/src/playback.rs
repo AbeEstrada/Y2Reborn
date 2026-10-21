@@ -719,6 +719,11 @@ impl Playback {
         })));
         let de = epoch.clone();
         let se = epoch.clone();
+        // The playing job's speed × 1000 (an audiobook's tempo): output time
+        // is source time divided by it, so positions scale back by it.
+        let tempo = Arc::new(AtomicU64::new(1000));
+        let decode_tempo = tempo.clone();
+        let sink_tempo = tempo;
         let db = buffered.clone();
         let ab = buffered.clone();
         let dl = log.clone();
@@ -741,6 +746,10 @@ impl Playback {
                 if de.load(Ordering::Acquire) != job.generation {
                     continue;
                 }
+                decode_tempo.store(
+                    (job.dsp.tempo() * 1000.).round() as u64,
+                    Ordering::Release,
+                );
                 // A station may wait up to 45 s for data while it reconnects
                 // (media.c RB_STREAM_STALL_MS); that is not a stuck worker.
                 let heartbeat_s = if job.track.is_radio() { 60 } else { 20 };
@@ -1464,9 +1473,10 @@ impl Playback {
                                         emit(&et, Event::TrackStarted { generation });
                                     }
                                     let frame_bytes = block.format.bytes_per_frame() as u64;
+                                    // Played frames in source time (× speed).
                                     let ms = block.position_ms
                                         + (*offset as u64 / frame_bytes).saturating_sub(s.delay())
-                                            * 1000
+                                            * sink_tempo.load(Ordering::Acquire)
                                             / u64::from(block.rate);
                                     let _ = et.try_send(PlaybackEvent::Core(Event::Position {
                                         generation,

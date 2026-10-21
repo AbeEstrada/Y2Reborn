@@ -518,7 +518,19 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(menu, ["Chapters", "Up Next"]);
+    assert_eq!(menu, ["Chapters", "Speed", "Up Next"]);
+    m.navigation.modal_focus = 1;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetBookSpeed(110)
+    );
+    assert!(
+        m.navigation.modal.is_some(),
+        "the menu stays open for the next step"
+    );
+    m.book.as_mut().unwrap().speed = 1.1;
+    let rows = ui.modal_rows_public(&m, &tracks);
+    assert_eq!(rows[1].secondary, "1.1×");
 }
 
 #[test]

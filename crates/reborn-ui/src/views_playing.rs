@@ -135,7 +135,8 @@ pub fn now_playing(
             .unwrap_or_default();
         let mut x = 222.;
         if (b.speed - 1.).abs() > 0.01 {
-            x += components::tag(c, x, info_cy, &format!("{:.2}×", b.speed), accent) + 8.;
+            let label = format!("{}×", crate::speed_label(b.speed));
+            x += components::tag(c, x, info_cy, &label, accent) + 8.;
         }
         c.text_mid(x, info_cy, 458. - x, &info, Face::R13, color::MUTED);
     } else if !radio {

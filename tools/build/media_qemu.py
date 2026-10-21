@@ -48,7 +48,7 @@ def main():
             assert '9.0.2' in runtime['version']
             assert set(runtime['protocols'])=={'file'} and not runtime['encoders'] and not runtime['muxers']
             for option in ['--disable-network','--disable-avdevice','--disable-programs']:assert option in runtime['configuration']
-            required={'demuxers':{'flac','mp3','mov','ogg','wav','aac','aiff','ape','wv'},'audio_decoders':{'flac','mp3','mp3float','aac','alac','vorbis','opus','ape','wavpack','pcm_s16le','pcm_s16be','pcm_s24le','pcm_s24be','pcm_s32le','pcm_s32be','pcm_f32le','pcm_f32be'},'artwork_decoders':{'mjpeg','png','webp'},'parsers':{'flac','mpegaudio','aac','opus','vorbis'},'filters':{'abuffer','abuffersink','aformat','aresample','volume','equalizer','lowshelf','highshelf','alimiter','acrossfade','amix','atrim','afade','asetnsamples'}}
+            required={'demuxers':{'flac','mp3','mov','ogg','wav','aac','aiff','ape','wv'},'audio_decoders':{'flac','mp3','mp3float','aac','alac','vorbis','opus','ape','wavpack','pcm_s16le','pcm_s16be','pcm_s24le','pcm_s24be','pcm_s32le','pcm_s32be','pcm_f32le','pcm_f32be'},'artwork_decoders':{'mjpeg','png','webp'},'parsers':{'flac','mpegaudio','aac','opus','vorbis'},'filters':{'abuffer','abuffersink','aformat','aresample','volume','equalizer','lowshelf','highshelf','alimiter','acrossfade','amix','atrim','afade','asetnsamples','atempo'}}
             for field,names in required.items():assert names<=set(runtime[field]),field
             for name in ['ffmpeg','ffplay','ffprobe']:assert not (args.sysroot/'usr/bin'/name).exists()
             assert not list((args.sysroot/'usr/lib').glob('libavdevice.so*'))

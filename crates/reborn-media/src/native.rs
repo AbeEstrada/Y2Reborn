@@ -80,15 +80,17 @@ struct RawDspConfig {
     eq: [RawEqBand; reborn_core::eq::MAX_BANDS],
     crossfade_ms: u32,
     preamp_db: c_double,
+    speed: c_double,
 }
 // Pinned with RbDspConfig in native/media.c (a _Static_assert there).
 const _: () = assert!(
-    std::mem::size_of::<RawDspConfig>() == 352
+    std::mem::size_of::<RawDspConfig>() == 360
         && std::mem::offset_of!(RawDspConfig, eq) == 16
         && std::mem::size_of::<RawEqBand>() == 32
         && std::mem::offset_of!(RawEqBand, kind) == 24
         && std::mem::offset_of!(RawDspConfig, crossfade_ms) == 336
         && std::mem::offset_of!(RawDspConfig, preamp_db) == 344
+        && std::mem::offset_of!(RawDspConfig, speed) == 352
 );
 
 type CancelNew = unsafe extern "C" fn() -> *mut c_void;
@@ -479,8 +481,19 @@ pub struct DspConfig {
     /// Gain before the equalizer (dB, ≤ 0): a headphone profile's preamp.
     #[serde(default)]
     pub preamp_db: f32,
+    /// Playback speed of an audiobook, 0.5..2.0; 0 (unset) and 1 are normal.
+    #[serde(default)]
+    pub speed: f32,
 }
 impl DspConfig {
+    /// The speed the filter applies: 1.0 unless a valid one is set.
+    pub fn tempo(&self) -> f64 {
+        if (0.5..=2.0).contains(&self.speed) {
+            f64::from(self.speed)
+        } else {
+            1.0
+        }
+    }
     pub fn with_volume(volume: u8) -> Self {
         Self {
             volume,
@@ -530,6 +543,7 @@ impl DspConfig {
             } else {
                 0.0
             },
+            speed: self.tempo(),
         }
     }
 }
@@ -1438,6 +1452,7 @@ mod tests {
                 }],
                 crossfade_ms: 0,
                 preamp_db: 0.0,
+                speed: 1.0,
             },
             Cancel::new().unwrap(),
         )
@@ -1570,6 +1585,7 @@ mod tests {
                     eq_bands: profile.bands.clone(),
                     crossfade_ms: 0,
                     preamp_db: profile.preamp_db,
+                    speed: 1.0,
                 },
                 Cancel::new().unwrap(),
             )
@@ -2287,6 +2303,53 @@ mod metadata_tests {
         assert!(external_artwork(&dir.join("wide.png"), 0).is_err());
         assert!(external_artwork(&dir.join("wide.png"), 257).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn a_book_speed_plays_faster_without_moving_positions_off_the_source() {
+        let run = |speed: f32| {
+            let mut decoder = Decoder::open_with(
+                &path("book-chapters.m4b"),
+                OutputSpec {
+                    rate: 44_100,
+                    format: PcmFormat::S32LE,
+                },
+                DspConfig {
+                    volume: 100,
+                    speed,
+                    ..Default::default()
+                },
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let filters = decoder.metadata.filters.clone();
+            let (mut frames, mut last) = (0u64, 0u64);
+            while let Some(block) = decoder.read().unwrap() {
+                frames += block.frames;
+                last = block.position_ms;
+            }
+            (frames, last, filters)
+        };
+        let (normal, end, filters) = run(1.0);
+        assert!(filters.ends_with("acrossfade=0ms"), "{filters}");
+        let (fast, fast_end, filters) = run(2.0);
+        assert!(filters.ends_with(",atempo=2.00"), "{filters}");
+        let ratio = fast as f64 / normal as f64;
+        assert!(
+            (0.45..0.55).contains(&ratio),
+            "2x plays half as long: {ratio}"
+        );
+        // Positions are the source's: the last block is near the end at any speed.
+        assert!(end > 5_000 && fast_end > 5_000, "{end} {fast_end}");
+        // Out of range is normal speed.
+        assert_eq!(
+            DspConfig {
+                speed: 7.0,
+                ..Default::default()
+            }
+            .tempo(),
+            1.0
+        );
+        assert_eq!(DspConfig::default().tempo(), 1.0);
     }
     #[test]
     fn audiobook_chapters_are_read_from_m4b_and_mp3() {

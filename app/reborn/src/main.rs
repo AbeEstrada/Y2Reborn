@@ -1489,6 +1489,8 @@ impl Runtime {
             } else {
                 self.model.settings.crossfade_ms
             },
+            // A book's own speed; music always plays at its own.
+            speed: self.model.book_part().map_or(1.0, |(book, _)| book.speed),
         };
         let request_parts = (
             track,
@@ -2603,6 +2605,22 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::PlayBook(key, start) => self.start_book(&key, start)?,
+            Effect::SetBookSpeed(percent) => {
+                let speed = f32::from(percent.clamp(50, 200)) / 100.;
+                if let Some(book) = &mut self.model.book {
+                    book.speed = speed;
+                }
+                // Applied at once, from where it is (the place is kept).
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                } else if self.playback.is_held() {
+                    self.release_hold();
+                }
+                self.checkpoint();
+            }
             Effect::SetAudiobooksOnHome(on) => {
                 self.model.settings.audiobooks_on_home = on;
                 self.checkpoint();

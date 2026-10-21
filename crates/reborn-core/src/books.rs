@@ -314,6 +314,18 @@ pub fn spans(parts: &[&Track], marks: &[Vec<ChapterMark>]) -> Vec<Span> {
     out
 }
 
+/// The speeds a book can play at, in percent; one press on Speed steps on.
+pub const SPEEDS: [u16; 7] = [75, 100, 110, 125, 150, 175, 200];
+/// The speed after `speed` (as a factor) in `SPEEDS`, round to 0.75.
+pub fn next_speed(speed: f32) -> u16 {
+    let now = (speed * 100.).round() as u16;
+    SPEEDS
+        .iter()
+        .copied()
+        .find(|&s| s > now)
+        .unwrap_or(SPEEDS[0])
+}
+
 /// Previous restarts the chapter after this long in it, else goes back one.
 pub const RESTART_AFTER_MS: u64 = 5_000;
 
@@ -816,6 +828,14 @@ mod tests {
         );
         shelf.forget(&renamed, &moved);
         assert!(shelf.books.is_empty());
+    }
+
+    #[test]
+    fn speed_steps_round_from_three_quarters_to_double() {
+        assert_eq!(next_speed(1.0), 110);
+        assert_eq!(next_speed(1.25), 150);
+        assert_eq!(next_speed(2.0), 75, "round to the slowest");
+        assert_eq!(next_speed(0.75), 100);
     }
 
     #[test]

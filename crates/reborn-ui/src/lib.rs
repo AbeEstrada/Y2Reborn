@@ -620,6 +620,9 @@ impl Ui {
             return reported;
         }
         let ahead = (now.saturating_duration_since(at).as_millis() as u64).min(1_500);
+        // A faster (or slower) book moves through its time at its speed.
+        let speed = m.book_part().map_or(1., |(book, _)| book.speed);
+        let ahead = (ahead as f32 * speed) as u64;
         let length = m.current().map_or(u64::MAX, |t| t.duration_ms.max(1));
         (reported + ahead).min(length)
     }
@@ -1256,9 +1259,11 @@ impl Ui {
                 return rows;
             }
             // A book: its chapters; shuffle and repeat do not apply to it.
-            if m.book_part().is_some() {
+            if let Some((book, _)) = m.book_part() {
                 return vec![
                     Item::new("Chapters", "book_chapters"),
+                    Item::new("Speed", "book_speed")
+                        .with_secondary(format!("{}×", speed_label(book.speed))),
                     Item::new("Up Next", "show_queue"),
                 ];
             }
@@ -2570,6 +2575,12 @@ impl Ui {
             .clone()
             .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
             .unwrap_or_default();
+        if menu_key == "book_speed" {
+            // The menu stays open: each press steps the speed on.
+            return m.book_part().map_or(Effect::None, |(book, _)| {
+                Effect::SetBookSpeed(reborn_core::books::next_speed(book.speed))
+            });
+        }
         if menu_key == "book_chapters" {
             Self::close_modal(m);
             if let Some(book) = m.book.as_ref().map(|b| b.key.clone()) {
@@ -3382,6 +3393,12 @@ fn track_matches(track: &Track, filter: &str) -> bool {
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
 }
+/// "1.25", "2", "0.75": a speed without trailing zeros.
+pub(crate) fn speed_label(speed: f32) -> String {
+    let s = format!("{speed:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
         RepeatMode::Off => "Off",
