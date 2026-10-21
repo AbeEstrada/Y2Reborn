@@ -99,5 +99,30 @@ with `atempo`. Code map:
   (360 bytes) with `atempo` after `aformat`, `heavy_mp4` scan serialisation.
 
 Host evidence: workspace tests (608), clippy, previews `b1`–`b6` in Reborn's look and two skins,
-GLES comparison 165/165. Owed on the player: a real library's books, chapter steps in a long M4B,
-speed by ear, resume after a restart, the sleep timer's fade, memory with a long book.
+GLES comparison 165/165.
+
+## Device test (2026-10-21, owner's player, builds 117 and 118 = 1.0.0-beta.8.19, seq 8301/8302)
+
+Test books in `Internal Storage/Audiobooks/Reborn Test Books/` (the Phase 0 fixtures: 3-min M4B
+with 4 chapters, the same as MP3 with ID3 CHAP, an M4B with a cover video track and Nero chapters,
+a 10.5-h M4B, a 6-file `Frank Test/The Folder Book/CD 1|2` book). Buttons by evdev injection,
+screens by `y2-screen-stream`.
+
+- Scan: all 10 files, the 10.5-h book with its length; Home shows Audiobooks; the list shows all
+  five books with author and length, in progress first, finished last.
+- A book's page reads the M4B's chapters in the background (0:45 / 1:05 / 0:40 …).
+- Chapter 3 plays from 1:50; Next → chapter 4 (150 s); Previous early → 110 s; Previous after 6 s
+  restarts the chapter; Next in the last chapter keeps the place.
+- Speed 1.5×: the chain carries `atempo=1.50`, the position moved 6.4 s in 4 s; kept per book.
+- A book played to its end is Finished and starts over; its speed is kept.
+- 10.5-h M4B: plays; Reborn RSS 92 MB (peak 155 MB at open), 741 MB still available; a seek to
+  9 h 27 min (`rebornctl seek`) took 2.8 s including a full reopen.
+- Sleep timer End of Chapter paused at the next chapter's start; Now Playing said "Sleeps after
+  chapter".
+- Resume after a Reborn restart: build 117 skipped the rewind (the shutdown checkpoint refreshed
+  the last-listened time); fixed in `da5b777`, build 118 continued 5 s before the pause.
+- The cover-track M4B plays.
+
+Not testable by injection: held seek (the button driver reports the key released ~18 ms after an
+injected press). Not done: in-file seek without a reopen (a chapter jump in a very long single
+file costs ≈2–3 s); heard by ear: speed quality, the sleep fade.
