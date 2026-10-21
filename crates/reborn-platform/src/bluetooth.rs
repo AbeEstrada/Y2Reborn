@@ -54,6 +54,10 @@ pub struct Status {
     pub error: Option<String>,
     #[serde(default)]
     pub scan: RadioScan,
+    /// A user's Connect (device path) waiting for the platform reconnect
+    /// owner to finish its own attempt.
+    #[serde(default)]
+    pub waiting: Option<String>,
     #[serde(skip)]
     bluez_owner: Option<String>,
     #[serde(skip)]
@@ -199,6 +203,7 @@ pub struct Pairing {
     pub device: String,
     pub display: String,
 }
+#[derive(Clone, Debug)]
 pub enum Command {
     Power(bool),
     Scan(bool),
@@ -385,6 +390,49 @@ fn codec_not_ready(error: &str) -> bool {
     .any(|reason| error.contains(reason))
 }
 
+const BUSY_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// The reconnect owner pages an absent peer for up to ~20 s, twice.
+const BUSY_RETRY_FOR: Duration = Duration::from_secs(45);
+
+/// A user's Connect or Bluetooth on/off refused only because another
+/// Bluetooth operation held the platform lock (usually the automatic
+/// reconnect paging a headset that is off): tried again until it is free.
+struct BusyRetry {
+    command: Command,
+    due: Instant,
+    until: Instant,
+}
+
+fn lock_busy(error: &str) -> bool {
+    error.contains("operation in progress")
+}
+
+/// Right after the reconnect owner cancels its page for a user's Connect,
+/// BlueZ can still refuse the Connect as busy instead of trying it.
+fn connect_busy(error: &str) -> bool {
+    [
+        "org.bluez.Error.InProgress",
+        "br-connection-busy",
+        "Operation already in progress",
+    ]
+    .iter()
+    .any(|reason| error.contains(reason))
+}
+
+/// The intent left after a user operation failed: only a reply that never
+/// came leaves BlueZ's state unknown. A definite failure (headphones off)
+/// holds the automatic reconnect only until the intent's deadline.
+fn failed_intent(error: &str) -> &'static str {
+    if ["NoReply", "Timeout", "timed out"]
+        .iter()
+        .any(|reason| error.contains(reason))
+    {
+        "uncertain"
+    } else {
+        "failed"
+    }
+}
+
 fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
     if !Path::new("/etc/y2linux/platform-contract").exists() {
         return Ok(None);
@@ -398,9 +446,18 @@ fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
         .custom_flags(libc::O_NOFOLLOW)
         .open("/run/y2/bt-operation.lock")
         .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|_| {
-        "Platform Bluetooth operation in progress; retry after it completes".to_string()
-    })?;
+    if lock.try_lock().is_err() {
+        // Tell the reconnect owner a user request is waiting: it makes no new
+        // automatic attempt once its current one ends.
+        if matches!(operation, "connect" | "power_on") {
+            let _ = write_intent(if operation == "connect" {
+                "connect_pending"
+            } else {
+                "power_pending"
+            });
+        }
+        return Err("Platform Bluetooth operation in progress; retry after it completes".into());
+    }
     write_intent(match operation {
         "connect" => "connect_pending",
         "power_on" => "power_pending",
@@ -418,8 +475,20 @@ fn write_intent(operation: &str) -> Result<(), String> {
         boot.trim(),
         now + 30_000_000
     );
-    atomic_write(Path::new("/run/y2/bt-control.ini"), text.as_bytes()).map_err(|e| e.to_string())
+    // The reconnect owner watches only its private directory (0700); intents
+    // written to /run/y2 itself were never read.
+    let path = Path::new(INTENT_PATH);
+    if let Some(directory) = path.parent() {
+        use std::os::unix::fs::DirBuilderExt;
+        match std::fs::DirBuilder::new().mode(0o700).create(directory) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    atomic_write(path, text.as_bytes()).map_err(|e| e.to_string())
 }
+const INTENT_PATH: &str = "/run/y2/bt-intent/bt-control.ini";
 
 type Objects = HashMap<DbusPath<'static>, HashMap<String, PropMap>>;
 fn objects(c: &Connection, owner: &str) -> Result<Objects, String> {
@@ -989,6 +1058,30 @@ fn start_scan(
     }
     perform("StartDiscovery")
 }
+/// StartDiscovery on this chip can answer later than 5 s, and a request while
+/// BlueZ still starts the first one is InProgress: both mean discovery runs.
+/// Reports 685c003a, 09cabe08, dbe84d46: NoReply, then InProgress on every
+/// press for ~20 s, each shown as a failure.
+fn start_discovery(c: &Connection, adapter: &str) -> Result<(), String> {
+    let result: Result<(), dbus::Error> = c
+        .with_proxy("org.bluez", adapter, Duration::from_secs(15))
+        .method_call("org.bluez.Adapter1", "StartDiscovery", ());
+    discovery_outcome(result.map_err(dbus_error), || {
+        c.with_proxy("org.bluez", adapter, Duration::from_secs(2))
+            .get::<bool>("org.bluez.Adapter1", "Discovering")
+            .unwrap_or(false)
+    })
+}
+fn discovery_outcome(
+    result: Result<(), String>,
+    discovering: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    match result {
+        Err(e) if e.contains("org.bluez.Error.InProgress") => Ok(()),
+        Err(e) if (e.contains("NoReply") || e.contains("Timeout")) && discovering() => Ok(()),
+        other => other,
+    }
+}
 struct Discovery {
     id: u64,
     until: Instant,
@@ -1064,7 +1157,8 @@ impl Bluetooth {
                     c.set_signal_match_mode(true);
                     let observation_dirty = Arc::new(AtomicBool::new(true));
                     let operations:Operations=Arc::new(Mutex::new(HashMap::new()));
-                    let (completed_tx, completed_rx) = sync_channel::<Option<String>>(16);
+                    // (error, device of a Connect that BlueZ refused as busy: tried again)
+                    let (completed_tx, completed_rx) = sync_channel::<(Option<String>, Option<String>)>(16);
                     for kind in [dbus::MessageType::MethodReturn,dbus::MessageType::Error] {
                         let ops=operations.clone();let observer=log.clone();let completed=completed_tx.clone();let dirty=observation_dirty.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
                         c.start_receive(rule,Box::new(move|mut msg,connection|{
@@ -1077,14 +1171,15 @@ impl Bluetooth {
                                     }
                                     Ok(None) => {
                                         observer.emit(Level::Info,"bluetooth","operation_completed","BlueZ operation completed",Some(operation.id),json!({"method":operation.method}));
-                                        let _ = completed.try_send(None);
+                                        let _ = completed.try_send((None, None));
                                     }
                                     Err(mut error) => {
                                         if let Err(cleanup) = operation.restore_pairable(connection) { error.push_str(&format!("; Pairable restoration failed: {cleanup}")); }
-                                        if operation.lease.is_some() { let _=write_intent("uncertain"); }
+                                        if operation.lease.is_some() { let _=write_intent(failed_intent(&error)); }
                                         observer.add("bluetooth_errors",1.);
-                                        observer.emit(Level::Error,"bluetooth","operation_failed",&error,Some(operation.id),json!({"interface":"org.bluez.Device1","method":operation.method,"recovery_attempted":false}));
-                                        let _ = completed.try_send(Some(error));
+                                        let busy=(operation.method=="Connect" && connect_busy(&error)).then(|| operation.path.clone());
+                                        observer.emit(Level::Error,"bluetooth","operation_failed",&error,Some(operation.id),json!({"interface":"org.bluez.Device1","method":operation.method,"recovery_attempted":busy.is_some()}));
+                                        let _ = completed.try_send((Some(error), busy));
                                     }
                                 }
                             }}}true
@@ -1302,6 +1397,10 @@ impl Bluetooth {
                     // (connecting, PCM not registered, another operation running) is
                     // tried again: it was dropped (reports 61caa81e/297f1032).
                     let mut codec_retry: Option<CodecRetry> = None;
+                    let mut busy_retry: Option<BusyRetry> = None;
+                    // The window of the user's current waiting Connect, kept
+                    // across retries so a busy answer cannot extend it.
+                    let mut busy_window: Option<Instant> = None;
                     let mut unpublished = false;
                     let mut commands_pending = false;
                     loop {
@@ -1319,6 +1418,8 @@ impl Bluetooth {
                         if unpublished { until = until.min(now + Duration::from_millis(100)); }
                         if observation_dirty.load(Ordering::Acquire) { until = now; }
                         if let Some(scan) = &discovery { until = until.min(scan.until); }
+                        if let Some(retry) = &codec_retry { until = until.min(retry.due); }
+                        if let Some(retry) = &busy_retry { until = until.min(retry.due); }
                         if let Ok(ops) = operations.lock() {
                             for operation in ops.values() { until = until.min(operation.started + Duration::from_secs(70)); }
                         }
@@ -1353,7 +1454,18 @@ impl Bluetooth {
                         while (&wake_receiver).read(&mut [0u8; 64]).is_ok_and(|n| n > 0) {}
                         let mut changed = false;
                         if let Ok(mut ops)=operations.lock(){ops.retain(|_,operation|{if operation.started.elapsed()>Duration::from_secs(70){operation.cancel(&c);log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(operation.id),json!({"method":operation.method}));operation_error=Some("Bluetooth operation timed out".into());current.error=operation_error.clone();changed=true;false}else{true}});}
-                        while let Ok(error) = completed_rx.try_recv() {
+                        while let Ok((error, busy)) = completed_rx.try_recv() {
+                            if let Some(path) = busy {
+                                let now = Instant::now();
+                                let until = *busy_window.get_or_insert(now + BUSY_RETRY_FOR);
+                                if now < until && busy_retry.is_none() {
+                                    current.waiting = Some(path.clone());
+                                    busy_retry = Some(BusyRetry { command: Command::Connect(path), due: now + BUSY_RETRY_DELAY, until });
+                                    changed = true;
+                                    continue;
+                                }
+                            }
+                            if busy_retry.is_none() && current.waiting.take().is_some() { busy_window = None; }
                             operation_error = error;
                             current.error = operation_error.clone();
                             refresh = Instant::now() - Duration::from_secs(30);
@@ -1455,10 +1567,18 @@ impl Bluetooth {
                             current.pending = display;
                         }
                         let mut codec_attempt = 0u8;
+                        let mut busy_until = None;
                         let command = match rx.try_recv() {
                             Ok(c) => {
                                 if matches!(c, Command::Codec { .. }) {
                                     codec_retry = None; // a newer choice replaces it
+                                }
+                                if !matches!(c, Command::Codec { .. } | Command::Refresh | Command::Scan(_) | Command::Confirm(_)) {
+                                    busy_window = None;
+                                    if busy_retry.take().is_some() {
+                                        current.waiting = None; // so does a newer device or radio choice
+                                        changed = true;
+                                    }
                                 }
                                 Some(c)
                             }
@@ -1473,7 +1593,25 @@ impl Bluetooth {
                                 }
                                 other => {
                                     codec_retry = other;
-                                    None
+                                    match busy_retry.take() {
+                                        // The automatic reconnect brought this very device back.
+                                        Some(BusyRetry { command: Command::Connect(path), .. })
+                                            if current.devices.iter().any(|d| d.path == path && d.connected) =>
+                                        {
+                                            current.waiting = None;
+                                            changed = true;
+                                            None
+                                        }
+                                        Some(retry) if retry.due <= Instant::now() => {
+                                            busy_until = Some(retry.until);
+                                            busy_window = Some(retry.until);
+                                            Some(retry.command)
+                                        }
+                                        other => {
+                                            busy_retry = other;
+                                            None
+                                        }
+                                    }
                                 }
                             },
                         };
@@ -1504,6 +1642,7 @@ impl Bluetooth {
                                 Command::Codec { address, preference } => Some((address.clone(), *preference)),
                                 _ => None,
                             };
+                            let busy_command = matches!(cmd, Command::Connect(_) | Command::Power(_)).then(|| cmd.clone());
                             if !matches!(cmd, Command::Refresh) {
                                 operation_error = None;
                                 current.error = None;
@@ -1531,7 +1670,7 @@ impl Bluetooth {
                                     let result = start_scan(current.powered, |method| {
                                         if adapter.is_empty() { return Err("Bluetooth is still starting; try again".into()); }
                                         if method == "PowerOn" { power_at(&c, &adapter, true, true, &preference) }
-                                        else { call(&c, &adapter, "org.bluez.Adapter1", method) }
+                                        else { start_discovery(&c, &adapter) }
                                     });
                                     if result.is_ok() {
                                         current.powered = true;
@@ -1611,7 +1750,33 @@ impl Bluetooth {
                                     });
                                 }
                             }
-                            if let Err(e) = result {
+                            let result = match (result, busy_command) {
+                                (Err(e), Some(command)) if lock_busy(&e) => {
+                                    let now = Instant::now();
+                                    let until = busy_until.unwrap_or(now + BUSY_RETRY_FOR);
+                                    if now < until {
+                                        if busy_until.is_none() {
+                                            log.emit(Level::Info, "bluetooth", "operation_waiting", &e, Some(id), json!({"method":operation,"retry_seconds":BUSY_RETRY_FOR.as_secs()}));
+                                        }
+                                        current.waiting = match &command {
+                                            Command::Connect(path) => Some(path.clone()),
+                                            _ => None,
+                                        };
+                                        busy_retry = Some(BusyRetry { command, due: now + BUSY_RETRY_DELAY, until });
+                                        None
+                                    } else {
+                                        current.waiting = None;
+                                        Some(Err(e))
+                                    }
+                                }
+                                (result, _) => {
+                                    if busy_until.is_some() {
+                                        current.waiting = None;
+                                    }
+                                    Some(result)
+                                }
+                            };
+                            if let Some(Err(e)) = result {
                                 current.error = Some(e.clone());
                                 operation_error = Some(e.clone());
                                 if scan_command { current.scan = RadioScan::Failed { message: e.clone() }; }
@@ -1624,7 +1789,7 @@ impl Bluetooth {
                                     Some(id),
                                     json!({"method":operation,"recovery_attempted":false}),
                                 );
-                            } else {
+                            } else if result.is_some() {
                                 log.emit(
                                     Level::Info,
                                     "bluetooth",
@@ -2666,5 +2831,63 @@ mod codec_retry_tests {
             "Release the Bluetooth PCM before codec selection"
         ));
         assert!(!codec_not_ready("codec unsupported by peer"));
+    }
+}
+
+#[cfg(test)]
+mod user_request_tests {
+    use super::{connect_busy, discovery_outcome, failed_intent, lock_busy};
+
+    #[test]
+    fn a_slow_or_repeated_discovery_start_counts_as_scanning() {
+        let in_progress = Err("D-Bus org.bluez: org.bluez.Error.InProgress".to_string());
+        assert_eq!(discovery_outcome(in_progress, || false), Ok(()));
+        let no_reply = || Err("D-Bus org.bluez: org.freedesktop.DBus.Error.NoReply".to_string());
+        assert_eq!(discovery_outcome(no_reply(), || true), Ok(()));
+        assert!(discovery_outcome(no_reply(), || false).is_err());
+        let refused = Err("D-Bus org.bluez: org.bluez.Error.NotReady".to_string());
+        assert!(discovery_outcome(refused, || true).is_err());
+    }
+
+    #[test]
+    fn only_a_busy_platform_lock_is_waited_for() {
+        assert!(lock_busy(
+            "Platform Bluetooth operation in progress; retry after it completes"
+        ));
+        assert!(!lock_busy("D-Bus org.bluez: org.bluez.Error.Failed"));
+        assert!(!lock_busy("unknown discovered Bluetooth device"));
+    }
+
+    #[test]
+    fn a_connect_refused_as_busy_after_a_cancelled_page_is_retried() {
+        assert!(connect_busy(
+            "D-Bus org.bluez: org.bluez.Error.InProgress: In Progress"
+        ));
+        assert!(connect_busy(
+            "D-Bus org.bluez: org.bluez.Error.Failed: br-connection-busy"
+        ));
+        assert!(!connect_busy(
+            "D-Bus org.bluez: org.bluez.Error.Failed: Host is down"
+        ));
+    }
+
+    #[test]
+    fn only_a_missing_reply_leaves_the_reconnect_owner_inhibited() {
+        assert_eq!(
+            failed_intent("D-Bus org.bluez: org.bluez.Error.Failed: Host is down"),
+            "failed"
+        );
+        assert_eq!(
+            failed_intent("D-Bus org.bluez: org.bluez.Error.InProgress"),
+            "failed"
+        );
+        assert_eq!(
+            failed_intent("D-Bus org.bluez: org.freedesktop.DBus.Error.NoReply"),
+            "uncertain"
+        );
+        assert_eq!(
+            failed_intent("D-Bus org.bluez: org.freedesktop.DBus.Error.Timeout"),
+            "uncertain"
+        );
     }
 }
