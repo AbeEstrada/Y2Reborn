@@ -1212,6 +1212,48 @@ pub struct AppModel {
     /// The audiobook being listened to, while the queue is its parts.
     #[serde(default)]
     pub book: Option<books::Listening>,
+    /// The running sleep timer (a restart ends it).
+    #[serde(skip)]
+    pub sleep_timer: Option<SleepTimer>,
+}
+
+/// The sleep timer's choices, stepped through in Now Playing's menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepChoice {
+    Off,
+    Minutes(u16),
+    /// The end of the chapter (a book) or the song playing.
+    EndOfItem,
+}
+impl SleepChoice {
+    /// Off, 15, 30, 45 and 60 minutes, the end of this chapter or song, off.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Minutes(15),
+            Self::Minutes(m) if m < 60 => Self::Minutes(m + 15),
+            Self::Minutes(_) => Self::EndOfItem,
+            Self::EndOfItem => Self::Off,
+        }
+    }
+}
+/// A running sleep timer: playback pauses at `until` (after a fade) or when
+/// the item playing when it was set (queue entry, chapter) ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SleepTimer {
+    pub choice: SleepChoice,
+    pub until: Option<std::time::Instant>,
+    pub item: (usize, Option<usize>),
+}
+impl AppModel {
+    /// What plays now, as the sleep timer tells items apart: the queue entry
+    /// and, in a book, the chapter.
+    pub fn sleep_item(&self) -> (usize, Option<usize>) {
+        (
+            self.queue_position,
+            self.book_part()
+                .and_then(|(book, part)| book.chapter_at(part, self.position_ms)),
+        )
+    }
 }
 
 /// How an audiobook starts.
@@ -1310,6 +1352,7 @@ pub enum Effect {
     SetAudiobooksOnHome(bool),
     /// The playing book's speed (kept for that book).
     SetBookSpeed(u16),
+    SetSleepTimer(SleepChoice),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
@@ -1927,6 +1970,32 @@ mod tests {
         assert!(!s.zone_auto());
         s.time_zone_auto = Some(true);
         assert!(s.zone_auto());
+    }
+}
+
+#[cfg(test)]
+mod sleep_timer_tests {
+    use super::*;
+    #[test]
+    fn the_sleep_timer_steps_through_its_choices_and_back_to_off() {
+        let mut choice = SleepChoice::Off;
+        let mut seen = vec![];
+        for _ in 0..7 {
+            choice = choice.next();
+            seen.push(choice);
+        }
+        assert_eq!(
+            seen,
+            [
+                SleepChoice::Minutes(15),
+                SleepChoice::Minutes(30),
+                SleepChoice::Minutes(45),
+                SleepChoice::Minutes(60),
+                SleepChoice::EndOfItem,
+                SleepChoice::Off,
+                SleepChoice::Minutes(15),
+            ]
+        );
     }
 }
 

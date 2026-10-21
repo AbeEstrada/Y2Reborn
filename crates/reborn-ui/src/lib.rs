@@ -1264,11 +1264,13 @@ impl Ui {
                     Item::new("Chapters", "book_chapters"),
                     Item::new("Speed", "book_speed")
                         .with_secondary(format!("{}×", speed_label(book.speed))),
+                    Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, true)),
                     Item::new("Up Next", "show_queue"),
                 ];
             }
             return vec![
                 Item::new("Up Next", "show_queue"),
+                Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
                 Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
                     "On"
                 } else {
@@ -2575,6 +2577,13 @@ impl Ui {
             .clone()
             .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
             .unwrap_or_default();
+        if menu_key == "sleep_timer" {
+            // The menu stays open: each press steps the timer on.
+            let now = m
+                .sleep_timer
+                .map_or(reborn_core::SleepChoice::Off, |t| t.choice);
+            return Effect::SetSleepTimer(now.next());
+        }
         if menu_key == "book_speed" {
             // The menu stays open: each press steps the speed on.
             return m.book_part().map_or(Effect::None, |(book, _)| {
@@ -3393,6 +3402,22 @@ fn track_matches(track: &Track, filter: &str) -> bool {
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
 }
+/// The sleep timer for Now Playing's menu: "Off", "23 min", "End of Chapter".
+pub(crate) fn sleep_label(m: &AppModel, book: bool) -> String {
+    match m.sleep_timer {
+        None => "Off".into(),
+        Some(t) => match (t.choice, t.until) {
+            (reborn_core::SleepChoice::EndOfItem, _) if book => "End of Chapter".into(),
+            (reborn_core::SleepChoice::EndOfItem, _) => "End of Song".into(),
+            (_, Some(until)) => {
+                let left = until.saturating_duration_since(Instant::now()).as_secs();
+                format!("{} min", left.div_ceil(60).max(1))
+            }
+            _ => "Off".into(),
+        },
+    }
+}
+
 /// "1.25", "2", "0.75": a speed without trailing zeros.
 pub(crate) fn speed_label(speed: f32) -> String {
     let s = format!("{speed:.2}");

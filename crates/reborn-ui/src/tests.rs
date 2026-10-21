@@ -518,7 +518,7 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(menu, ["Chapters", "Speed", "Up Next"]);
+    assert_eq!(menu, ["Chapters", "Speed", "Sleep Timer", "Up Next"]);
     m.navigation.modal_focus = 1;
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
@@ -531,6 +531,43 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
     m.book.as_mut().unwrap().speed = 1.1;
     let rows = ui.modal_rows_public(&m, &tracks);
     assert_eq!(rows[1].secondary, "1.1×");
+}
+
+#[test]
+fn the_sleep_timer_steps_from_the_hold_menu_and_shows_on_now_playing() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    let tracks = m.library.tracks.clone();
+    ui.model_action(&mut m, Action::ContextMenu);
+    let rows = ui.modal_rows_public(&m, &tracks);
+    let at = rows.iter().position(|r| r.key == "sleep_timer").unwrap();
+    assert_eq!(rows[at].secondary, "Off");
+    m.navigation.modal_focus = at;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(15))
+    );
+    assert!(m.navigation.modal.is_some(), "the menu stays open");
+    m.sleep_timer = Some(reborn_core::SleepTimer {
+        choice: reborn_core::SleepChoice::Minutes(15),
+        until: Some(Instant::now() + Duration::from_secs(14 * 60 + 30)),
+        item: m.sleep_item(),
+    });
+    assert_eq!(ui.modal_rows_public(&m, &tracks)[at].secondary, "15 min");
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(30))
+    );
+    ui.model_action(&mut m, Action::Back);
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("Sleeps in 15 min"), "{text}");
+    m.sleep_timer = Some(reborn_core::SleepTimer {
+        choice: reborn_core::SleepChoice::EndOfItem,
+        until: None,
+        item: m.sleep_item(),
+    });
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("Sleeps after song"), "{text}");
 }
 
 #[test]

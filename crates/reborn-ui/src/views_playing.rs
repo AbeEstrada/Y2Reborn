@@ -248,6 +248,16 @@ pub fn now_playing(
     c.icon(Icon::NextLarge, 240. + 78., cy, 30., color::TEXT);
     let output = pages::output_name(ui, m);
     c.text_mid(x0, cy, 96., &output, Face::R11, color::MUTED);
+    // A running sleep timer, opposite the output.
+    if m.sleep_timer.is_some() {
+        let label = crate::sleep_label(m, m.book_part().is_some());
+        let note = match label.as_str() {
+            "End of Chapter" => "Sleeps after chapter".to_owned(),
+            "End of Song" => "Sleeps after song".to_owned(),
+            minutes => format!("Sleeps in {minutes}"),
+        };
+        c.text_mid_right(x1, cy, &note, Face::R11, color::MUTED);
+    }
 }
 
 /// `FLAC · 96 KHZ`: what the file is, in a sentence the listener understands.

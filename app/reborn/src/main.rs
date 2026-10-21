@@ -9,6 +9,7 @@ mod playback;
 mod playlists;
 mod scrobbling;
 mod skins;
+mod sleep_timer;
 mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
 use reborn_core::platform::{Fact, LowBattery};
@@ -159,6 +160,8 @@ struct Runtime {
     shelf_written: reborn_core::books::Shelf,
     /// When playback was last paused (a book rewinds after a long pause).
     paused_at: Option<Instant>,
+    /// The sleep timer has lowered the playback volume.
+    sleep_fading: bool,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -2605,6 +2608,7 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::PlayBook(key, start) => self.start_book(&key, start)?,
+            Effect::SetSleepTimer(choice) => self.set_sleep_timer(choice),
             Effect::SetBookSpeed(percent) => {
                 let speed = f32::from(percent.clamp(50, 200)) / 100.;
                 if let Some(book) = &mut self.model.book {
@@ -3968,6 +3972,7 @@ fn run() -> Result<(), String> {
         chapters_asked: HashSet::new(),
         shelf_written: Default::default(),
         paused_at: None,
+        sleep_fading: false,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -4190,6 +4195,7 @@ fn run() -> Result<(), String> {
             observation_pending = None;
         }
         rt.receive_chapters();
+        rt.sleep_timer_tick();
         if let Some(worker) = &mut rt.thumbs {
             // Upload finished thumbnails (a few per pass, so a burst never
             // stalls a frame), then queue what the last frame could not show.
