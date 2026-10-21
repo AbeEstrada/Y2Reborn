@@ -245,6 +245,8 @@ struct Runtime {
     dark_since: Option<Instant>,
     /// Last request or active work; bounds retries and the pause-to-sleep delay.
     sleep_attempt: Option<Instant>,
+    /// When the current pause with Bluetooth headphones connected began.
+    headset_paused: Option<Instant>,
     /// Wi-Fi was blocked at runtime by that policy and must be restored on wake.
     wifi_idle_off: bool,
     wifi_idle_failed: bool,
@@ -2554,6 +2556,10 @@ impl Runtime {
                 self.model.settings.wrap_around = wrap;
                 self.checkpoint();
             }
+            Effect::SetScreenOffButtons(mode) => {
+                self.model.settings.screen_off_buttons = mode;
+                self.checkpoint();
+            }
             Effect::SetShuffle(enabled) => {
                 self.model.settings.shuffle = enabled;
                 self.checkpoint();
@@ -3061,6 +3067,23 @@ impl Runtime {
             || self.query.is_some();
         if playing || busy || !self.model.screen_off {
             self.sleep_attempt = Some(Instant::now());
+            return;
+        }
+        // Headphones connected: a pause stays awake a while, so their own
+        // play button can continue (asleep, the radio is off).
+        let headset = self.model.playback == PlaybackState::Paused
+            && matches!(&self.model.output, AudioOutput::Bluetooth(address)
+            if self.bt_state.devices.iter().any(|d| {
+                d.connected && d.address.eq_ignore_ascii_case(address)
+            }));
+        if !headset {
+            self.headset_paused = None;
+        } else if self.headset_paused.is_none() {
+            self.headset_paused = Some(Instant::now());
+        }
+        if reborn_core::platform::headset_pause_awake(
+            self.headset_paused.map(|since| since.elapsed().as_secs()),
+        ) {
             return;
         }
         if reborn_core::platform::automatic_sleep_due(
@@ -3941,6 +3964,7 @@ fn run() -> Result<(), String> {
         sleep_prepared_since: None,
         dark_since: None,
         sleep_attempt: None,
+        headset_paused: None,
         wifi_idle_off: false,
         wifi_idle_failed: false,
     };
@@ -4453,6 +4477,7 @@ fn run() -> Result<(), String> {
                 // Per event: an action earlier in this batch may have opened
                 // or closed the keyboard.
                 action_router.set_keyboard(rt.ui.keyboard.is_some());
+                action_router.set_screen_off_buttons(rt.model.settings.screen_off_buttons);
                 let actions = action_router.route(&event, !rt.model.screen_off);
                 for &action in &actions {
                     let action_started = Instant::now();

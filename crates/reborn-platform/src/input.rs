@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use reborn_core::{Action, NormalizedInput, PhysicalControl};
+use reborn_core::{Action, NormalizedInput, PhysicalControl, ScreenOffButtons};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -808,6 +808,8 @@ pub struct ActionRouter {
     keyboard_held: HashSet<PhysicalControl>,
     /// Held Previous/Next move every other repeat (180 ms), not every 90 ms.
     keyboard_repeat: u32,
+    /// What the wheel and its buttons do while the screen is off (a setting).
+    screen_off_buttons: ScreenOffButtons,
 }
 
 impl ActionRouter {
@@ -818,6 +820,24 @@ impl ActionRouter {
     /// (hold: done). Volume and Power keep their meaning.
     pub fn set_keyboard(&mut self, open: bool) {
         self.keyboard = open;
+    }
+
+    /// The setting for the wheel and its buttons while the screen is off.
+    pub fn set_screen_off_buttons(&mut self, mode: ScreenOffButtons) {
+        self.screen_off_buttons = mode;
+    }
+
+    /// A button that does nothing while the screen is off: its press, hold
+    /// and release are all swallowed, even when the screen wakes meanwhile.
+    fn rests_in_the_dark(&self, control: PhysicalControl) -> bool {
+        use PhysicalControl::*;
+        match self.screen_off_buttons {
+            ScreenOffButtons::Locked => {
+                matches!(control, Select | Back | Previous | Next | PlayPause)
+            }
+            ScreenOffButtons::Buttons => matches!(control, Select | Back),
+            ScreenOffButtons::WheelAndButtons => control == Back,
+        }
     }
 
     /// A screen transition inside an already-decoded batch must not carry
@@ -849,6 +869,17 @@ impl ActionRouter {
                     steps
                 })]
             }
+            // In the dark the wheel is volume, one step a detent, if allowed.
+            NormalizedInput::WheelClockwise(_)
+                if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
+            {
+                vec![Action::VolumeUp]
+            }
+            NormalizedInput::WheelCounterClockwise(_)
+                if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
+            {
+                vec![Action::VolumeDown]
+            }
             NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_) => {
                 vec![]
             }
@@ -856,8 +887,7 @@ impl ActionRouter {
                 if control == PhysicalControl::Power {
                     self.power_started_on = Some(screen_on);
                 }
-                if !screen_on && matches!(control, PhysicalControl::Select | PhysicalControl::Back)
-                {
+                if !screen_on && self.rests_in_the_dark(control) {
                     self.dark_navigation.insert(control);
                 }
                 match control {
@@ -869,6 +899,7 @@ impl ActionRouter {
             NormalizedInput::Repeat(control) => match control {
                 PhysicalControl::VolumeUp => vec![Action::VolumeUp],
                 PhysicalControl::VolumeDown => vec![Action::VolumeDown],
+                _ if self.dark_navigation.contains(&control) => vec![],
                 PhysicalControl::Previous if self.long_pressed.contains(&control) => {
                     vec![Action::SeekBackward]
                 }
@@ -931,6 +962,12 @@ impl ActionRouter {
                 }
                 match control {
                     PhysicalControl::Select if screen_on => vec![Action::Select],
+                    // The centre plays and pauses in the dark, as on Now Playing.
+                    PhysicalControl::Select
+                        if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
+                    {
+                        vec![Action::PlayPause]
+                    }
                     PhysicalControl::Back if screen_on => vec![Action::Back],
                     PhysicalControl::Previous => vec![Action::PreviousTrack],
                     PhysicalControl::Next => vec![Action::NextTrack],
@@ -1896,6 +1933,98 @@ mod tests {
                 .map(|e| e.input)
                 .collect::<Vec<_>>(),
             vec![NormalizedInput::Repeat(PhysicalControl::Next)]
+        );
+    }
+
+    #[test]
+    fn screen_off_buttons_follow_the_setting_and_volume_and_power_always_work() {
+        use PhysicalControl::*;
+        let nav = |input| InputEvent {
+            device: NAVIGATION_BUTTONS.into(),
+            input,
+            kernel_mono_us: None,
+        };
+        let wheel = |input| InputEvent {
+            device: CLICK_WHEEL.into(),
+            input,
+            kernel_mono_us: None,
+        };
+        // A short press of `control` in the dark.
+        let tap = |router: &mut ActionRouter, control| {
+            let mut out = router.route(&nav(NormalizedInput::Press(control)), false);
+            out.extend(router.route(&nav(NormalizedInput::Release(control)), false));
+            out
+        };
+        let turn = |router: &mut ActionRouter| {
+            let mut out = router.route(&wheel(NormalizedInput::WheelClockwise(3)), false);
+            out.extend(router.route(&wheel(NormalizedInput::WheelCounterClockwise(1)), false));
+            out
+        };
+        let hold = |router: &mut ActionRouter, control| {
+            let mut out = router.route(&nav(NormalizedInput::Press(control)), false);
+            out.extend(router.route(&nav(NormalizedInput::LongPress(control)), false));
+            out.extend(router.route(&nav(NormalizedInput::Repeat(control)), false));
+            out.extend(router.route(&nav(NormalizedInput::Release(control)), false));
+            out
+        };
+        // Buttons (the default): transport buttons work, wheel and centre rest.
+        let mut router = ActionRouter::default();
+        assert_eq!(tap(&mut router, Next), vec![Action::NextTrack]);
+        assert_eq!(tap(&mut router, PlayPause), vec![Action::PlayPause]);
+        assert_eq!(
+            hold(&mut router, Previous),
+            vec![Action::SeekBackward, Action::SeekBackward]
+        );
+        assert!(tap(&mut router, Select).is_empty());
+        assert!(turn(&mut router).is_empty());
+        // Locked: nothing on the wheel, a hold does not seek either.
+        router.set_screen_off_buttons(ScreenOffButtons::Locked);
+        for control in [Select, Back, Previous, Next, PlayPause] {
+            assert!(tap(&mut router, control).is_empty(), "{control:?}");
+            assert!(hold(&mut router, control).is_empty(), "{control:?} held");
+        }
+        assert!(turn(&mut router).is_empty());
+        // A locked press stays swallowed when the screen wakes before release.
+        router.route(&nav(NormalizedInput::Press(Next)), false);
+        assert!(router
+            .route(&nav(NormalizedInput::Release(Next)), true)
+            .is_empty());
+        // Wheel and Buttons: the wheel is volume (one step a detent), the
+        // centre plays and pauses; Back still rests.
+        router.set_screen_off_buttons(ScreenOffButtons::WheelAndButtons);
+        assert_eq!(
+            turn(&mut router),
+            vec![Action::VolumeUp, Action::VolumeDown]
+        );
+        assert_eq!(tap(&mut router, Select), vec![Action::PlayPause]);
+        assert_eq!(tap(&mut router, Next), vec![Action::NextTrack]);
+        assert!(tap(&mut router, Back).is_empty());
+        assert!(hold(&mut router, Select).is_empty(), "no menu in the dark");
+        // Every mode: volume keys and Power.
+        for mode in [
+            ScreenOffButtons::Locked,
+            ScreenOffButtons::Buttons,
+            ScreenOffButtons::WheelAndButtons,
+        ] {
+            router.set_screen_off_buttons(mode);
+            assert_eq!(
+                router.route(&nav(NormalizedInput::Press(VolumeUp)), false),
+                vec![Action::VolumeUp],
+                "{mode:?}"
+            );
+            router.route(&nav(NormalizedInput::Release(VolumeUp)), false);
+            assert_eq!(
+                tap(&mut router, Power),
+                vec![Action::ScreenWake],
+                "{mode:?}"
+            );
+        }
+        // With the screen on nothing changes.
+        router.set_screen_off_buttons(ScreenOffButtons::Locked);
+        router.route(&nav(NormalizedInput::Press(Select)), true);
+        assert_eq!(
+            router.route(&nav(NormalizedInput::Release(Select)), true),
+            vec![Action::Select]
         );
     }
 

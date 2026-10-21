@@ -195,6 +195,11 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         // Beta 8.18: how Reborn behaves, apart from how the screen looks.
         Screen::Customize => Page::rows(vec![
             row("Wrap Around", "wrap_around", m.settings.wrap_around.label()),
+            row(
+                "When Screen Off",
+                "screen_off_buttons",
+                m.settings.screen_off_buttons.label(),
+            ),
             row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
             row("Album View", "album_view", m.settings.album_view.label()),
         ]),

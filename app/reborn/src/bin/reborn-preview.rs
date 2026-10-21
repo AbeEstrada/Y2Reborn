@@ -1406,7 +1406,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::Customize, ""),
         |_, m| {
             m.settings.wrap_around = reborn_core::WrapAround::Everywhere;
-            m.navigation.focus = 2;
+            m.settings.screen_off_buttons = reborn_core::ScreenOffButtons::WheelAndButtons;
+            m.navigation.focus = 1;
         }
     );
     // Home and Music (UI v4 phase 2)

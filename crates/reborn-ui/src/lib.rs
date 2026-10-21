@@ -2255,6 +2255,9 @@ impl Ui {
                 Effect::None
             }
             "wrap_around" => Effect::SetWrapAround(m.settings.wrap_around.next()),
+            "screen_off_buttons" => {
+                Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
+            }
             "album_view" => Effect::SetAlbumView(match m.settings.album_view {
                 reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
                 reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,

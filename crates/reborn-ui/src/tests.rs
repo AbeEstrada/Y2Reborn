@@ -930,7 +930,28 @@ fn customize_holds_wrap_around_home_menu_and_album_view() {
     select_key(&mut ui, &mut m, "customize");
     assert_eq!(m.screen, Screen::Customize);
     let keys: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.key).collect();
-    assert_eq!(keys, ["wrap_around", "home_menu", "album_view"]);
+    assert_eq!(
+        keys,
+        [
+            "wrap_around",
+            "screen_off_buttons",
+            "home_menu",
+            "album_view"
+        ]
+    );
+    assert_eq!(
+        row(&ui, &m, "screen_off_buttons").unwrap().secondary,
+        "Buttons"
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "screen_off_buttons"),
+        Effect::SetScreenOffButtons(reborn_core::ScreenOffButtons::WheelAndButtons)
+    );
+    m.settings.screen_off_buttons = reborn_core::ScreenOffButtons::WheelAndButtons;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "screen_off_buttons"),
+        Effect::SetScreenOffButtons(reborn_core::ScreenOffButtons::Locked)
+    );
     assert_eq!(row(&ui, &m, "wrap_around").unwrap().secondary, "Menus");
     assert_eq!(
         select_key(&mut ui, &mut m, "wrap_around"),

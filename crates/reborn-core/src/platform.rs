@@ -93,6 +93,17 @@ pub fn automatic_sleep_due(
         && since_attempt_seconds.is_none_or(|seconds| seconds >= 60)
 }
 
+/// With Bluetooth headphones connected, a pause keeps the player awake this
+/// long so the headphones' own play button can continue (Beta 8.18): asleep,
+/// the radio is off and nothing hears the button.
+pub const HEADSET_PAUSE_AWAKE_SECS: u64 = 15 * 60;
+
+/// The pause with headphones connected (seconds since it began, if one is
+/// going on) still holds off automatic sleep.
+pub fn headset_pause_awake(paused_seconds: Option<u64>) -> bool {
+    paused_seconds.is_some_and(|seconds| seconds < HEADSET_PAUSE_AWAKE_SECS)
+}
+
 /// A running Wi-Fi radio owns the APDMA and BTIF clocks, which keeps CPU0 out of
 /// C2/C3 (measured on battery: no deep entry with Wi-Fi associated, 74% C3 with
 /// the radio off). Power it down at runtime, never touching the saved
@@ -645,6 +656,11 @@ mod tests {
             false
         ));
         assert!(automatic_sleep_due(true, Some(60), 60, None, false, false));
+        // Headphones connected: a pause stays awake for 15 minutes, then sleeps.
+        assert!(headset_pause_awake(Some(0)));
+        assert!(headset_pause_awake(Some(HEADSET_PAUSE_AWAKE_SECS - 1)));
+        assert!(!headset_pause_awake(Some(HEADSET_PAUSE_AWAKE_SECS)));
+        assert!(!headset_pause_awake(None));
     }
 }
 

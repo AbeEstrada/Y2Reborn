@@ -919,6 +919,9 @@ pub struct Settings {
     /// Whether lists continue at the other end (Beta 8.18; Menus by default).
     #[serde(default)]
     pub wrap_around: WrapAround,
+    /// What the wheel and its buttons do while the screen is off (Beta 8.18).
+    #[serde(default)]
+    pub screen_off_buttons: ScreenOffButtons,
     /// 1 once the codec default became Auto. Older sessions stored SBC only
     /// as the default (the choice was never offered), so they move to Auto.
     #[serde(default)]
@@ -1016,6 +1019,36 @@ impl WrapAround {
         }
     }
 }
+/// What the wheel, its centre and its four buttons do while the screen is
+/// off. Power, the volume keys and headphone controls always work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenOffButtons {
+    /// Nothing: safe in a pocket.
+    Locked,
+    /// Play/Pause, Previous and Next (held: seek); the wheel and centre rest.
+    #[default]
+    Buttons,
+    /// Also the wheel (volume) and the centre (play/pause), like Now Playing.
+    WheelAndButtons,
+}
+impl ScreenOffButtons {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Locked => "Locked",
+            Self::Buttons => "Buttons",
+            Self::WheelAndButtons => "Wheel + Buttons",
+        }
+    }
+    /// The next choice, as one press on its row steps through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Locked => Self::Buttons,
+            Self::Buttons => Self::WheelAndButtons,
+            Self::WheelAndButtons => Self::Locked,
+        }
+    }
+}
 fn default_true() -> bool {
     true
 }
@@ -1052,6 +1085,7 @@ impl Default for Settings {
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
             wrap_around: WrapAround::Menus,
+            screen_off_buttons: ScreenOffButtons::Buttons,
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
@@ -1224,6 +1258,7 @@ pub enum Effect {
     SetGapless(bool),
     SetAlbumView(AlbumView),
     SetWrapAround(WrapAround),
+    SetScreenOffButtons(ScreenOffButtons),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),

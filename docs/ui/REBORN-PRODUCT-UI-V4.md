@@ -294,3 +294,28 @@ Zone). All of it lives in `Ui::move_focus`, the one place every list moves.
 
 Previews: `20b-settings-last`, `51c-customize`, `51d-customize-everywhere`. On the player,
 the feel of the 350 ms rest and of the default still need checking.
+
+## When Screen Off and headphone controls (Beta 8.18)
+
+Customize also holds **When Screen Off** (`Settings::screen_off_buttons`,
+`reborn_core::ScreenOffButtons`), Y2Player's "Wheel When Screen Off" redone in the one place
+that owns screen-off policy, `reborn_platform::input::ActionRouter`:
+
+| Choice | Wheel | Centre | Previous/Next (held: seek) | Play/Pause |
+|---|---|---|---|---|
+| Locked | – | – | – | – |
+| Buttons (default; Reborn's behaviour before) | – | – | yes | yes |
+| Wheel + Buttons | volume, one step a detent | play/pause | yes | yes |
+
+Back never acts in the dark. A button that rests is swallowed from press to release, even
+when the screen wakes in between. Power, the volume keys and headphone controls work in
+every choice: AVRCP commands (AirPods: press play/pause, double next, triple previous)
+arrive through BlueZ and `reborn_platform::avrcp`, never through the router, and
+`Action::PlayPause`/`NextTrack`/`PreviousTrack` are handled before the UI's screen-off gate.
+Holding the AirPods stem switches noise control inside the AirPods; the player is not
+involved.
+
+A paused player with Bluetooth headphones connected stays awake for
+`HEADSET_PAUSE_AWAKE_SECS` (15 minutes) before automatic sleep, so the headphones can
+continue playback; asleep, the radio is off and nothing hears them. The paused sink is still
+released after three minutes (`HOLD_LIMIT`); playing again then reopens it.
