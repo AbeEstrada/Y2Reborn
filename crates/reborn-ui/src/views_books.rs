@@ -280,6 +280,29 @@ pub(crate) struct BookNow {
     pub done_ms: u64,
     pub total_ms: u64,
     pub speed: f32,
+    /// The chapter's number (from 0) and how many the book has.
+    pub index: usize,
+    pub count: usize,
+}
+impl BookNow {
+    /// Where in the chapter `position_ms` (of the part) is.
+    pub fn elapsed(&self, position_ms: u64) -> u64 {
+        position_ms
+            .saturating_sub(self.chapter_start)
+            .min(self.chapter_ms)
+    }
+    /// "23 % · 16 h 7 min left" (empty while the book's length is unknown).
+    pub fn left(&self) -> String {
+        (self.done_ms * 100)
+            .checked_div(self.total_ms)
+            .map(|percent| {
+                format!(
+                    "{percent} % · {} left",
+                    length(self.total_ms.saturating_sub(self.done_ms))
+                )
+            })
+            .unwrap_or_default()
+    }
 }
 pub(crate) fn now(m: &AppModel) -> Option<BookNow> {
     let (l, part) = m.book_part()?;
@@ -295,6 +318,8 @@ pub(crate) fn now(m: &AppModel) -> Option<BookNow> {
         done_ms: done,
         total_ms: total,
         speed: l.speed,
+        index: at,
+        count: l.chapters.len(),
     })
 }
 

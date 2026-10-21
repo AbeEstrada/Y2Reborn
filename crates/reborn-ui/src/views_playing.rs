@@ -124,15 +124,7 @@ pub fn now_playing(
         c.text_mid(222., info_cy, 236., &t.artist, Face::S13, color::WARNING);
     } else if let Some(b) = &book {
         // How far into the book, how long it still runs.
-        let info = (b.done_ms * 100)
-            .checked_div(b.total_ms)
-            .map(|percent| {
-                format!(
-                    "{percent} % · {} left",
-                    crate::views_books::length(b.total_ms.saturating_sub(b.done_ms))
-                )
-            })
-            .unwrap_or_default();
+        let info = b.left();
         let mut x = 222.;
         if (b.speed - 1.).abs() > 0.01 {
             let label = format!("{}×", crate::speed_label(b.speed));
@@ -162,10 +154,7 @@ pub fn now_playing(
     // Progress: a wave while music plays, laid flat when paused (Beta 7.2).
     // A book shows its chapter's progress.
     let (position, length) = match &book {
-        Some(b) => {
-            let p = ui.shown_position(m).saturating_sub(b.chapter_start);
-            (p.min(b.chapter_ms), b.chapter_ms)
-        }
+        Some(b) => (b.elapsed(ui.shown_position(m)), b.chapter_ms),
         None => (ui.shown_position(m), t.duration_ms),
     };
     let (x0, x1) = (26., WIDTH - 26.);
