@@ -12,8 +12,14 @@ use reborn_core::{
     AppModel, AudioOutput, Track,
 };
 
+/// `m:ss`, or `h:mm:ss` from an hour on (audiobooks).
 pub fn time(ms: u64) -> String {
-    format!("{}:{:02}", ms / 60_000, (ms / 1000) % 60)
+    let s = ms / 1000;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 pub fn progress(position: u64, duration: u64) -> f32 {

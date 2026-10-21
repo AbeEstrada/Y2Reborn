@@ -737,6 +737,10 @@ pub enum Screen {
     SettingsDisplay,
     /// How Reborn behaves: wrap-around lists, Home Menu, Album View.
     Customize,
+    /// The audiobooks: in progress first, then new, then finished.
+    Audiobooks,
+    /// One audiobook (`navigation.filter` is its key): buttons and chapters.
+    Book,
     SettingsSystem,
     Battery,
     Sleep,
@@ -940,6 +944,9 @@ pub struct Settings {
     /// What the wheel and its buttons do while the screen is off (Beta 8.18).
     #[serde(default)]
     pub screen_off_buttons: ScreenOffButtons,
+    /// Audiobooks stand on Home once the library holds one (Beta 8.19).
+    #[serde(default = "default_true")]
+    pub audiobooks_on_home: bool,
     /// 1 once the codec default became Auto. Older sessions stored SBC only
     /// as the default (the choice was never offered), so they move to Auto.
     #[serde(default)]
@@ -1104,6 +1111,7 @@ impl Default for Settings {
             album_view: AlbumView::CoverFlow,
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
+            audiobooks_on_home: true,
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
@@ -1299,6 +1307,7 @@ pub enum Effect {
     ForgetBook(String),
     /// Read the chapter marks of this book's files (its page opened).
     LoadChapters(String),
+    SetAudiobooksOnHome(bool),
     SetShuffle(bool),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),

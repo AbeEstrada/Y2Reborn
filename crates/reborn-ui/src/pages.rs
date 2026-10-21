@@ -54,13 +54,17 @@ impl Page {
     }
 }
 
-/// Home (UI v4): the six places a listener starts from, with any Music lists
-/// the owner pinned after Music.
-fn home(m: &AppModel) -> Vec<Item> {
+/// Home (UI v4): the six places a listener starts from, Audiobooks once
+/// the library holds a book (Beta 8.19, can be switched off), and any Music
+/// lists the owner pinned after Music.
+fn home(m: &AppModel, tracks: &[Track]) -> Vec<Item> {
     let mut rows = vec![
         row("Now Playing", "now_playing", ""),
         row("Music", "music", ""),
     ];
+    if m.settings.audiobooks_on_home && tracks.iter().any(|t| t.book && t.online) {
+        rows.push(row("Audiobooks", "audiobooks", ""));
+    }
     rows.extend(
         HOME_PINNABLE
             .iter()
@@ -126,16 +130,18 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
-        Screen::Home => Page::rows(home(m)),
+        Screen::Home => Page::rows(home(m, tracks)),
         Screen::Music => Page::rows(music(ui, tracks)),
         Screen::HomeMenu => Page::rows(
-            HOME_PINNABLE
-                .iter()
-                .map(|(key, label)| {
-                    let on = m.settings.home_pins.iter().any(|p| p == key);
-                    row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
-                })
-                .collect(),
+            std::iter::once(
+                row("Audiobooks", "home_audiobooks", "")
+                    .with_kind(RowKind::Toggle(m.settings.audiobooks_on_home)),
+            )
+            .chain(HOME_PINNABLE.iter().map(|(key, label)| {
+                let on = m.settings.home_pins.iter().any(|p| p == key);
+                row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
+            }))
+            .collect(),
         ),
         Screen::NowPlaying if m.current().is_none() => Page::hero(
             "Nothing Playing",

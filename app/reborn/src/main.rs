@@ -2603,6 +2603,10 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::PlayBook(key, start) => self.start_book(&key, start)?,
+            Effect::SetAudiobooksOnHome(on) => {
+                self.model.settings.audiobooks_on_home = on;
+                self.checkpoint();
+            }
             Effect::SetBookFinished(key, finished) => self.set_book_finished(&key, finished)?,
             Effect::ForgetBook(key) => self.forget_book(&key)?,
             Effect::LoadChapters(key) => {

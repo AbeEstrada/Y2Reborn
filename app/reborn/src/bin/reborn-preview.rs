@@ -292,6 +292,116 @@ fn cjk_at(screen: Screen, filter: &str, current: usize) -> AppModel {
     m
 }
 
+/// The key of the book titled `title` (preview fixtures only).
+fn ui_book_key(_ui: &Ui, tracks: &[Track], title: &str) -> String {
+    reborn_core::books::books(tracks)
+        .into_iter()
+        .find(|b| b.title == title)
+        .map(|b| b.key)
+        .unwrap_or_default()
+}
+
+/// `at` with three audiobooks: "Momo" (three parts, the middle one half
+/// heard), "Dune" (one 21-hour M4B with chapter marks, playing at 1.25x
+/// from chapter 3) and "The Hobbit" (finished).
+fn books_at(screen: Screen, filter: &str) -> AppModel {
+    use reborn_core::books::{self, ChapterMark};
+    let mut m = at(screen, filter);
+    let base = m.library.tracks[0].clone();
+    let part = |id: i64, title: &str, album: &str, author: &str, path: &str, ms: u64| {
+        let mut t = Track {
+            id,
+            title: title.into(),
+            album: album.into(),
+            artist: author.into(),
+            album_artist: author.into(),
+            path: path.into(),
+            filename: path.rsplit('/').next().unwrap().into(),
+            size: id as u64 * 1000,
+            duration_ms: ms,
+            artwork: true,
+            genre: String::new(),
+            ..base.clone()
+        };
+        t.book = books::is_book(&t);
+        t
+    };
+    let momo = "/data/music/Hörbücher/Michael Ende/Momo";
+    for n in 1..=3 {
+        m.library.tracks.push(part(
+            900 + n,
+            &format!("Momo – Teil {n}"),
+            "Momo",
+            "Michael Ende",
+            &format!("{momo}/0{n}.mp3"),
+            2_400_000,
+        ));
+    }
+    let dune = "/data/music/Audiobooks/Dune.m4b";
+    m.library
+        .tracks
+        .push(part(910, "Dune", "Dune", "Frank Herbert", dune, 75_600_000));
+    m.library.tracks.push(part(
+        911,
+        "The Hobbit",
+        "The Hobbit",
+        "J. R. R. Tolkien",
+        "/data/music/Audiobooks/The Hobbit.m4b",
+        40_000_000,
+    ));
+    let titles = [
+        "Opening Credits",
+        "Book One: Dune",
+        "Arrakis",
+        "The Sietch",
+        "Muad'Dib",
+        "Book Two: Muad'Dib",
+        "The Water of Life",
+        "Book Three: The Prophet",
+        "End Credits",
+    ];
+    let step = 75_600_000 / titles.len() as u64;
+    m.library.chapters.insert(
+        dune.into(),
+        titles
+            .iter()
+            .enumerate()
+            .map(|(n, t)| ChapterMark {
+                start_ms: n as u64 * step,
+                end_ms: (n as u64 + 1) * step,
+                title: (*t).into(),
+            })
+            .collect(),
+    );
+    let tracks = m.library.tracks.clone();
+    let all = books::books(&tracks);
+    let find = |title: &str| all.iter().find(|b| b.title == title).unwrap().clone();
+    let now = 1_792_600_000;
+    m.library
+        .shelf
+        .record(&find("Momo"), &tracks, 1, 1_200_000, 1.0, now - 3_600);
+    m.library
+        .shelf
+        .set_finished(&find("The Hobbit"), &tracks, true, now - 86_400);
+    // Dune plays, chapter 3, at 1.25x.
+    let dune_book = find("Dune");
+    let mut listening = books::Listening::new(&dune_book, &tracks, 1.25);
+    let parts: Vec<&Track> = dune_book.parts.iter().map(|&i| &tracks[i]).collect();
+    let marks: Vec<_> = parts
+        .iter()
+        .map(|t| m.library.chapters.get(&t.path).cloned().unwrap_or_default())
+        .collect();
+    listening.chapters = books::spans(&parts, &marks);
+    m.replace_queue(parts.iter().map(|t| (*t).clone()).collect(), 0)
+        .unwrap();
+    m.position_ms = 2 * step + 754_000;
+    m.book = Some(listening);
+    m.library
+        .shelf
+        .record(&dune_book, &tracks, 0, m.position_ms, 1.25, now);
+    m
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Each state is drawn once: rasterise every CJK glyph it needs at once.
     reborn_ui::set_glyph_budget(None);
@@ -347,6 +457,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let orange = 0xFF965AFFu32;
     let teal = 0x5AE6CDFFu32;
+    // Audiobooks (Beta 8.19)
+    case!(
+        "b1-home-audiobooks",
+        books_at(Screen::Home, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 2;
+        }
+    );
+    case!("b2-audiobooks", books_at(Screen::Audiobooks, ""));
+    case!("b3-book-momo", books_at(Screen::Book, ""), |ui, m| {
+        let tracks = m.library.tracks.clone();
+        m.navigation.filter = ui_book_key(ui, &tracks, "Momo");
+    });
+    case!(
+        "b4-book-dune-chapters",
+        books_at(Screen::Book, ""),
+        |ui, m| {
+            let tracks = m.library.tracks.clone();
+            m.navigation.filter = ui_book_key(ui, &tracks, "Dune");
+            m.navigation.focus = 4;
+        }
+    );
+    case!(
+        "b5-now-playing-book",
+        books_at(Screen::NowPlaying, ""),
+        move |ui, _| {
+            ui.accent = orange;
+        }
+    );
+    case!("b6-book-hold", books_at(Screen::Audiobooks, ""), |ui, m| {
+        ui.model_action(m, Action::ContextMenu);
+    });
     // Home, library
     case!("04-home-playing", at(Screen::Home, ""), move |ui, _| ui
         .accent =

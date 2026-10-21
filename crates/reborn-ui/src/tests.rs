@@ -345,16 +345,186 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
     assert_eq!(rows[m.navigation.focus].secondary, "Standard");
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::HomeMenu);
+    // Audiobooks first (Beta 8.19), then the Music lists.
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows[0].key, "home_audiobooks");
+    assert_eq!(rows[0].kind, crate::RowKind::Toggle(true));
+    m.navigation.focus = 1;
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), true)
     );
     m.settings.pin_home("artists", true);
-    assert_eq!(ui.rows(&m, &tracks)[0].kind, crate::RowKind::Toggle(true));
+    assert_eq!(ui.rows(&m, &tracks)[1].kind, crate::RowKind::Toggle(true));
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), false)
     );
+}
+
+/// The library plus "Momo", three 60-s parts in a Hörbücher folder.
+fn with_book(m: &mut AppModel) {
+    for n in 1..=3u32 {
+        let mut t = m.library.tracks[0].clone();
+        t.id = 100 + n as i64;
+        t.title = format!("Teil {n}");
+        t.album = "Momo".into();
+        t.artist = "Michael Ende".into();
+        t.album_artist = "Michael Ende".into();
+        t.track = n;
+        t.duration_ms = 60_000;
+        t.filename = format!("0{n}.mp3");
+        t.size = 1000 + n as u64;
+        t.path = format!("/data/music/Hörbücher/Momo/0{n}.mp3").into();
+        t.book = reborn_core::books::is_book(&t);
+        m.library.tracks.push(t);
+    }
+}
+
+#[test]
+fn audiobooks_stand_on_home_once_there_is_a_book_and_can_be_switched_off() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    assert!(
+        !keys(&ui, &m).contains(&"audiobooks".to_string()),
+        "no book, no entry"
+    );
+    with_book(&mut m);
+    ui.invalidate_catalog();
+    assert_eq!(keys(&ui, &m)[..3], ["now_playing", "music", "audiobooks"]);
+    m.screen = Screen::HomeMenu;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "home_audiobooks"),
+        Effect::SetAudiobooksOnHome(false)
+    );
+    m.settings.audiobooks_on_home = false;
+    m.screen = Screen::Home;
+    assert!(!keys(&ui, &m).contains(&"audiobooks".to_string()));
+}
+
+#[test]
+fn the_book_list_and_page_follow_progress_and_start_books() {
+    use reborn_core::books::{books, Shelf};
+    let mut ui = radios();
+    let mut m = app(Screen::Audiobooks);
+    with_book(&mut m);
+    let tracks = m.library.tracks.clone();
+    let row = |ui: &Ui, m: &AppModel| ui.rows(m, &tracks)[0].clone();
+    let fresh = row(&ui, &m);
+    assert_eq!(fresh.label, "Momo");
+    assert_eq!(fresh.secondary, "Michael Ende · 3 min");
+    assert!(fresh.art.is_none(), "no cover in the fixture");
+    // Opening the book asks for its chapter marks.
+    let key = fresh.key.strip_prefix("book:").unwrap().to_owned();
+    assert_eq!(
+        select_key(&mut ui, &mut m, &fresh.key),
+        Effect::LoadChapters(key.clone())
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Book, key.as_str())
+    );
+    let page: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
+    assert_eq!(
+        page,
+        ["Play", "Teil 1", "Teil 2", "Teil 3"],
+        "a new book: Play only"
+    );
+    // Halfway through part two.
+    let book = books(&tracks).remove(0);
+    let mut shelf = Shelf::default();
+    shelf.record(&book, &tracks, 1, 30_000, 1.0, 1);
+    m.library.shelf = shelf;
+    let page: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
+    assert_eq!(page[..2], ["Continue", "Start Over"]);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "chapter:2"),
+        Effect::PlayBook(key.clone(), reborn_core::BookStart::Chapter(2))
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    m.screen = Screen::Audiobooks;
+    assert_eq!(row(&ui, &m).secondary, "Chapter 2 of 3 · 50 %");
+    // The hold menu.
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let menu: Vec<String> = ui
+        .modal_rows_public(&m, &tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        menu,
+        [
+            "Continue",
+            "Start Over",
+            "Mark as Finished",
+            "Forget Progress"
+        ]
+    );
+    m.navigation.modal_focus = 2;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetBookFinished(key.clone(), true)
+    );
+    m.library.shelf.set_finished(&book, &tracks, true, 2);
+    assert_eq!(row(&ui, &m).secondary, "Finished");
+    // Search finds it by author.
+    m.screen = Screen::Search;
+    m.navigation.filter = "ende".into();
+    ui.invalidate_catalog();
+    let found = ui.rows(&m, &tracks);
+    assert!(
+        found
+            .iter()
+            .any(|r| r.key == format!("book:{key}") && r.secondary == "Audiobook · Michael Ende"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
+    use reborn_core::books::{books, Listening};
+    let ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    with_book(&mut m);
+    let tracks = m.library.tracks.clone();
+    let book = books(&tracks).remove(0);
+    let parts: Vec<Track> = book.parts.iter().map(|&i| tracks[i].clone()).collect();
+    m.replace_queue(parts, 1).unwrap();
+    m.book = Some(Listening::new(&book, &tracks, 1.0));
+    m.position_ms = 30_000;
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    for expected in [
+        "Teil 2",
+        "Momo",
+        "Michael Ende",
+        "50 % · 1 min left",
+        "0:30",
+        "-0:30",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+    // Its hold menu offers the chapters, not shuffle or repeat.
+    let mut ui = ui;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let menu: Vec<String> = ui
+        .modal_rows_public(&m, &tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(menu, ["Chapters", "Up Next"]);
+}
+
+#[test]
+fn times_from_an_hour_on_show_hours() {
+    assert_eq!(components::time(61_000), "1:01");
+    assert_eq!(components::time(3_600_000 + 62_000), "1:01:02");
 }
 
 #[test]

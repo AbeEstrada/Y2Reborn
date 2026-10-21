@@ -570,6 +570,8 @@ pub const LAYOUTS: &[&str] = &[
     "library",
     "display",
     "customize",
+    "audiobooks",
+    "book",
     "service",
     "battery",
     "sleep",

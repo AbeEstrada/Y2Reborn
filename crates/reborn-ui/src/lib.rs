@@ -27,6 +27,7 @@ pub mod skin;
 mod text;
 pub mod theme;
 mod time_zone;
+mod views_books;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
@@ -371,6 +372,8 @@ pub struct Ui {
     /// The last wheel or arrow step in a list, even one held at its end: a
     /// long list wraps around only after the wheel rested there (`WRAP_REST`).
     last_step: Option<Instant>,
+    /// The library's audiobooks, kept until the library changes.
+    books: RefCell<Option<views_books::BookCache>>,
     /// Taps on the version row; the service menu opens after a deliberate run.
     version_taps: u8,
     resident: HashSet<u64>,
@@ -1057,6 +1060,8 @@ impl Ui {
             | Screen::Search => self.catalog_rows(m, tracks),
             Screen::Queue => self.queue_rows(m),
             Screen::Playlists | Screen::Playlist => self.playlist_rows(m, tracks),
+            Screen::Audiobooks => views_books::book_rows(self, m, tracks),
+            Screen::Book => views_books::page_rows(self, m, tracks),
             Screen::Diagnostics => diagnostics::root(m),
             Screen::DiagnosticSection => diagnostics::section_rows(m, &m.navigation.filter),
             Screen::ValueDetail => vec![Item::new("Back", "back")],
@@ -1121,6 +1126,8 @@ impl Ui {
                     | Screen::Playlist
                     | Screen::RadioStations
                     | Screen::TimeZone
+                    | Screen::Audiobooks
+                    | Screen::Book
             )
     }
 
@@ -1248,6 +1255,13 @@ impl Ui {
                 }
                 return rows;
             }
+            // A book: its chapters; shuffle and repeat do not apply to it.
+            if m.book_part().is_some() {
+                return vec![
+                    Item::new("Chapters", "book_chapters"),
+                    Item::new("Up Next", "show_queue"),
+                ];
+            }
             return vec![
                 Item::new("Up Next", "show_queue"),
                 Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
@@ -1271,6 +1285,13 @@ impl Ui {
         let key = selected_key.as_deref();
         if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             return self.playlist_context_rows(m, key.unwrap_or(""));
+        }
+        if let Some(book) = key
+            .and_then(|k| k.strip_prefix("book:"))
+            .map(str::to_owned)
+            .or_else(|| (m.screen == Screen::Book).then(|| m.navigation.filter.clone()))
+        {
+            return self.book_context_rows(m, tracks, &book);
         }
         if let Some(index) = key
             .and_then(|key| key.strip_prefix("track:"))
@@ -1847,6 +1868,25 @@ impl Ui {
             Self::back(m);
             return Effect::None;
         }
+        if let Some(book) = key.strip_prefix("book:") {
+            Self::go(m, Screen::Book, book);
+            return Effect::LoadChapters(book.to_owned());
+        }
+        if m.screen == Screen::Book {
+            let start = match key {
+                "book_resume" => Some(reborn_core::BookStart::Resume),
+                "book_restart" => Some(reborn_core::BookStart::Beginning),
+                _ => key
+                    .strip_prefix("chapter:")
+                    .and_then(|n| n.parse().ok())
+                    .map(reborn_core::BookStart::Chapter),
+            };
+            if let Some(start) = start {
+                let book = m.navigation.filter.clone();
+                Self::go(m, Screen::NowPlaying, "");
+                return Effect::PlayBook(book, start);
+            }
+        }
         if key == "home" {
             Self::home(m);
             return Effect::None;
@@ -2255,6 +2295,7 @@ impl Ui {
                 Effect::None
             }
             "wrap_around" => Effect::SetWrapAround(m.settings.wrap_around.next()),
+            "home_audiobooks" => Effect::SetAudiobooksOnHome(!m.settings.audiobooks_on_home),
             "screen_off_buttons" => {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
@@ -2489,6 +2530,38 @@ impl Ui {
         }
     }
 
+    /// A book's hold menu: Continue (or Play), Start Over, Mark as Finished
+    /// (or Not Finished) and Forget Progress.
+    fn book_context_rows(&self, m: &AppModel, tracks: &[Track], key: &str) -> Vec<Item> {
+        let Some(book) = self.book(tracks, key) else {
+            return vec![];
+        };
+        let saved = m.library.shelf.find(&book, tracks).map(|(_, p)| p.finished);
+        let mut rows = vec![
+            Item::new(
+                if saved == Some(false) {
+                    "Continue"
+                } else {
+                    "Play"
+                },
+                "book_menu_resume",
+            ),
+            Item::new("Start Over", "book_menu_restart"),
+            Item::new(
+                if saved == Some(true) {
+                    "Mark as Not Finished"
+                } else {
+                    "Mark as Finished"
+                },
+                "book_menu_finish",
+            ),
+        ];
+        if saved == Some(false) {
+            rows.push(Item::new("Forget Progress", "book_menu_forget"));
+        }
+        rows
+    }
+
     fn context_action(&mut self, m: &mut AppModel, tracks: &[Track], menu_key: &str) -> Effect {
         let target = m.navigation.context_target.unwrap_or(0);
         let source_key = m
@@ -2497,6 +2570,41 @@ impl Ui {
             .clone()
             .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
             .unwrap_or_default();
+        if menu_key == "book_chapters" {
+            Self::close_modal(m);
+            if let Some(book) = m.book.as_ref().map(|b| b.key.clone()) {
+                Self::go(m, Screen::Book, book.clone());
+                return Effect::LoadChapters(book);
+            }
+            return Effect::None;
+        }
+        if let Some(action) = menu_key.strip_prefix("book_menu_") {
+            let book = source_key
+                .strip_prefix("book:")
+                .map(str::to_owned)
+                .unwrap_or_else(|| m.navigation.filter.clone());
+            Self::close_modal(m);
+            let finished = self
+                .book(tracks, &book)
+                .and_then(|b| m.library.shelf.find(&b, tracks).map(|(_, p)| p.finished))
+                .unwrap_or(false);
+            return match action {
+                "resume" | "restart" => {
+                    Self::go(m, Screen::NowPlaying, "");
+                    Effect::PlayBook(
+                        book,
+                        if action == "resume" {
+                            reborn_core::BookStart::Resume
+                        } else {
+                            reborn_core::BookStart::Beginning
+                        },
+                    )
+                }
+                "finish" => Effect::SetBookFinished(book, !finished),
+                "forget" => Effect::ForgetBook(book),
+                _ => Effect::None,
+            };
+        }
         let queue_target = self.queue_target(m, Some(&source_key));
         let track_index = if m.screen == Screen::NowPlaying {
             m.current()
@@ -3010,6 +3118,7 @@ fn route(key: &str) -> Option<Screen> {
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
         "customize" => Screen::Customize,
+        "audiobooks" => Screen::Audiobooks,
         "home_menu" => Screen::HomeMenu,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,

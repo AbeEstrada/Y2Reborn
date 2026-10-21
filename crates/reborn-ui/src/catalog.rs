@@ -77,6 +77,24 @@ impl Catalog {
                         results.summary()
                     )),
                 );
+                // Audiobooks by title or author (they are not among the songs).
+                let query = reborn_core::sort::fold(&m.navigation.filter);
+                if !query.is_empty() {
+                    for book in reborn_core::books::books(tracks) {
+                        let found = |s: &str| reborn_core::sort::fold(s).contains(&query);
+                        if found(&book.title) || found(&book.author) {
+                            let mut item =
+                                Item::new(book.title.clone(), format!("book:{}", book.key))
+                                    .with_secondary(if book.author.is_empty() {
+                                        "Audiobook".to_owned()
+                                    } else {
+                                        format!("Audiobook · {}", book.author)
+                                    });
+                            item.art = book.art;
+                            self.push(item);
+                        }
+                    }
+                }
                 for (artist, i, albums) in results.artists {
                     let mut item =
                         Item::new(display_or_unknown(&artist), format!("artist:{artist}"))

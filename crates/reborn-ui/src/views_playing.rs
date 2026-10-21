@@ -69,7 +69,12 @@ pub fn now_playing(
         );
     }
     let song = ui.radio.song.as_ref().filter(|_| radio);
-    let (title, second, third) = lines(ui, t);
+    // A book: the chapter as the title, then the book and its author.
+    let book = crate::views_books::now(m);
+    let (title, second, third) = match &book {
+        Some(b) => (b.chapter.clone(), b.book.clone(), b.author.clone()),
+        None => lines(ui, t),
+    };
     let lines = text::wrap(Face::S25, &title, 236., 2);
     // A song needs no label saying it plays: its title takes the label's place.
     // A station keeps the LIVE line above its title.
@@ -117,6 +122,22 @@ pub fn now_playing(
     } else if radio && song.is_none() && !t.artist.is_empty() && t.artist != "Live" {
         // Connecting… / Reconnecting… (try n): how the connection is doing.
         c.text_mid(222., info_cy, 236., &t.artist, Face::S13, color::WARNING);
+    } else if let Some(b) = &book {
+        // How far into the book, how long it still runs.
+        let info = (b.done_ms * 100)
+            .checked_div(b.total_ms)
+            .map(|percent| {
+                format!(
+                    "{percent} % · {} left",
+                    crate::views_books::length(b.total_ms.saturating_sub(b.done_ms))
+                )
+            })
+            .unwrap_or_default();
+        let mut x = 222.;
+        if (b.speed - 1.).abs() > 0.01 {
+            x += components::tag(c, x, info_cy, &format!("{:.2}×", b.speed), accent) + 8.;
+        }
+        c.text_mid(x, info_cy, 458. - x, &info, Face::R13, color::MUTED);
     } else if !radio {
         // A song's quality tag; a station's format and country are on
         // Station Info.
@@ -138,7 +159,14 @@ pub fn now_playing(
     }
 
     // Progress: a wave while music plays, laid flat when paused (Beta 7.2).
-    let position = ui.shown_position(m);
+    // A book shows its chapter's progress.
+    let (position, length) = match &book {
+        Some(b) => {
+            let p = ui.shown_position(m).saturating_sub(b.chapter_start);
+            (p.min(b.chapter_ms), b.chapter_ms)
+        }
+        None => (ui.shown_position(m), t.duration_ms),
+    };
     let (x0, x1) = (26., WIDTH - 26.);
     let amp = ui.ease("np:wave", None, if playing { 3.6 } else { 0. }, 6., 0.02);
     let phase = if ui.ui_motion {
@@ -158,7 +186,7 @@ pub fn now_playing(
         if radio {
             1.
         } else {
-            components::progress(position, t.duration_ms)
+            components::progress(position, length)
         },
         // Opaque, so the wave's joints do not bead.
         if radio {
@@ -182,10 +210,7 @@ pub fn now_playing(
     let remaining = if radio {
         String::new()
     } else {
-        format!(
-            "-{}",
-            components::time(t.duration_ms.saturating_sub(position))
-        )
+        format!("-{}", components::time(length.saturating_sub(position)))
     };
     c.text_mid_right(x1, 281., &remaining, Face::R11, color::MUTED);
 

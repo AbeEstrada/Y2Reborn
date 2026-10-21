@@ -64,7 +64,9 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
-        | Screen::Queue => views_library::browse(&mut c, ui, m, tracks, has_art, interactive),
+        | Screen::Queue
+        | Screen::Audiobooks => views_library::browse(&mut c, ui, m, tracks, has_art, interactive),
+        Screen::Book => crate::views_books::book_page(&mut c, ui, m, tracks, interactive),
         Screen::Settings
         | Screen::Wifi
         | Screen::Bluetooth
@@ -119,7 +121,9 @@ fn native_screen(
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
-        | Screen::Queue => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        | Screen::Queue
+        | Screen::Audiobooks => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        Screen::Book => crate::views_books::book_page(c, ui, m, tracks, interactive),
         Screen::Settings
         | Screen::Wifi
         | Screen::Bluetooth
@@ -207,6 +211,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::SettingsLibrary => keys!("library"),
         Screen::SettingsDisplay => keys!("display"),
         Screen::Customize => keys!("customize"),
+        Screen::Audiobooks => keys!("audiobooks"),
+        Screen::Book => keys!("book"),
         Screen::SettingsSystem => keys!("service"),
         Screen::Battery => keys!("battery"),
         Screen::Sleep => keys!("sleep"),
@@ -712,6 +718,8 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::Customize => "Customize".into(),
+        Screen::Audiobooks => "Audiobooks".into(),
+        Screen::Book => "Audiobook".into(),
         Screen::SettingsSystem => "Service".into(),
         Screen::Battery => "Battery".into(),
         Screen::Sleep => "Sleep".into(),
