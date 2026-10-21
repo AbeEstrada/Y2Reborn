@@ -1,6 +1,17 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.17 — Y2Linux 1.0 Beta 8.17 (Baseline 114), 2026-10-21 (latest): report fixes
+## 1.0.0-beta.8.19 — Y2Linux 1.0 Beta 8.19 (Baseline 118), 2026-10-21 (latest): audiobooks, covers, Customize
+
+Published as `baseline-118` (Reborn `da5b777`, sequence 8302; 8.18 was a test build, never published), installed on
+the owner's player before publishing. Audiobooks (`11febec`…`da5b777`, plan, code map and device test in
+[REBORN-AUDIOBOOKS](ui/REBORN-AUDIOBOOKS.md)): `reborn_core::books` (detection by folder/`.m4b`/genre, grouping, natural
+order, chapters, `Listening`, `Shelf` in `state/books.json`, rewind), `rb_media_chapters`, `admit_streams` (cover video
+track), `av_max_alloc` 128 MiB (long M4B), `heavy_mp4` scan, `RbDspConfig.speed` with `atempo`, sleep timer
+(`sleep_timer.rs`), Home/list/book page/Now Playing/skins (`views_books.rs`). Covers (`4895db4`): art 180, thumbs 128
+from the picture, CPU half/quarter levels (`level_block`/`level_source`), centre crop, Lanczos, 4:2:0 LRU cache of 3 000.
+Customize (`820fa50`): Wrap Around; When Screen Off and the 15-min headset grace (`ad4fdba`).
+
+## 1.0.0-beta.8.17 — Y2Linux 1.0 Beta 8.17 (Baseline 114), 2026-10-21: report fixes
 
 Published as `baseline-114` (Reborn `6d5458c`, sequence 8100). Bluetooth (`6a31a53`): a disconnect seen in either of
 two snapshots of a tick is kept (`bt_lost |=`), `StartDiscovery` 15 s with InProgress/late NoReply as scanning, intents
