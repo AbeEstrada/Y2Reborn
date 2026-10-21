@@ -1642,7 +1642,10 @@ impl Playback {
         // stay in FFmpeg. The live sink applies user attenuation after them.
         dsp.volume = 100;
         let (reply, opened) = sync_channel(1);
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // A wired open whose crystal misses its start cycles the codec's
+        // rails in the kernel (≈1.9 s), and the sink opens a second time:
+        // 2 s gave up during the second open even when it played (#52).
+        let deadline = Instant::now() + Duration::from_secs(5);
         let job = Box::new(Job {
             track,
             music_root,
