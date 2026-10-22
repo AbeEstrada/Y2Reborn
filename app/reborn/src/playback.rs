@@ -601,6 +601,11 @@ fn update_media_state(
     }
 }
 
+/// FFmpeg's AVERROR_EXIT ("Immediate exit requested"): the job's
+/// cancellation interrupted the open.
+fn open_cancelled(error: &str) -> bool {
+    error.starts_with("FFmpeg -1414092869:")
+}
 /// A cached embedded cover: `ART_SIZE` RGBA. A cover cached at another size
 /// (before Beta 8.18) is decoded again and replaced.
 const ART_BYTES: usize = ART_SIZE * ART_SIZE * 4;
@@ -668,27 +673,96 @@ fn pinned_folder_artwork(
 }
 pub(crate) type SinkFactory =
     Box<dyn Fn(&SinkSpec, Observer, u64) -> Result<Box<dyn AudioSink>, String> + Send>;
+
+/// How long a start waits for its sink. A wired open whose crystal misses its
+/// start cycles the codec's rails in the kernel (≈1.9 s), and the sink opens a
+/// second time: 2 s gave up during the second open even when it played (#52).
+const OPEN_DEADLINE: Duration = Duration::from_secs(5);
+/// What one slow open can take (the crystal case above): no retry starts so
+/// late that it cannot finish inside `OPEN_DEADLINE`.
+const SLOW_OPEN: Duration = Duration::from_secs(2);
+/// A busy output is tried again for this long from the first open (F24: the
+/// headphone open refused with ALSA -16 for 1–3 s after a wake).
+const BUSY_OPEN_FOR: Duration = Duration::from_secs(2);
+/// An output that is busy, not broken: ALSA -16 (EBUSY, also the activity
+/// lease the sleep helper holds until the radios are back) or -11 (EAGAIN).
+fn open_busy(error: &str) -> bool {
+    error.starts_with("ALSA -16:") || error.starts_with("ALSA -11:")
+}
+/// The pause before busy retry `attempt` (from 1): 100 ms, growing to 250.
+fn busy_open_delay(attempt: u32) -> Duration {
+    Duration::from_millis((50 + 50 * u64::from(attempt)).min(250))
+}
+/// Open, and open again after a refusal. A codec whose crystal did not start
+/// in time (#48) refuses one open; a second open a moment later plays. A busy
+/// output is tried every 100–250 ms until `BUSY_OPEN_FOR` has passed. No retry
+/// starts after `OPEN_DEADLINE` minus `SLOW_OPEN`. `refused` hears of each
+/// refusal that is tried again, with the attempt number and the pause.
+fn open_with_retries<T>(
+    mut open: impl FnMut() -> Result<T, String>,
+    mut refused: impl FnMut(&str, u32, Duration),
+    mut pause: impl FnMut(Duration),
+    elapsed: impl Fn() -> Duration,
+) -> Result<T, String> {
+    let mut attempt = 0u32;
+    let mut other_retried = false;
+    loop {
+        let error = match open() {
+            Ok(sink) => return Ok(sink),
+            Err(error) => error,
+        };
+        let busy = open_busy(&error);
+        let delay = if busy {
+            busy_open_delay(attempt + 1)
+        } else {
+            Duration::from_millis(250)
+        };
+        let resume = elapsed() + delay;
+        let again = resume + SLOW_OPEN <= OPEN_DEADLINE
+            && if busy {
+                resume <= BUSY_OPEN_FOR
+            } else {
+                !std::mem::replace(&mut other_retried, true)
+            };
+        if !again {
+            return Err(error);
+        }
+        attempt += 1;
+        refused(&error, attempt, delay);
+        pause(delay);
+    }
+}
 impl Playback {
     pub fn spawn(log: Observer, cache: PathBuf) -> Result<Self, String> {
         Self::with_sink(
             log,
             cache,
             Box::new(|spec, log, id| {
-                // A codec whose crystal did not start in time (#48) or a
-                // device still busy just after a resume refuses one open; a
-                // second open a moment later plays.
-                let sink = AlsaSink::open_spec(spec, log.clone(), id).or_else(|first| {
-                    log.emit(
-                        Level::Warn,
-                        "audio",
-                        "sink_open_retry",
-                        "audio output refused to open; trying once more",
-                        None,
-                        json!({"error":first,"output":format!("{:?}", spec.output)}),
-                    );
-                    thread::sleep(Duration::from_millis(250));
-                    AlsaSink::open_spec(spec, log, id)
-                })?;
+                let started = Instant::now();
+                let sink = open_with_retries(
+                    || AlsaSink::open_spec(spec, log.clone(), id),
+                    |error, attempt, delay| {
+                        let mut fields = json!({
+                            "error":error,
+                            "output":format!("{:?}", spec.output),
+                            "attempt":attempt,
+                            "retry_ms":delay.as_millis() as u64
+                        });
+                        if open_busy(error) {
+                            fields["holders"] = reborn_platform::power::output_busy_holders();
+                        }
+                        log.emit(
+                            Level::Warn,
+                            "audio",
+                            "sink_open_retry",
+                            "audio output refused to open; trying again",
+                            None,
+                            fields,
+                        );
+                    },
+                    thread::sleep,
+                    || started.elapsed(),
+                )?;
                 Ok(Box::new(sink) as Box<dyn AudioSink>)
             }),
         )
@@ -841,6 +915,12 @@ impl Playback {
                             ) {
                                 Ok(next) => {
                                     return Some((candidate, next));
+                                }
+                                // A stopped or replaced job makes every open
+                                // exit at once: no file failed (F29, ten of
+                                // these per quick Next).
+                                Err(e) if open_cancelled(&e) || job.cancel.is_cancelled() => {
+                                    return None;
                                 }
                                 Err(e) => dl.emit(
                                     Level::Warn,
@@ -1642,10 +1722,7 @@ impl Playback {
         // stay in FFmpeg. The live sink applies user attenuation after them.
         dsp.volume = 100;
         let (reply, opened) = sync_channel(1);
-        // A wired open whose crystal misses its start cycles the codec's
-        // rails in the kernel (≈1.9 s), and the sink opens a second time:
-        // 2 s gave up during the second open even when it played (#52).
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + OPEN_DEADLINE;
         let job = Box::new(Job {
             track,
             music_root,
@@ -1886,6 +1963,99 @@ mod tests {
         fn delay(&self) -> u64 {
             0
         }
+    }
+    /// Runs `open_with_retries` on a virtual clock that only the pauses move
+    /// (plus `open_ms` per open); returns the result, opens and pauses (ms).
+    fn retried(
+        mut outcomes: Vec<Result<(), &'static str>>,
+        open_ms: u64,
+    ) -> (Result<(), String>, usize, Vec<u64>) {
+        use std::cell::Cell;
+        let clock = Cell::new(Duration::ZERO);
+        let opens = Cell::new(0);
+        let pauses = std::cell::RefCell::new(Vec::new());
+        outcomes.reverse();
+        let result = open_with_retries(
+            || {
+                opens.set(opens.get() + 1);
+                clock.set(clock.get() + Duration::from_millis(open_ms));
+                outcomes.pop().unwrap_or(Ok(())).map_err(str::to_owned)
+            },
+            |_, attempt, _| assert_eq!(attempt as usize, opens.get()),
+            |delay| {
+                pauses.borrow_mut().push(delay.as_millis() as u64);
+                clock.set(clock.get() + delay);
+            },
+            || clock.get(),
+        );
+        (result, opens.get(), pauses.into_inner())
+    }
+    const BUSY: &str = "ALSA -16: Device or resource busy";
+    const AGAIN: &str = "ALSA -11: Resource temporarily unavailable";
+    const CRYSTAL: &str = "ALSA -5: Input/output error";
+
+    #[test]
+    fn a_busy_output_is_tried_again_for_two_seconds_with_short_pauses() {
+        // Busy for ≈1.5 s after a wake, then free: it plays.
+        let (result, opens, pauses) = retried(vec![Err(BUSY); 7], 1);
+        assert!(result.is_ok());
+        assert_eq!(opens, 8);
+        assert_eq!(pauses, [100, 150, 200, 250, 250, 250, 250]);
+        let (result, _, _) = retried(vec![Err(AGAIN), Err(BUSY)], 1);
+        assert!(result.is_ok());
+        // Never free: the busy error after ≈2 s, well inside the open deadline.
+        let (result, opens, pauses) = retried(vec![Err(BUSY); 100], 1);
+        assert_eq!(result.unwrap_err(), BUSY);
+        let waited = pauses.iter().sum::<u64>() + opens as u64;
+        assert!(waited <= BUSY_OPEN_FOR.as_millis() as u64, "{waited}");
+        assert!(waited >= 1800, "{waited}");
+    }
+
+    #[test]
+    fn any_other_refusal_is_tried_once_more_and_never_past_the_deadline() {
+        // The crystal case (#48, #52): ≈1.9 s per open, one retry plays.
+        let (result, opens, pauses) = retried(vec![Err(CRYSTAL)], 1900);
+        assert!(result.is_ok());
+        assert_eq!((opens, pauses), (2, vec![250]));
+        let (result, opens, _) = retried(vec![Err(CRYSTAL), Err(CRYSTAL)], 1);
+        assert_eq!(result.unwrap_err(), CRYSTAL);
+        assert_eq!(opens, 2);
+        // A refusal too late for one more slow open inside the 5 s deadline.
+        let (result, opens, _) = retried(vec![Err(CRYSTAL)], 3000);
+        assert_eq!(result.unwrap_err(), CRYSTAL);
+        assert_eq!(opens, 1);
+        // Busy at first, then the crystal: still its one retry.
+        let (result, opens, _) = retried(vec![Err(BUSY), Err(CRYSTAL)], 1);
+        assert!(result.is_ok());
+        assert_eq!(opens, 3);
+        assert!(!open_busy(CRYSTAL));
+        assert!(!open_busy(
+            "Bluetooth sink spec has no observed transport epoch"
+        ));
+    }
+
+    #[test]
+    fn a_cancelled_job_opens_no_file_and_is_not_a_file_failure() {
+        let cancel = Cancel::new().unwrap();
+        cancel.cancel();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures");
+        let output = OutputSpec {
+            rate: 44_100,
+            format: PcmFormat::S32LE,
+        };
+        let error = BoundDecoder::open(
+            &gapless_track("gapless-a.flac", 1),
+            &root,
+            output,
+            DspConfig::default(),
+            cancel,
+        )
+        .err()
+        .unwrap();
+        assert!(open_cancelled(&error), "{error}");
+        assert!(!open_cancelled(
+            "FFmpeg -1094995529: Invalid data found when processing input"
+        ));
     }
     fn track() -> Track {
         Track {

@@ -394,7 +394,7 @@ const BUSY_RETRY_DELAY: Duration = Duration::from_secs(2);
 /// The reconnect owner pages an absent peer for up to ~20 s, twice.
 const BUSY_RETRY_FOR: Duration = Duration::from_secs(45);
 
-/// A user's Connect or Bluetooth on/off refused only because another
+/// A user's Connect, Pair or Bluetooth on/off refused only because another
 /// Bluetooth operation held the platform lock (usually the automatic
 /// reconnect paging a headset that is off): tried again until it is free.
 struct BusyRetry {
@@ -449,12 +449,8 @@ fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
     if lock.try_lock().is_err() {
         // Tell the reconnect owner a user request is waiting: it makes no new
         // automatic attempt once its current one ends.
-        if matches!(operation, "connect" | "power_on") {
-            let _ = write_intent(if operation == "connect" {
-                "connect_pending"
-            } else {
-                "power_pending"
-            });
+        if let Some(intent) = pending_intent(operation) {
+            let _ = write_intent(intent);
         }
         return Err("Platform Bluetooth operation in progress; retry after it completes".into());
     }
@@ -464,6 +460,25 @@ fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
         _ => operation,
     })?;
     Ok(Some(lock))
+}
+/// The intent that makes the reconnect owner give way to a waiting user
+/// request: it cancels the page it holds the lock for and makes no new
+/// automatic attempt until the intent's deadline. It knows only these two
+/// names; a Pair waits like a Connect (F28: twenty Pair taps refused while
+/// it paged a trusted headset).
+fn pending_intent(operation: &str) -> Option<&'static str> {
+    match operation {
+        "connect" | "pair" => Some("connect_pending"),
+        "power_on" => Some("power_pending"),
+        _ => None,
+    }
+}
+/// The user commands that wait for a busy platform lock instead of failing.
+fn waits_for_platform_lock(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Connect(_) | Command::Power(_) | Command::Pair(_)
+    )
 }
 fn write_intent(operation: &str) -> Result<(), String> {
     let boot =
@@ -636,19 +651,6 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
         }
     }
     state.bluealsa = state.bluealsa_owner.is_some();
-    if let Some(owner) = state.bluealsa_owner.as_deref() {
-        let marker = Path::new("/run/y2/bt-codec-uncertain.json");
-        if let Ok(bytes) = std::fs::read(marker) {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                if value["bluealsa_owner"]
-                    .as_str()
-                    .is_some_and(|previous| previous != owner)
-                {
-                    let _ = std::fs::remove_file(marker);
-                }
-            }
-        }
-    }
     // BlueALSA 5 exposes PCM objects through ObjectManager. Its negotiated
     // properties are Rate and Format; Sampling was the incompatible v4 name.
     let pcms: Result<Objects, _> = c
@@ -658,12 +660,28 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
             Duration::from_secs(1),
         )
         .get_managed_objects();
+    // Each PCM's connection sequence: BlueALSA numbers every new connection
+    // of a device, so a reconnect shows as a new number on the same path.
+    let mut sequences = None;
     if let Ok(pcms) = pcms {
-        state.pcms = pcms
+        let pcms = pcms
             .into_iter()
             .filter_map(|(path, mut interfaces)| {
                 interfaces.remove("org.bluealsa.PCM1").map(|p| (path, p))
             })
+            .collect::<Vec<_>>();
+        sequences = Some(
+            pcms.iter()
+                .map(|(path, p)| {
+                    (
+                        path.to_string(),
+                        p.get("Sequence").and_then(|v| v.0.as_u64()),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        state.pcms = pcms
+            .into_iter()
             .take(16)
             .map(|(path, p)| {
                 let object = path.to_string();
@@ -696,9 +714,79 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
     {
         return Err("Bluetooth service owner changed during observation".into());
     }
+    if let Some(owner) = state.bluealsa_owner.as_deref() {
+        clear_settled_codec_marker(
+            Path::new("/run/y2"),
+            owner,
+            &state.devices,
+            sequences.as_deref(),
+        );
+    }
     state.devices.sort_by(|a, b| a.name.cmp(&b.name));
     state.devices.truncate(128);
     Ok((adapter, state))
+}
+/// Whether the PCM a codec switch left in an unknown state (F25) is gone:
+/// BlueALSA restarted, the headphones disconnected, or they connected again
+/// (a new connection sequence, or no such PCM any more). A new connection
+/// negotiates its codec afresh. A marker that names no PCM (before Beta 8.22)
+/// settles only with a BlueALSA restart, as before.
+fn codec_marker_settled(
+    marker: &serde_json::Value,
+    owner: &str,
+    devices: &[Device],
+    sequences: Option<&[(String, Option<u64>)]>,
+) -> bool {
+    if marker["bluealsa_owner"]
+        .as_str()
+        .is_some_and(|previous| previous != owner)
+    {
+        return true;
+    }
+    if let Some(device) = marker["device"].as_str() {
+        if !devices.iter().any(|d| d.path == device && d.connected) {
+            return true;
+        }
+    }
+    match (marker["pcm"].as_str(), sequences) {
+        (Some(pcm), Some(sequences)) => match sequences.iter().find(|(path, _)| path == pcm) {
+            None => true,
+            Some((_, sequence)) => {
+                sequence.is_some_and(|sequence| marker["sequence"].as_u64() != Some(sequence))
+            }
+        },
+        _ => false,
+    }
+}
+/// Remove the unknown-codec marker once it no longer describes a live PCM.
+/// Only while no codec switch or open sink holds the PCM lease, so a switch
+/// that is still waiting for its answer keeps its marker.
+fn clear_settled_codec_marker(
+    directory: &Path,
+    owner: &str,
+    devices: &[Device],
+    sequences: Option<&[(String, Option<u64>)]>,
+) -> bool {
+    use std::os::unix::fs::OpenOptionsExt;
+    let marker = directory.join("bt-codec-uncertain.json");
+    let Ok(bytes) = std::fs::read(&marker) else {
+        return false;
+    };
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default();
+    if !codec_marker_settled(&value, owner, devices, sequences) {
+        return false;
+    }
+    let Ok(lock) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(directory.join("bt-pcm.lock"))
+    else {
+        return false;
+    };
+    lock.try_lock().is_ok() && std::fs::remove_file(&marker).is_ok()
 }
 /// Hold a shared lease on the Bluetooth PCM for the life of an open sink.
 /// The platform's codec switcher takes the lease exclusively, so playback and
@@ -722,7 +810,11 @@ fn pcm_lease_at(directory: &std::path::Path) -> Result<Option<std::fs::File>, St
     lock.try_lock_shared()
         .map_err(|_| "Bluetooth codec selection in progress; retry playback")?;
     if directory.join("bt-codec-uncertain.json").exists() {
-        return Err("Bluetooth codec outcome unknown; restart BlueALSA before playback".into());
+        // Reaches the screen as is (user language): cleared once they reconnect.
+        return Err(
+            "Bluetooth headphones didn't finish changing codec. Reconnect Bluetooth headphones."
+                .into(),
+        );
     }
     Ok(Some(lock))
 }
@@ -967,8 +1059,14 @@ fn codec_request(
         }
         atomic_write(
             marker,
-            &serde_json::to_vec(&json!({"bluealsa_owner":owner,"sequence":sequence}))
-                .map_err(|e| e.to_string())?,
+            &serde_json::to_vec(&json!({
+                "bluealsa_owner":owner,
+                "sequence":sequence,
+                "pcm":pcm.object,
+                "device":pcm.device,
+                "address":address
+            }))
+            .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         let result: Result<(), dbus::Error> =
@@ -1642,7 +1740,7 @@ impl Bluetooth {
                                 Command::Codec { address, preference } => Some((address.clone(), *preference)),
                                 _ => None,
                             };
-                            let busy_command = matches!(cmd, Command::Connect(_) | Command::Power(_)).then(|| cmd.clone());
+                            let busy_command = waits_for_platform_lock(&cmd).then(|| cmd.clone());
                             if !matches!(cmd, Command::Refresh) {
                                 operation_error = None;
                                 current.error = None;
@@ -2812,6 +2910,139 @@ mod pcm_lease_tests {
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    fn headphones(connected: bool) -> super::Device {
+        super::Device {
+            path: "/org/bluez/hci0/dev_00_11_22_33_44_55".into(),
+            address: "00:11:22:33:44:55".into(),
+            connected,
+            ..Default::default()
+        }
+    }
+
+    fn marker() -> serde_json::Value {
+        serde_json::json!({
+            "bluealsa_owner":":1.7",
+            "sequence":3,
+            "pcm":"/org/bluealsa/hci0/dev_00_11_22_33_44_55/a2dpsrc/sink",
+            "device":"/org/bluez/hci0/dev_00_11_22_33_44_55",
+            "address":"00:11:22:33:44:55"
+        })
+    }
+
+    #[test]
+    fn an_unknown_codec_outcome_settles_when_the_headphones_drop_or_reconnect() {
+        use super::codec_marker_settled as settled;
+        let pcm = "/org/bluealsa/hci0/dev_00_11_22_33_44_55/a2dpsrc/sink".to_string();
+        let same = [(pcm.clone(), Some(3))];
+        let connected = [headphones(true)];
+        // Still the PCM whose switch got no answer: playback stays refused.
+        assert!(!settled(&marker(), ":1.7", &connected, Some(&same)));
+        // A failed PCM listing proves nothing.
+        assert!(!settled(&marker(), ":1.7", &connected, None));
+        assert!(!settled(
+            &marker(),
+            ":1.7",
+            &connected,
+            Some(&[(pcm.clone(), None)])
+        ));
+        // BlueALSA restarted.
+        assert!(settled(&marker(), ":1.9", &connected, Some(&same)));
+        // The headphones disconnected, or are no longer listed.
+        assert!(settled(
+            &marker(),
+            ":1.7",
+            &[headphones(false)],
+            Some(&same)
+        ));
+        assert!(settled(&marker(), ":1.7", &[], Some(&same)));
+        // Their PCM is gone, or came back with a new connection.
+        assert!(settled(&marker(), ":1.7", &connected, Some(&[])));
+        assert!(settled(
+            &marker(),
+            ":1.7",
+            &connected,
+            Some(&[(pcm, Some(4))])
+        ));
+        // Another device's PCM says nothing about these headphones.
+        let other = [(
+            "/org/bluealsa/hci0/dev_66_77_88_99_AA_BB/a2dpsrc/sink".to_string(),
+            Some(9),
+        )];
+        assert!(settled(&marker(), ":1.7", &connected, Some(&other)));
+        // A marker from before 8.22 names no PCM: only a restart settles it.
+        let old = serde_json::json!({"bluealsa_owner":":1.7","sequence":3});
+        assert!(!settled(&old, ":1.7", &[], Some(&[])));
+        assert!(settled(&old, ":1.9", &[], Some(&[])));
+        assert!(!settled(&serde_json::Value::Null, ":1.7", &[], Some(&[])));
+    }
+
+    #[test]
+    fn a_settled_marker_is_removed_only_while_no_one_holds_the_pcm() {
+        let dir = std::env::temp_dir().join(format!("reborn-codec-marker-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("bt-codec-uncertain.json");
+        std::fs::write(&path, serde_json::to_vec(&marker()).unwrap()).unwrap();
+        let clear = |devices: &[super::Device]| {
+            super::clear_settled_codec_marker(&dir, ":1.7", devices, Some(&[]))
+        };
+        assert!(super::pcm_lease_at(&dir).is_err());
+        // A codec switch (exclusive) or a sink (shared) holds the PCM lease.
+        let switching = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join("bt-pcm.lock"))
+            .unwrap();
+        // The refused lease above may live on briefly in a forked child.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while switching.try_lock().is_err() {
+            assert!(std::time::Instant::now() < deadline, "lease not released");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!clear(&[]));
+        assert!(path.exists());
+        drop(switching);
+        // Still connected with the same PCM: kept.
+        let pcm = marker()["pcm"].as_str().unwrap().to_string();
+        assert!(!super::clear_settled_codec_marker(
+            &dir,
+            ":1.7",
+            &[headphones(true)],
+            Some(&[(pcm, Some(3))])
+        ));
+        // Concurrent tests fork; a child holds a duplicate descriptor only
+        // until its exec closes it (O_CLOEXEC).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !clear(&[headphones(false)]) {
+            assert!(std::time::Instant::now() < deadline, "marker not cleared");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!path.exists());
+        assert!(!clear(&[]));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while super::pcm_lease_at(&dir).is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "playback still refused"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_unknown_codec_refusal_reads_as_user_language() {
+        let dir = std::env::temp_dir().join(format!("reborn-codec-words-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("bt-codec-uncertain.json"), b"{}").unwrap();
+        let error = super::pcm_lease_at(&dir).unwrap_err();
+        // main.rs friendly_error passes "connect Bluetooth" messages through.
+        assert!(error.to_ascii_lowercase().contains("connect bluetooth"));
+        assert!(!error.contains("BlueALSA"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -2836,7 +3067,28 @@ mod codec_retry_tests {
 
 #[cfg(test)]
 mod user_request_tests {
-    use super::{connect_busy, discovery_outcome, failed_intent, lock_busy};
+    use super::{
+        connect_busy, discovery_outcome, failed_intent, lock_busy, pending_intent,
+        waits_for_platform_lock, Command,
+    };
+
+    #[test]
+    fn pair_waits_for_the_reconnect_owner_like_connect() {
+        let path = || "/org/bluez/hci0/dev_00_11_22_33_44_55".to_string();
+        assert!(waits_for_platform_lock(&Command::Pair(path())));
+        assert!(waits_for_platform_lock(&Command::Connect(path())));
+        assert!(waits_for_platform_lock(&Command::Power(true)));
+        assert!(!waits_for_platform_lock(&Command::Disconnect(path())));
+        assert!(!waits_for_platform_lock(&Command::Forget(path())));
+        assert!(!waits_for_platform_lock(&Command::Scan(true)));
+        // The reconnect owner gives way only to these two intent names.
+        assert_eq!(pending_intent("pair"), Some("connect_pending"));
+        assert_eq!(pending_intent("connect"), Some("connect_pending"));
+        assert_eq!(pending_intent("power_on"), Some("power_pending"));
+        assert_eq!(pending_intent("power_off"), None);
+        assert_eq!(pending_intent("disconnect"), None);
+        assert_eq!(pending_intent("codec"), None);
+    }
 
     #[test]
     fn a_slow_or_repeated_discovery_start_counts_as_scanning() {

@@ -302,6 +302,62 @@ fn sleep_owner_at(path: &Path) -> std::io::Result<bool> {
     }
 }
 
+/// Who may hold an audio output that refused to open as busy, if the kernel
+/// says: the headphone PCM's owner, and the holders of the activity lease the
+/// sink takes before it opens (the sleep helper keeps it exclusive until the
+/// radios are back after a wake).
+pub fn output_busy_holders() -> Value {
+    let pcm = fs::read_to_string("/proc/asound/card0/pcm0p/sub0/status").ok();
+    let lease = activity_lease_holders();
+    json!({
+        "pcm_owner_pid":pcm.as_deref().and_then(pcm_owner_pid),
+        "activity_lease":lease
+    })
+}
+/// `owner_pid` of an open substream's status; a closed one has none.
+fn pcm_owner_pid(status: &str) -> Option<u32> {
+    status.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        (key.trim() == "owner_pid").then(|| value.trim().parse().ok())?
+    })
+}
+fn activity_lease_holders() -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = fs::metadata("/run/y2/activity.lock") else {
+        return Vec::new();
+    };
+    let locks = fs::read_to_string("/proc/locks").unwrap_or_default();
+    flock_holders(&locks, meta.dev(), meta.ino())
+        .into_iter()
+        .map(|pid| {
+            let name = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+            format!("{pid}/{}", name.trim())
+        })
+        .collect()
+}
+/// The PIDs holding a flock on one file in `/proc/locks` (device numbers in
+/// hex, as the kernel prints them).
+fn flock_holders(locks: &str, dev: u64, inode: u64) -> Vec<u32> {
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
+    locks
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.get(1) != Some(&"FLOCK") {
+                return None;
+            }
+            let pid = fields.get(4)?.parse().ok()?;
+            let mut id = fields.get(5)?.split(':');
+            let same = u64::from_str_radix(id.next()?, 16).ok()? == major
+                && u64::from_str_radix(id.next()?, 16).ok()? == minor
+                && id.next()?.parse::<u64>().ok()? == inode;
+            same.then_some(pid)
+        })
+        .take(8)
+        .collect()
+}
+
 #[cfg(test)]
 mod sleep_owner_tests {
     use super::*;
@@ -315,5 +371,29 @@ mod sleep_owner_tests {
         drop(owner);
         assert!(!sleep_owner_at(&path).unwrap());
         fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod busy_output_tests {
+    use super::*;
+    #[test]
+    fn a_busy_output_names_its_holders_from_the_kernel() {
+        let open = "state: RUNNING\nowner_pid   : 812\ntrigger_time: 1.0\n";
+        assert_eq!(pcm_owner_pid(open), Some(812));
+        assert_eq!(pcm_owner_pid("closed\n"), None);
+        assert_eq!(pcm_owner_pid(""), None);
+        // st_dev 0:0x17 (tmpfs /run), inode 4242.
+        let locks = "1: FLOCK  ADVISORY  WRITE 977 00:17:4242 0 EOF\n\
+                     2: FLOCK  ADVISORY  READ  501 00:17:9999 0 EOF\n\
+                     3: POSIX  ADVISORY  WRITE 12 00:17:4242 0 EOF\n\
+                     4: FLOCK  ADVISORY  READ  640 00:18:4242 0 EOF\n\
+                     malformed\n";
+        assert_eq!(flock_holders(locks, 0x17, 4242), [977]);
+        assert!(flock_holders(locks, 0x17, 1).is_empty());
+        assert!(flock_holders("", 0x17, 4242).is_empty());
+        // Cheap and safe off the device (no /run/y2, no sound card).
+        let holders = output_busy_holders();
+        assert!(holders.get("activity_lease").is_some());
     }
 }
