@@ -438,6 +438,11 @@ pub enum WifiProblem {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlatformInfo {
     pub release_version: Option<String>,
+    /// The system's build date (unix seconds): the clock is never set
+    /// earlier than a day before it, nor more than five years after.
+    pub build_epoch: Option<i64>,
+    /// Where the clock came from: "ntp", "manual", "retained_rtc", "build_floor".
+    pub clock_source: Option<String>,
 }
 
 /// One labelled diagnostic observation. Values are already human-readable.

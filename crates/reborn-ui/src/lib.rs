@@ -6,6 +6,7 @@ mod canvas;
 mod catalog;
 pub mod charge;
 mod components;
+mod date_time;
 pub mod diagnostics;
 mod flow;
 mod fontdata;
@@ -428,6 +429,8 @@ pub struct Ui {
     /// The time zone picker's rows for (zone, minute): several hundred
     /// zones parsed and sorted once, not on every frame.
     zone_rows: RefCell<Option<(String, i64, Vec<Item>)>>,
+    /// The date and time being set by hand (Settings > Display > Date & Time).
+    date_draft: Option<reborn_core::clock::Local>,
     /// Cover Flow's scroll position and the cover's flight to the album page.
     flow: RefCell<flow::Flow>,
     transition: std::cell::Cell<Option<flow::Transition>>,
@@ -1470,6 +1473,7 @@ impl Ui {
             Some(Modal::EqBand(_)) => (-12..=12)
                 .map(|gain| Item::new(format!("{gain:+} dB"), format!("eq_gain:{gain}")))
                 .collect(),
+            Some(Modal::DateField(field)) => date_time::picker(self, m, field).0,
             Some(Modal::Confirm(action)) => {
                 let mut rows = vec![
                     Item::new("Cancel", "cancel"),
@@ -1528,6 +1532,7 @@ impl Ui {
                     "Turn the wheel to choose gain. Select applies; Back cancels.".into(),
                 );
             }
+            Some(Modal::DateField(field)) => return date_time::picker_copy(field),
             Some(Modal::Confirm(action)) => confirm_copy(action),
             Some(Modal::PlaylistPicker) => ("Add to Playlist", "Songs are added at the end."),
             Some(Modal::ContextMenu) => {
@@ -1995,6 +2000,36 @@ impl Ui {
                 .eq_profiles
                 .get(index)
                 .map_or(Effect::None, |f| Effect::ImportEqProfile(f.path.clone()));
+        }
+        if key == "date_time" {
+            // From the clock as it reads now.
+            date_time::begin(self, m);
+            Self::go(m, Screen::DateTime, "");
+            return Effect::None;
+        }
+        if let Some(field) = key.strip_prefix("date_field:").and_then(date_time::field) {
+            let focus = date_time::picker(self, m, field).1;
+            Self::open_modal(m, Modal::DateField(field));
+            m.navigation.modal_focus = focus;
+            return Effect::None;
+        }
+        if key == "date_set" {
+            if m.platform.busy.is_some() {
+                self.flash("Try again in a moment.");
+                return Effect::None;
+            }
+            return match date_time::instant(self, m) {
+                Ok(utc) => {
+                    // Back to Display, whose row shows the clock it sets.
+                    self.date_draft = None;
+                    Self::back(m);
+                    Effect::Platform(PlatformTask::SetClock(utc))
+                }
+                Err(why) => {
+                    self.flash(why);
+                    Effect::None
+                }
+            };
         }
         if key == "time_zone" {
             // Open at the choice in use.
@@ -2487,6 +2522,19 @@ impl Ui {
                     .and_then(|s| s.parse::<i8>().ok())
                     .map(|gain_db| Effect::SetEqBandGain { index, gain_db })
                     .unwrap_or(Effect::None)
+            }
+            Some(Modal::DateField(field)) => {
+                Self::close_modal(m);
+                if let Some(n) = key.strip_prefix("date_value:").and_then(|s| s.parse().ok()) {
+                    date_time::choose(self, m, field, n);
+                    // Time: the hour, then the minute.
+                    if let Some(next) = date_time::then(field) {
+                        let focus = date_time::picker(self, m, next).1;
+                        Self::open_modal(m, Modal::DateField(next));
+                        m.navigation.modal_focus = focus;
+                    }
+                }
+                Effect::None
             }
             Some(Modal::Confirm(confirm)) => {
                 if key == "cancel" {

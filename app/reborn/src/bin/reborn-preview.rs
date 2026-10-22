@@ -828,6 +828,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or(0);
         }
     );
+    case!("30d-date-time", at(Screen::DateTime, ""), |_, m| {
+        m.settings.time_zone = "Europe/Berlin".into();
+        m.settings.time_zone_auto = Some(false);
+        m.navigation.focus = 3;
+    });
+    case!("30e-date-time-hour", at(Screen::DateTime, ""), |_, m| {
+        m.settings.time_zone = "America/Chicago".into();
+        m.settings.time_zone_auto = Some(false);
+        m.navigation.focus = 3;
+        m.navigation.modal = Some(reborn_core::Modal::DateField(reborn_core::DateField::Hour));
+        m.navigation.modal_focus = 4;
+    });
     case!("31-screen-off", at(Screen::ScreenTimeout, ""), |_, m| {
         m.navigation.focus = 1;
         m.settings.screen_timeout_seconds = 30;

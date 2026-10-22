@@ -196,6 +196,11 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 row("Time Zone", "time_zone", crate::time_zone::summary(m))
                     .with_kind(RowKind::Chevron),
             );
+            // #53: a player without Wi-Fi keeps the time set here.
+            rows.push(
+                row("Date & Time", "date_time", crate::date_time::summary(ui, m))
+                    .with_kind(RowKind::Chevron),
+            );
             Page::rows(rows)
         }
         // Beta 8.18: how Reborn behaves, apart from how the screen looks.
@@ -210,6 +215,11 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Album View", "album_view", m.settings.album_view.label()),
         ]),
         Screen::TimeZone => Page::rows(crate::time_zone::rows(ui, m)),
+        Screen::DateTime => {
+            let mut page = Page::rows(crate::date_time::rows(ui, m));
+            page.status = Some(crate::date_time::hint(m).into());
+            page
+        }
         Screen::SettingsSystem => system(ui, m),
         Screen::Battery => battery(m),
         Screen::Sleep => sleep(m),

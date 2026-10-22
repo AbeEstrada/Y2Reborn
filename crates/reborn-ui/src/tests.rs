@@ -6,7 +6,7 @@ use reborn_core::{
         StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace,
         VolumeState, WifiProblem,
     },
-    AppModel, Effect, PlaybackState, Source,
+    AppModel, DateField, Effect, PlaybackState, Source,
 };
 use std::path::PathBuf;
 
@@ -212,7 +212,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 33] = [
+const NORMAL_SCREENS: [Screen; 34] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -237,6 +237,7 @@ const NORMAL_SCREENS: [Screen; 33] = [
     Screen::ErrorReports,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
+    Screen::DateTime,
     Screen::SettingsSystem,
     Screen::Battery,
     Screen::Sleep,
@@ -1014,6 +1015,77 @@ fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
     assert!(m.navigation.filter.is_empty(), "back to the countries");
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.screen, Screen::SettingsDisplay);
+}
+
+#[test]
+fn date_and_time_are_set_by_hand_from_display() {
+    // #53: a player that never had Wi-Fi.
+    let mut ui = radios();
+    // 2026-10-12 09:41 UTC, 11:41 in Berlin.
+    ui.clock_fixed = Some(1_791_798_060);
+    let mut m = app(Screen::SettingsDisplay);
+    m.settings.time_zone = "Europe/Berlin".into();
+    m.settings.time_zone_auto = Some(false);
+    m.platform.snapshot.info.build_epoch = Some(1_791_000_000);
+    let row = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .find(|r| r.key == "date_time")
+        .unwrap();
+    assert_eq!(row.secondary, "12 Oct 2026, 11:41");
+    select_key(&mut ui, &mut m, "date_time");
+    assert_eq!(m.screen, Screen::DateTime);
+    let draw = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        draw.contains("Date & Time") && draw.contains("October"),
+        "{draw}"
+    );
+    // A field opens its picker at the current value; the wheel steps it.
+    select_key(&mut ui, &mut m, "date_field:hour");
+    assert_eq!(m.navigation.modal, Some(Modal::DateField(DateField::Hour)));
+    assert_eq!(m.navigation.modal_focus, 11);
+    for _ in 0..3 {
+        ui.model_action(&mut m, Action::WheelClockwise(1));
+    }
+    // Time: the hour, then the minute.
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(
+        m.navigation.modal,
+        Some(Modal::DateField(DateField::Minute))
+    );
+    assert_eq!(m.navigation.modal_focus, 41);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.navigation.modal, None);
+    // Back leaves a picker without a change.
+    select_key(&mut ui, &mut m, "date_field:day");
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::DateTime);
+    let values: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.secondary)
+        .collect();
+    assert_eq!(values, ["2026", "October", "12", "14:40", ""]);
+    // Busy with another task: nothing is sent.
+    m.platform.busy = Some(PlatformTask::Refresh);
+    assert_eq!(select_key(&mut ui, &mut m, "date_set"), Effect::None);
+    assert_eq!(m.screen, Screen::DateTime);
+    m.platform.busy = None;
+    // 14:40 in Berlin (summer time) is 12:40 UTC; back on Display.
+    assert_eq!(
+        select_key(&mut ui, &mut m, "date_set"),
+        Effect::Platform(PlatformTask::SetClock(1_791_763_200 + 12 * 3600 + 40 * 60))
+    );
+    assert_eq!(m.screen, Screen::SettingsDisplay);
+    // Before the build date: refused here already.
+    select_key(&mut ui, &mut m, "date_time");
+    select_key(&mut ui, &mut m, "date_field:month");
+    m.navigation.modal_focus = 0;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(select_key(&mut ui, &mut m, "date_set"), Effect::None);
+    assert_eq!(ui.notice, "Choose a later date.");
 }
 
 #[test]

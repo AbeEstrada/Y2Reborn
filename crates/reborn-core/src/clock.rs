@@ -118,6 +118,36 @@ impl Rule {
     pub fn local(&self, utc: i64) -> Local {
         civil(utc + i64::from(self.offset_at(utc)))
     }
+
+    /// The instant (unix seconds) a local time names: the inverse of
+    /// `local`. Around a daylight-saving change a time is read as standard
+    /// time: one skipped in spring (02:30) lands an hour later, one repeated
+    /// in autumn is its second instance.
+    pub fn utc_of(&self, t: &Local) -> i64 {
+        let local = t.seconds();
+        let guess = local - i64::from(self.offset_at(local - i64::from(self.standard)));
+        local - i64::from(self.offset_at(guess))
+    }
+}
+
+impl Local {
+    /// Seconds since 1970 of these calendar fields (no zone applied): the
+    /// inverse of `civil`.
+    pub fn seconds(&self) -> i64 {
+        days_from(self.year, self.month, self.day) * 86_400
+            + i64::from(self.hour) * 3600
+            + i64::from(self.minute) * 60
+    }
+}
+
+/// The days of a month (1 = January).
+pub fn days_in_month(year: i32, month: u8) -> u8 {
+    match month {
+        2 if leap(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// Calendar fields of a count of seconds since 1970 (no zone applied).
@@ -376,6 +406,45 @@ mod tests {
         let london = zone("Europe/London").unwrap();
         assert_eq!(london.offset_at(at(2026, 3, 29, 0, 59)), 0);
         assert_eq!(london.offset_at(at(2026, 3, 29, 1, 0)), 3600);
+    }
+
+    #[test]
+    fn local_times_turn_back_into_instants() {
+        let ny = zone("America/New_York").unwrap();
+        let berlin = zone("Europe/Berlin").unwrap();
+        for utc in [
+            at(2026, 1, 15, 12, 0),
+            at(2026, 7, 15, 23, 59),
+            at(2026, 12, 31, 23, 30),
+        ] {
+            for rule in [&ny, &berlin, &Rule::UTC] {
+                assert_eq!(rule.utc_of(&rule.local(utc)), utc);
+            }
+        }
+        // 02:30 on 8 March 2026 does not exist in New York: 03:30 daylight time.
+        let skipped = Local {
+            year: 2026,
+            month: 3,
+            day: 8,
+            hour: 2,
+            minute: 30,
+        };
+        assert_eq!(ny.utc_of(&skipped), at(2026, 3, 8, 7, 30));
+        assert_eq!(ny.local(ny.utc_of(&skipped)).hour, 3);
+        // 01:30 on 1 November 2026 happens twice: the second one.
+        let twice = Local {
+            year: 2026,
+            month: 11,
+            day: 1,
+            hour: 1,
+            minute: 30,
+        };
+        assert_eq!(ny.utc_of(&twice), at(2026, 11, 1, 6, 30));
+        assert_eq!(civil(twice.seconds()), twice);
+        assert_eq!(days_in_month(2028, 2), 29);
+        assert_eq!(days_in_month(2100, 2), 28);
+        assert_eq!(days_in_month(2026, 11), 30);
+        assert_eq!(days_in_month(2026, 12), 31);
     }
 
     #[test]

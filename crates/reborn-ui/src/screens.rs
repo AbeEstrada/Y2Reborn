@@ -79,6 +79,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::DacFilter
         | Screen::Theme
         | Screen::TimeZone
+        | Screen::DateTime
         | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Customize
@@ -136,6 +137,7 @@ fn native_screen(
         | Screen::DacFilter
         | Screen::Theme
         | Screen::TimeZone
+        | Screen::DateTime
         | Screen::HomeMenu
         | Screen::SettingsDisplay
         | Screen::Customize
@@ -207,6 +209,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::ErrorReports => keys!("error_reports"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
+        Screen::DateTime => keys!("date_time"),
         Screen::HomeMenu => keys!("home_menu"),
         Screen::SettingsLibrary => keys!("library"),
         Screen::SettingsDisplay => keys!("display"),
@@ -720,6 +723,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::ErrorReports => "Error Reports".into(),
         Screen::Theme => "Skin".into(),
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
+        Screen::DateTime => "Date & Time".into(),
         Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),

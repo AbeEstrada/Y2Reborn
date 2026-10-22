@@ -10,7 +10,7 @@ use reborn_core::{
 /// unset clock reads 1970, so nothing is shown rather than a wrong time.
 const CLOCK_SET_AFTER: i64 = 1_735_689_600;
 
-fn now(ui: &Ui) -> i64 {
+pub(crate) fn now(ui: &Ui) -> i64 {
     ui.clock_fixed.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -19,7 +19,7 @@ fn now(ui: &Ui) -> i64 {
 }
 
 /// The chosen zone's rule; a name the table no longer has reads as UTC.
-fn rule(m: &AppModel) -> Rule {
+pub(crate) fn rule(m: &AppModel) -> Rule {
     clock::zone(&m.settings.time_zone).unwrap_or(Rule::UTC)
 }
 

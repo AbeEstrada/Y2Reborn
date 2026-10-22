@@ -266,6 +266,14 @@ fn execute(task: PlatformTask) -> Reply {
         ReportEnable(_) | ReportNewId | ReportSend | ReportSave(..) => {
             return Reply::Reports(task, reports(task))
         }
+        SetClock(epoch) => {
+            return Reply::Operation(
+                task,
+                call(&["time-set", &epoch.to_string()], 10)
+                    .map(|v| operation(&v))
+                    .map_err(|e| clock_error(&e)),
+            )
+        }
     };
     Reply::Operation(
         task,
@@ -346,6 +354,15 @@ pub fn report_state(value: &Value) -> Option<ReportState> {
 
 /// User-language text for a platform failure code. Raw service text is never
 /// echoed; Diagnostics keeps the observation itself.
+/// `y2-platform time-set` refusals in the owner's words.
+fn clock_error(error: &str) -> String {
+    if error.contains("date_out_of_range") {
+        "Choose a date closer to today.".into()
+    } else {
+        "The time couldn't be set. Please try again.".into()
+    }
+}
+
 pub fn friendly_error(error: &str) -> String {
     let e = error.to_ascii_lowercase();
     if e.contains("password") || e.contains("wrong_key") || e.contains("wrong_credentials") {
@@ -746,6 +763,8 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         internal_setup: internal_setup(status),
         info: PlatformInfo {
             release_version: text(&status["system"]["versions"]["release_version"]),
+            build_epoch: status["system"]["time"]["build_epoch"].as_i64(),
+            clock_source: text(&status["system"]["time"]["source"]),
         },
         storage: storage(status),
         usb: usb(status),

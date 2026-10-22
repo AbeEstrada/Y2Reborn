@@ -120,6 +120,7 @@ most specific name first:
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
 | `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`); `theme` is the Skin picker (Settings → Skin since Beta 7.5; the key keeps its name for existing skins) |
 | `time_zone` | the time zone picker (else `page` or `list`) |
+| `date_time` | Date & Time, the date and time set by hand (else `page` or `list`) |
 | `search`, `playlists`, `playlist`, `radio`, `radio_stations`, `radio_categories` | search results, Playlists, one playlist, Radio, a station list, countries or genres (else `list`) |
 | `radio_info` | Station Info: the station as heading, its facts and two actions (else `page`) |
 | `equalizer` | the equalizer (only this name; else Reborn's) |

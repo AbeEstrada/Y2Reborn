@@ -731,6 +731,8 @@ pub enum Screen {
     Theme,
     /// Time zone picker (Settings > Display).
     TimeZone,
+    /// The date and time set by hand (Settings > Display, #53).
+    DateTime,
     /// Which Music lists also stand on Home (Settings > Customize).
     HomeMenu,
     SettingsLibrary,
@@ -804,9 +806,21 @@ pub enum Modal {
     OutputPicker,
     CodecPicker,
     EqBand(usize),
+    /// One field of Settings > Display > Date & Time.
+    DateField(DateField),
     Confirm(ConfirmAction),
     /// "Add to Playlist": the playlists, the last used first, and New.
     PlaylistPicker,
+}
+
+/// The fields of the date and time set by hand, in the order shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateField {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -858,6 +872,9 @@ pub enum PlatformTask {
     ReportSend,
     /// Build a report now and save it to storage for the owner to send.
     ReportSave(platform::ReportDestination),
+    /// Set the system clock to this instant (unix seconds), the owner's own
+    /// date and time (#53); network time replaces it when Wi-Fi connects.
+    SetClock(i64),
 }
 
 /// Presented platform state. Owned and filled by the application from the

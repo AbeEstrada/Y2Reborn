@@ -566,6 +566,7 @@ pub const LAYOUTS: &[&str] = &[
     "error_reports",
     "theme",
     "time_zone",
+    "date_time",
     "home_menu",
     "library",
     "display",

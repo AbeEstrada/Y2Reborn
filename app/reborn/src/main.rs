@@ -2975,6 +2975,12 @@ impl Runtime {
                                 self.ui.flash("Internal Storage is ready. Restarting…");
                                 restart_after_setup = true;
                             }
+                            SetClock(_) => {
+                                // A time set by hand is never trusted: read
+                                // the platform's verdict again at once.
+                                self.clock_trusted = None;
+                                self.ui.flash("Date and time set");
+                            }
                             _ => self.ui.flash("Check finished. See Latest Result."),
                         }
                     }
