@@ -149,7 +149,28 @@ enum RadioReply {
     Categories(u64, Result<Vec<reborn_platform::radio::Category>, String>),
 }
 
+/// The one-step update's screen is up, but no update task runs or waits.
+fn update_screen_waits(
+    update_run: bool,
+    restarting: bool,
+    busy: Option<reborn_core::PlatformTask>,
+    queued: Option<reborn_core::PlatformTask>,
+) -> bool {
+    use reborn_core::PlatformTask::{UpdateApply, UpdateStage};
+    update_run
+        && !restarting
+        && !matches!(busy, Some(UpdateStage | UpdateApply))
+        && !matches!(queued, Some(UpdateStage | UpdateApply))
+}
+
 struct Runtime {
+    /// A task the owner started while the platform worker was busy (a status
+    /// observation takes seconds). Dropping it left the one-step update at
+    /// step 1 with no download running until a restart; it now starts as
+    /// soon as the worker is free.
+    queued_platform: Option<reborn_core::PlatformTask>,
+    /// Since when the update screen has shown no running update task.
+    update_idle_since: Option<Instant>,
     /// Look the time zone up again (Automatic was just turned on).
     zone_lookup_again: bool,
     /// Reads chapter marks of audiobook files in the background.
@@ -1943,6 +1964,7 @@ impl Runtime {
             Effect::None => {}
             Effect::Platform(task) => {
                 if self.model.platform.busy.is_some() {
+                    self.queue_platform(task);
                     return Ok(());
                 }
                 if task == reborn_core::PlatformTask::InternalStorageSetup
@@ -1976,10 +1998,27 @@ impl Runtime {
                     self.checkpoint();
                 }
                 let worker = self.platform.as_ref().ok_or("System service is starting")?;
-                worker
-                    .commands
-                    .try_send(task)
-                    .map_err(|_| "busy: another operation is still running")?;
+                if worker.commands.try_send(task).is_err() {
+                    // An observation runs and another waits: take the next turn.
+                    if task == reborn_core::PlatformTask::Refresh {
+                        return Err("busy: another operation is still running".into());
+                    }
+                    self.queue_platform(task);
+                    return Ok(());
+                }
+                if matches!(
+                    task,
+                    reborn_core::PlatformTask::UpdateStage | reborn_core::PlatformTask::UpdateApply
+                ) {
+                    self.log.emit(
+                        Level::Info,
+                        "update",
+                        "task_started",
+                        "Update task sent to the platform",
+                        None,
+                        json!({"task":format!("{task:?}")}),
+                    );
+                }
                 self.model.platform.busy = Some(task);
                 if task == reborn_core::PlatformTask::SleepRequest {
                     self.model.platform.snapshot.sleep.phase =
@@ -2752,6 +2791,70 @@ impl Runtime {
         Ok(())
     }
 
+    /// Keep a task the owner started for the worker's next free turn; a
+    /// periodic observation is simply skipped.
+    fn queue_platform(&mut self, task: reborn_core::PlatformTask) {
+        if task == reborn_core::PlatformTask::Refresh {
+            return;
+        }
+        if self.queued_platform != Some(task) {
+            self.log.emit(
+                Level::Info,
+                "platform",
+                "task_queued",
+                "Platform task waits for the one still running",
+                None,
+                json!({"task":format!("{task:?}"),"running":format!("{:?}", self.model.platform.busy)}),
+            );
+        }
+        self.queued_platform = Some(task);
+    }
+
+    /// Start a queued task once the worker is free, and never let the update
+    /// screen own the display with no update task behind it.
+    fn platform_tick(&mut self) {
+        if self.model.platform.busy.is_none() {
+            if let Some(task) = self.queued_platform.take() {
+                if let Err(error) = self.effect(Effect::Platform(task)) {
+                    if matches!(
+                        task,
+                        reborn_core::PlatformTask::UpdateStage
+                            | reborn_core::PlatformTask::UpdateApply
+                    ) {
+                        self.ui.update_run = false;
+                    }
+                    self.ui.flash(error);
+                }
+            }
+        }
+        let waiting = update_screen_waits(
+            self.ui.update_run,
+            self.ui.update_restarting,
+            self.model.platform.busy,
+            self.queued_platform,
+        );
+        if !waiting {
+            self.update_idle_since = None;
+            return;
+        }
+        let since = *self.update_idle_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= Duration::from_secs(30) {
+            self.update_idle_since = None;
+            self.ui.update_run = false;
+            self.log.emit(
+                Level::Warn,
+                "update",
+                "screen_without_task",
+                "Update screen showed no running update task for 30 s",
+                None,
+                json!({"busy":format!("{:?}", self.model.platform.busy)}),
+            );
+            self.ui
+                .flash("The update didn't start. Nothing was changed. Please try again.");
+            self.dirty.mark_render();
+        }
+    }
+
     fn poll_platform(&mut self) {
         let Some(worker) = &self.platform else {
             return;
@@ -2899,6 +3002,23 @@ impl Runtime {
                 p.snapshot.diagnostics.push(section);
             }
             client::Reply::Operation(task, result) => {
+                if matches!(
+                    task,
+                    reborn_core::PlatformTask::UpdateStage | reborn_core::PlatformTask::UpdateApply
+                ) {
+                    self.log.emit(
+                        if result.is_ok() {
+                            Level::Info
+                        } else {
+                            Level::Warn
+                        },
+                        "update",
+                        "task_finished",
+                        "Update task answered",
+                        None,
+                        json!({"task":format!("{task:?}"),"error":result.as_ref().err()}),
+                    );
+                }
                 use reborn_core::PlatformTask::*;
                 p.busy = None;
                 refresh = true;
@@ -3969,6 +4089,8 @@ fn run() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let background = background::Gate::new(&model.settings.music_directory, &model.sources);
     let mut rt = Runtime {
+        queued_platform: None,
+        update_idle_since: None,
         zone_lookup_again: false,
         chapter_reader: if headless {
             None
@@ -4442,6 +4564,7 @@ fn run() -> Result<(), String> {
             );
         }
         rt.ask_about_reports();
+        rt.platform_tick();
         // Platform screens observe on demand; one observation after start
         // (20 s in, after the boot work) also on any other screen, so the
         // error report question comes without opening Settings.
@@ -6819,5 +6942,31 @@ mod shuffle_and_seek_tests {
         assert_eq!(seek_step(Duration::from_secs(5), song), 4_000); // 1/60 of 4 min
         assert_eq!(seek_step(Duration::from_secs(5), 60 * 60_000), 10_000);
         assert_eq!(seek_step(Duration::from_secs(5), 30_000), 1_000);
+    }
+}
+
+#[cfg(test)]
+mod update_screen_tests {
+    use super::update_screen_waits;
+    use reborn_core::PlatformTask::{Refresh, ReportSend, UpdateApply, UpdateStage};
+
+    #[test]
+    fn the_update_screen_never_stands_without_an_update_task() {
+        // Update Now while a status observation ran: the stage task was
+        // dropped and the screen stood at step 1 until a restart.
+        assert!(update_screen_waits(true, false, None, None));
+        assert!(update_screen_waits(true, false, Some(Refresh), None));
+        assert!(update_screen_waits(true, false, Some(ReportSend), None));
+        // Queued behind another task, running, or restarting to install: fine.
+        assert!(!update_screen_waits(
+            true,
+            false,
+            Some(Refresh),
+            Some(UpdateStage)
+        ));
+        assert!(!update_screen_waits(true, false, Some(UpdateStage), None));
+        assert!(!update_screen_waits(true, false, Some(UpdateApply), None));
+        assert!(!update_screen_waits(true, true, None, None));
+        assert!(!update_screen_waits(false, false, None, None));
     }
 }

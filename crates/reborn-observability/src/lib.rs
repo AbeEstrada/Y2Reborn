@@ -28,6 +28,7 @@ pub const SUBSYSTEMS: &[&str] = &[
     "alsa",
     "bluetooth",
     "bluealsa",
+    "update",
     "wifi",
     "library",
     "scanner",
