@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.22 — Y2Linux 1.0 Beta 8.22 (Baseline 121), 2026-10-22 (latest): Date & Time, report fixes
+## 1.0.0-beta.8.23 — Y2Linux 1.0 Beta 8.23 (Baseline 122), 2026-10-22 (latest): output kept, DAC hold, update task queue
+
+Published as `baseline-122` (Reborn `0779d8b`, sequence 8705), installed on the owner's player before publishing.
+#52/#54: the wired sink stays open across track changes with the same output, rate, format and wired settings (old
+audio dropped, 10 ms fade-in, closed 2 s after the last stream or at Stop; `audio/sink_reused`, `audio/sink_reopened`),
+and `power::dac_hold` keeps the DAC powered through the kernel's `y2_hp/hold` from startup/screen wake to screen-off
+(`dac_hold` on `screen_wake`/`screen_blank`). F33: Update Now waits for the platform worker's next turn; the update
+screen gives up after 30 s without a task. Device: 17/17 same-format skips reused the output, hold follows the screen.
+
+## 1.0.0-beta.8.22 — Y2Linux 1.0 Beta 8.22 (Baseline 121), 2026-10-22: Date & Time, report fixes
 
 Published as `baseline-121` (Reborn `e196033`, sequence 8607), installed on the owner's player before publishing.
 Settings → Display → Date & Time sets the clock by hand (#53; read-only while the clock is network time). Report
