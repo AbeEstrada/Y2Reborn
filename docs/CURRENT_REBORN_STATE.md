@@ -1,6 +1,12 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.20 — Y2Linux 1.0 Beta 8.20 (Baseline 119), 2026-10-22 (latest): headphone crystal (#52)
+## 1.0.0-beta.8.21 — Y2Linux 1.0 Beta 8.21 (Baseline 120), 2026-10-22 (latest): headphone crystal run as stock (#52, #54)
+
+Published as `baseline-120` (Reborn `cdc6b43`, sequence 8500), installed on the owner's player before publishing. No
+Reborn code change (identity only): the fix is the kernel's (Y2Linux overlay 0030: the CS43131 crystal starts with the
+codec and is used after 1 s like stock, codec autosuspend 5 s). The 5-s sink open deadline of 8.20 covers the 1-s wait.
+
+## 1.0.0-beta.8.20 — Y2Linux 1.0 Beta 8.20 (Baseline 119), 2026-10-22: headphone crystal (#52)
 
 Published as `baseline-119` (Reborn `cdae78e`, sequence 8400), installed on the owner's player before publishing. The
 sink open deadline is 5 s (`34a07b6`): on a player whose CS43131 crystal misses its start, the kernel's tries and rail
