@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.21 — Y2Linux 1.0 Beta 8.21 (Baseline 120), 2026-10-22 (latest): headphone crystal run as stock (#52, #54)
+## 1.0.0-beta.8.22 — Y2Linux 1.0 Beta 8.22 (Baseline 121), 2026-10-22 (latest): Date & Time, report fixes
+
+Published as `baseline-121` (Reborn `e196033`, sequence 8607), installed on the owner's player before publishing.
+Settings → Display → Date & Time sets the clock by hand (#53; read-only while the clock is network time). Report
+fixes: a busy wired output is retried for 2 s inside the open deadline and names its holder (F24), an unknown codec
+outcome clears when the headphones drop or reconnect (F25), Pair waits for the reconnect owner (F28), a cancelled
+pre-open no longer logs every queued track (F29). The headphone crystal changes (#52/#54) are the kernel's.
+
+## 1.0.0-beta.8.21 — Y2Linux 1.0 Beta 8.21 (Baseline 120), 2026-10-22: headphone crystal run as stock (#52, #54)
 
 Published as `baseline-120` (Reborn `cdc6b43`, sequence 8500), installed on the owner's player before publishing. No
 Reborn code change (identity only): the fix is the kernel's (Y2Linux overlay 0030: the CS43131 crystal starts with the
