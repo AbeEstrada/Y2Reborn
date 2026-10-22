@@ -5,6 +5,7 @@ use serde_json::json;
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
     ptr::NonNull,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 #[repr(C)]
@@ -130,6 +131,16 @@ fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Result<Parameters,
         level_raised: raw.level_raised != 0,
     })
 }
+/// The last wired level and filter chosen (packed), and how often the choice
+/// changed: a wired stream opened before a change plays the old ones, since
+/// the amplifier takes them only when it powers up.
+static WIRED_CHOICE: AtomicU32 = AtomicU32::new(u32::MAX);
+static WIRED_EPOCH: AtomicU64 = AtomicU64::new(0);
+/// Changes with every new wired level or DAC filter choice: an open wired
+/// sink serves a later stream only while this stays the same.
+pub fn wired_epoch() -> u64 {
+    WIRED_EPOCH.load(Ordering::Acquire)
+}
 /// Choose the wired headphone level and DAC filter (Y2Linux kernel controls).
 /// Remembered for every wired stream; applied now where the amplifier is
 /// down. Ok(false): the kernel has no level control (older Y2Linux).
@@ -138,6 +149,11 @@ pub fn wired_configure(
     filter: reborn_core::DacFilter,
 ) -> Result<bool, String> {
     let (slow, phase, nos) = filter.switches();
+    let choice =
+        level.index() | u32::from(slow) << 8 | u32::from(phase) << 9 | u32::from(nos) << 10;
+    if WIRED_CHOICE.swap(choice, Ordering::AcqRel) != choice {
+        WIRED_EPOCH.fetch_add(1, Ordering::AcqRel);
+    }
     // SAFETY: plain integers; the C side opens and closes its own handle.
     let r = unsafe {
         rb_wired_configure(
@@ -652,6 +668,15 @@ mod wired_level_tests {
         let fades = |live| unsafe { rb_wired_note_live(live) } != 0;
         // Startup: the saved level (High) is the baseline, not a rise.
         let _ = wired_configure(HpLevel::High, DacFilter::Fast);
+        // The same choice again keeps open wired sinks usable; another one
+        // does not (the amplifier takes it at its next power-up).
+        let epoch = wired_epoch();
+        let _ = wired_configure(HpLevel::High, DacFilter::Fast);
+        assert_eq!(wired_epoch(), epoch);
+        let _ = wired_configure(HpLevel::High, DacFilter::Slow);
+        assert_eq!(wired_epoch(), epoch + 1);
+        let _ = wired_configure(HpLevel::High, DacFilter::Fast);
+        assert_eq!(wired_epoch(), epoch + 2);
         assert!(!fades(2), "first stream after boot at the saved level");
         assert!(!fades(2));
         let _ = wired_configure(HpLevel::Low, DacFilter::Fast);

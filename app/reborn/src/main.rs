@@ -270,6 +270,9 @@ struct Runtime {
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
+    /// The last wired sink plan: the rate asked for and the rate it gave
+    /// (`keeps_wired_sink`).
+    wired_plan: Option<(u32, u32)>,
     active_transport_generation: Option<u64>,
     input_resume: bool,
     sleep_prepared: bool,
@@ -380,15 +383,40 @@ impl DirtyState {
     }
 }
 
+/// Release what plays, plan the next sink and start it. A wired sink stays
+/// open for the next stream when `keep` takes its spec as the plan (the
+/// plan's probe cannot run while it is open: the device is exclusive);
+/// otherwise it closes before the plan.
 fn run_sink_reconfiguration<P>(
     playback: &mut playback::Playback,
     generation: u64,
+    keep: impl FnOnce(&reborn_audio::SinkSpec) -> Option<P>,
     plan: impl FnOnce() -> Result<P, String>,
     start: impl FnOnce(&mut playback::Playback, P) -> Result<(), String>,
 ) -> Result<(), String> {
-    playback.stop_and_wait(generation)?;
+    if let Some(kept) = playback.switch_and_wait(generation)? {
+        if let Some(plan) = keep(&kept) {
+            return start(playback, plan);
+        }
+        playback.stop_and_wait(generation)?;
+    }
     let plan = plan()?;
     start(playback, plan)
+}
+
+/// The kept wired sink plays the next stream when that stream's plan would
+/// give its spec: a wired plan depends only on the rate asked for, and gives
+/// that rate or, for a rate the output refuses, the one the last plan for it
+/// gave (`last_plan`: asked, given).
+fn keeps_wired_sink(
+    kept: &reborn_audio::SinkSpec,
+    output: &AudioOutput,
+    requested_rate: u32,
+    last_plan: Option<(u32, u32)>,
+) -> bool {
+    matches!(output, AudioOutput::Wired)
+        && kept.output == *output
+        && (kept.rate == requested_rate || last_plan == Some((requested_rate, kept.rate)))
 }
 
 fn failed_reconfiguration_model(
@@ -417,6 +445,26 @@ fn failed_reconfiguration_model(
         .map(|generation| generation.wrapping_add(1))
         .unwrap_or_else(|| previous.generation.wrapping_add(1));
     previous
+}
+
+/// Keep the headphone DAC powered while the screen is on, as the stock
+/// firmware does (`power::dac_hold`); playback keeps it up anyway. What the
+/// kernel took: Some(false) without the hold (older Y2Linux), None failed.
+fn hold_dac(log: &Observer, on: bool) -> Option<bool> {
+    match power::dac_hold(on) {
+        Ok(held) => Some(held),
+        Err(error) => {
+            log.emit(
+                Level::Warn,
+                "audio",
+                "dac_hold_failed",
+                &error,
+                None,
+                json!({"hold":on}),
+            );
+            None
+        }
+    }
 }
 
 fn artwork_matches_current(
@@ -1532,10 +1580,13 @@ impl Runtime {
         let correlation = self.log.correlation();
         let plan_output = output.clone();
         self.sink_release_started = true;
+        let last_plan = self.wired_plan;
+        let mut planned_rate = None;
         let playback = &mut self.playback;
         run_sink_reconfiguration(
             playback,
             generation,
+            |kept| keeps_wired_sink(kept, &output, requested_rate, last_plan).then(|| kept.clone()),
             || {
                 let plan = |rate| match bluetooth_pcm.as_ref() {
                     Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
@@ -1548,7 +1599,7 @@ impl Runtime {
                         reborn_audio::AlsaSink::plan(&plan_output, rate, log.clone(), correlation)
                     }
                 };
-                match plan(requested_rate) {
+                let planned = match plan(requested_rate) {
                     Ok((spec, _planned)) => Ok(spec),
                     Err(error)
                         if matches!(&plan_output, AudioOutput::Wired)
@@ -1567,7 +1618,11 @@ impl Runtime {
                             .map(|(spec, _planned)| spec)
                     }
                     Err(error) => Err(error),
+                };
+                if let Ok(spec) = &planned {
+                    planned_rate = matches!(spec.output, AudioOutput::Wired).then_some(spec.rate);
                 }
+                planned
             },
             move |playback, spec| {
                 let (
@@ -1598,6 +1653,9 @@ impl Runtime {
                 })
             },
         )?;
+        if let Some(rate) = planned_rate {
+            self.wired_plan = Some((requested_rate, rate));
+        }
         self.loaded_dsp = Some(loaded);
         self.model.generation = generation;
         self.model.playback = PlaybackState::Buffering;
@@ -2367,6 +2425,7 @@ impl Runtime {
                 if self.model.screen_off {
                     return Ok(());
                 }
+                let mut dac_hold = None;
                 if !self.headless {
                     power::blank(true)?;
                     if let Some(graphics) = self.graphics.as_mut() {
@@ -2375,6 +2434,7 @@ impl Runtime {
                             return Err(error);
                         }
                     }
+                    dac_hold = hold_dac(&self.log, false);
                 }
                 self.model.apply(Event::ScreenSleep);
                 self.dark_since = Some(Instant::now());
@@ -2385,13 +2445,14 @@ impl Runtime {
                     "screen_blank",
                     "Display put to sleep",
                     None,
-                    json!({"playback":self.model.playback}),
+                    json!({"playback":self.model.playback,"dac_hold":dac_hold}),
                 );
             }
             Effect::ScreenWake => {
                 if !self.model.screen_off && (self.headless || self.graphics.is_some()) {
                     return Ok(());
                 }
+                let mut dac_hold = None;
                 if !self.headless {
                     self.graphics_recovery.wake();
                     if self.graphics.is_none() {
@@ -2406,6 +2467,7 @@ impl Runtime {
                         }
                         return Err(error);
                     }
+                    dac_hold = hold_dac(&self.log, true);
                 }
                 self.model.apply(Event::ScreenWake);
                 self.woke_at = Some(Instant::now());
@@ -2418,7 +2480,7 @@ impl Runtime {
                     "screen_wake",
                     "Display woke",
                     None,
-                    json!({"playback":self.model.playback}),
+                    json!({"playback":self.model.playback,"dac_hold":dac_hold}),
                 );
             }
             Effect::SetReplayGain(mode) => {
@@ -4175,6 +4237,7 @@ fn run() -> Result<(), String> {
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
+        wired_plan: None,
         active_transport_generation: None,
         input_resume: false,
         sleep_prepared: false,
@@ -5527,6 +5590,11 @@ fn run() -> Result<(), String> {
                     if !first_frame_presented {
                         first_frame_presented = true;
                         if !headless {
+                            // The UI is up with the screen on: the DAC stays
+                            // powered until the screen sleeps.
+                            if !rt.model.screen_off {
+                                hold_dac(&log, true);
+                            }
                             if let Err(error) = reborn_platform::contract::application_ready() {
                                 log.emit(
                                     Level::Warn,
@@ -5651,6 +5719,8 @@ fn run() -> Result<(), String> {
                 json!({}),
             );
         }
+        // The screen is off for good: the DAC need not wait for it.
+        hold_dac(&log, false);
         log.emit(
             Level::Info,
             "power",
@@ -6296,7 +6366,7 @@ mod logo_fetcher_tests {
 
 #[cfg(test)]
 mod runtime_reconfiguration_tests {
-    use super::{failed_reconfiguration_model, run_sink_reconfiguration};
+    use super::{failed_reconfiguration_model, keeps_wired_sink, run_sink_reconfiguration};
     use crate::playback::Playback;
     use reborn_audio::{AudioSink, Parameters, SinkSpec};
     use reborn_core::{
@@ -6433,6 +6503,7 @@ mod runtime_reconfiguration_tests {
         let error = run_sink_reconfiguration(
             &mut playback,
             2,
+            |_| None,
             || Err::<SinkSpec, _>("injected sink plan failure".into()),
             |_, _| {
                 started = true;
@@ -6489,6 +6560,7 @@ mod runtime_reconfiguration_tests {
         run_sink_reconfiguration(
             &mut playback,
             2,
+            |_| None,
             || Ok(test_spec()),
             move |playback, spec| {
                 playback.start_with_gapless(crate::playback::LoadRequest {
@@ -6511,6 +6583,102 @@ mod runtime_reconfiguration_tests {
 
         assert_eq!(active.load(Ordering::Acquire), 1);
         assert_eq!(peak.load(Ordering::Acquire), 1);
+        playback.shutdown(3).unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn a_kept_wired_sink_is_taken_only_where_the_plan_would_give_it() {
+        let kept = test_spec();
+        let wired = AudioOutput::Wired;
+        assert!(keeps_wired_sink(&kept, &wired, 44_100, None));
+        assert!(!keeps_wired_sink(&kept, &wired, 48_000, None));
+        // 88.2 kHz planned as 44.1 kHz last time: the same again.
+        assert!(keeps_wired_sink(
+            &kept,
+            &wired,
+            88_200,
+            Some((88_200, 44_100))
+        ));
+        assert!(!keeps_wired_sink(
+            &kept,
+            &wired,
+            88_200,
+            Some((88_200, 48_000))
+        ));
+        assert!(!keeps_wired_sink(
+            &kept,
+            &wired,
+            96_000,
+            Some((88_200, 44_100))
+        ));
+        let bluetooth = AudioOutput::Bluetooth("12:34:56:78:90:AB".into());
+        assert!(!keeps_wired_sink(&kept, &bluetooth, 44_100, None));
+    }
+
+    #[test]
+    fn a_track_change_for_the_same_wired_sink_starts_in_it_without_a_plan() {
+        let root = std::env::temp_dir().join(format!("reborn-plan-kept-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let active = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let (factory_active, factory_opens) = (active.clone(), opens.clone());
+        let mut playback = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |_, _, _| {
+                factory_opens.fetch_add(1, Ordering::AcqRel);
+                factory_active.fetch_add(1, Ordering::AcqRel);
+                Ok(Box::new(CountingSink {
+                    active: factory_active.clone(),
+                }))
+            }),
+        )
+        .unwrap();
+        playback
+            .load(
+                Track::default(),
+                vec![],
+                0,
+                test_spec(),
+                1,
+                DspConfig::with_volume(42),
+                1,
+            )
+            .unwrap();
+        let track = Track {
+            id: 3,
+            source_id: "internal".into(),
+            path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac"),
+            ..Default::default()
+        };
+        run_sink_reconfiguration(
+            &mut playback,
+            2,
+            |kept| Some(kept.clone()),
+            || Err::<SinkSpec, _>("the device is open: no probe".into()),
+            move |playback, spec| {
+                assert_eq!(spec, test_spec());
+                playback.start_with_gapless(crate::playback::LoadRequest {
+                    music_root: track.path.parent().unwrap().into(),
+                    track,
+                    entry_id: QueueEntryId(3),
+                    queue: vec![],
+                    queue_entry_ids: vec![],
+                    position: 0,
+                    spec,
+                    generation: 2,
+                    dsp: DspConfig::with_volume(42),
+                    gapless_enabled: true,
+                    id: 2,
+                    fade_in: false,
+                })
+            },
+        )
+        .unwrap();
+
+        assert_eq!(opens.load(Ordering::Acquire), 1);
+        assert_eq!(active.load(Ordering::Acquire), 1);
         playback.shutdown(3).unwrap();
         assert_eq!(active.load(Ordering::Acquire), 0);
     }

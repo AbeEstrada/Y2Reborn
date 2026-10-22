@@ -1,5 +1,5 @@
 mod native;
-pub use native::{initialize_logging, wired_configure, wired_device, AlsaSink};
+pub use native::{initialize_logging, wired_configure, wired_device, wired_epoch, AlsaSink};
 use reborn_core::{AudioOutput, BluetoothPcm, PcmFormat};
 use serde::Serialize;
 #[derive(Debug, Clone, Serialize, Default)]
@@ -18,7 +18,7 @@ pub struct Parameters {
     /// Wired: louder than the previous wired stream (playback fades in).
     pub level_raised: bool,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SinkSpec {
     pub output: AudioOutput,
     pub rate: u32,

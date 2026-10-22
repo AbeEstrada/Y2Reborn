@@ -1,6 +1,6 @@
 use crate::volume::VolumeRamp;
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
-use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
+use reborn_core::{AudioOutput, Event, PcmFormat, QueueEntryId, Track};
 use reborn_graphics::ART_SIZE;
 use reborn_media::{
     convert_pcm, crossfade_pcm, external_artwork, folder_artwork_candidates, Cancel, Decoder,
@@ -165,6 +165,8 @@ enum SinkCommand {
         reply: SyncSender<Result<(), String>>,
     },
     Stop(Option<SyncSender<()>>),
+    /// Stop for the next stream: a wired sink is kept (the reply names it).
+    Switch(SyncSender<Option<SinkSpec>>),
 }
 enum Stream {
     Pcm {
@@ -684,6 +686,77 @@ const SLOW_OPEN: Duration = Duration::from_secs(2);
 /// A busy output is tried again for this long from the first open (F24: the
 /// headphone open refused with ALSA -16 for 1–3 s after a wake).
 const BUSY_OPEN_FOR: Duration = Duration::from_secs(2);
+/// How long a wired sink stays open after its stream ended or was stopped
+/// for the next one: the next track starts in it well within this.
+const KEEP_SINK_FOR: Duration = Duration::from_secs(2);
+/// The fade-in a kept sink starts the next stream with, so that the new
+/// stream does not start with a click where the old one was cut.
+const SWITCH_FADE_MS: u32 = 10;
+/// A wired sink between two streams, its queued audio dropped. Reopening the
+/// headphone output for every track power-cycles the codec's amplifier and
+/// charge pump, on the rail of its crystal: a marginal crystal stopped after
+/// enough of them (#52). The stock firmware keeps its output open too.
+struct KeptSink {
+    sink: Box<dyn AudioSink>,
+    spec: SinkSpec,
+    /// `reborn_audio::wired_epoch` when it opened.
+    wired: u64,
+    since: Instant,
+}
+/// Keep a wired sink for the next stream, its queued audio dropped at once
+/// (nothing of the old track plays on). Any other sink, or one that cannot
+/// drop its audio, closes.
+fn keep_sink(
+    sink: Option<Box<dyn AudioSink>>,
+    opened: Option<(SinkSpec, u64)>,
+    log: &Observer,
+    id: u64,
+) -> Option<KeptSink> {
+    let (mut sink, (spec, wired)) = (sink?, opened?);
+    if !matches!(spec.output, AudioOutput::Wired) {
+        return None;
+    }
+    if let Err(e) = sink.discard() {
+        log.emit(
+            Level::Warn,
+            "audio",
+            "sink_keep_failed",
+            &e,
+            Some(id),
+            json!({"recovery":"close"}),
+        );
+        return None;
+    }
+    Some(KeptSink {
+        sink,
+        spec,
+        wired,
+        since: Instant::now(),
+    })
+}
+/// Why a kept sink cannot play the next stream; None: it can, being exactly
+/// the sink that stream wants, with the wired level and DAC filter it opened
+/// with (the amplifier takes a new choice only when it powers up).
+fn sink_change(
+    kept: &SinkSpec,
+    kept_wired: u64,
+    wanted: &SinkSpec,
+    wired: u64,
+) -> Option<&'static str> {
+    if !matches!(kept.output, AudioOutput::Wired) || kept.output != wanted.output {
+        Some("output")
+    } else if kept.rate != wanted.rate {
+        Some("rate")
+    } else if kept.format != wanted.format {
+        Some("format")
+    } else if kept != wanted {
+        Some("spec")
+    } else if kept_wired != wired {
+        Some("wired_settings")
+    } else {
+        None
+    }
+}
 /// An output that is busy, not broken: ALSA -16 (EBUSY, also the activity
 /// lease the sleep helper holds until the radios are back) or -11 (EAGAIN).
 fn open_busy(error: &str) -> bool {
@@ -1291,13 +1364,23 @@ impl Playback {
                 let mut drain_start = Instant::now();
                 let mut last_progress = Instant::now();
                 let mut held = false;
+                // The playing sink's spec and wired epoch, and a wired sink
+                // kept open for the next stream.
+                let mut open_spec: Option<(SinkSpec, u64)> = None;
+                let mut kept: Option<KeptSink> = None;
                 loop {
                     al.heartbeat("audio", 10);
                     // Without a PCM sink there is no audio deadline. Wait on the
                     // command channel so Open/Stop/Shutdown still wake immediately;
-                    // the timeout only maintains the worker heartbeat.
+                    // the timeout only maintains the worker heartbeat (and
+                    // closes a kept sink on time).
                     let idle_command = if sink.is_none() {
-                        match sr.recv_timeout(Duration::from_secs(1)) {
+                        let wait = kept.as_ref().map_or(Duration::from_secs(1), |k| {
+                            KEEP_SINK_FOR
+                                .saturating_sub(k.since.elapsed())
+                                .max(Duration::from_millis(10))
+                        });
+                        match sr.recv_timeout(wait) {
                             Ok(command) => Some(command),
                             Err(RecvTimeoutError::Timeout) => None,
                             Err(RecvTimeoutError::Disconnected) => break,
@@ -1309,6 +1392,7 @@ impl Playback {
                         match cmd {
                             SinkCommand::Shutdown(reply) => {
                                 drop(sink.take());
+                                drop(kept.take());
                                 let _ = reply.try_send(());
                                 return;
                             }
@@ -1323,7 +1407,11 @@ impl Playback {
                                     let _ = reply.try_send(Err("stale sink generation".into()));
                                     continue;
                                 }
-                                sink = None;
+                                if let Some(k) =
+                                    keep_sink(sink.take(), open_spec.take(), &al, correlation)
+                                {
+                                    kept = Some(k);
+                                }
                                 pending = None;
                                 held = false;
                                 generation = g;
@@ -1337,17 +1425,58 @@ impl Playback {
                                 gain = opening_gain(volume, rate, false, false, carried).0;
                                 started = false;
                                 eof = false;
-                                match factory(&spec, al.clone(), id) {
-                                    Ok(s) => {
+                                let wired = reborn_audio::wired_epoch();
+                                let reused = kept.take().and_then(|k| {
+                                    let summary = |s: &SinkSpec| {
+                                        json!({"output":s.output,"rate":s.rate,"format":s.format.as_str(),"device":s.device})
+                                    };
+                                    match sink_change(&k.spec, k.wired, &spec, wired) {
+                                        None => {
+                                            al.emit(
+                                                Level::Info,
+                                                "audio",
+                                                "sink_reused",
+                                                "the open output plays the next stream",
+                                                Some(id),
+                                                json!({"spec":summary(&spec),"kept_ms":k.since.elapsed().as_millis() as u64}),
+                                            );
+                                            Some(k.sink)
+                                        }
+                                        Some(reason) => {
+                                            al.emit(
+                                                Level::Info,
+                                                "audio",
+                                                "sink_reopened",
+                                                "the next stream needs another output",
+                                                Some(id),
+                                                json!({"reason":reason,"from":summary(&k.spec),"to":summary(&spec)}),
+                                            );
+                                            None
+                                        }
+                                    }
+                                });
+                                let opened = match reused {
+                                    Some(s) => Ok((s, true)),
+                                    None => factory(&spec, al.clone(), id).map(|s| (s, false)),
+                                };
+                                match opened {
+                                    Ok((s, reused)) => {
                                         let params = s.parameters();
+                                        // A kept stream did not power the
+                                        // amplifier up again: no level rise.
                                         let (ramp, fade) = opening_gain(
                                             volume,
                                             rate,
-                                            params.level_raised,
+                                            params.level_raised && !reused,
                                             fade_in,
                                             carried,
                                         );
-                                        gain = ramp;
+                                        gain = match fade {
+                                            None if reused => {
+                                                VolumeRamp::fade_in(volume, rate, SWITCH_FADE_MS)
+                                            }
+                                            _ => ramp,
+                                        };
                                         if let Some((event, message, ms)) = fade {
                                             al.emit(
                                                 Level::Info,
@@ -1375,9 +1504,10 @@ impl Playback {
                                                 );
                                             }
                                         }
-                                        if params.fallback {
+                                        if params.fallback && !reused {
                                             al.add("audio_sink_fallbacks", 1.);
                                         }
+                                        open_spec = Some((spec, wired));
                                         sink = Some(s);
                                         al.health_set("audio", HealthState::Ok, true, "sink ready");
                                         let _ = reply.try_send(Ok(()));
@@ -1391,6 +1521,7 @@ impl Playback {
                             }
                             SinkCommand::Stop(reply) => {
                                 sink = None;
+                                kept = None;
                                 pending = None;
                                 eof = false;
                                 held = false;
@@ -1398,12 +1529,34 @@ impl Playback {
                                     let _ = reply.try_send(());
                                 }
                             }
+                            SinkCommand::Switch(reply) => {
+                                if let Some(k) =
+                                    keep_sink(sink.take(), open_spec.take(), &al, correlation)
+                                {
+                                    kept = Some(k);
+                                }
+                                pending = None;
+                                eof = false;
+                                held = false;
+                                let _ = reply.try_send(kept.as_ref().map(|k| k.spec.clone()));
+                            }
                         }
                     }
+                    // Stopped or replaced: a wired sink waits for the next
+                    // stream (a Stop closes it, as does the time running out).
                     if generation != se.load(Ordering::Acquire) {
-                        sink = None;
+                        if let Some(k) = keep_sink(sink.take(), open_spec.take(), &al, correlation)
+                        {
+                            kept = Some(k);
+                        }
                         pending = None;
                         eof = false;
+                    }
+                    if kept
+                        .as_ref()
+                        .is_some_and(|k| k.since.elapsed() >= KEEP_SINK_FOR)
+                    {
+                        kept = None;
                     }
                     // Paused in place: keep the device open and paused, write
                     // nothing, read nothing (the decoder waits on the full
@@ -1612,7 +1765,11 @@ impl Playback {
                                 object.insert("state".into(), json!("stopped"));
                             }
                         }
-                        sink = None;
+                        // The next track (gapless off, Repeat One) starts in it.
+                        if let Some(k) = keep_sink(sink.take(), open_spec.take(), &al, correlation)
+                        {
+                            kept = Some(k);
+                        }
                         eof = false;
                     }
                     let n = ab.load(Ordering::Relaxed)
@@ -1840,11 +1997,26 @@ impl Playback {
     pub fn stop_and_wait(&mut self, generation: u64) -> Result<(), String> {
         self.stop_and_wait_with_timeout(generation, Duration::from_secs(2))
     }
+    /// Stop what plays for the next stream (a track change, a seek): a wired
+    /// sink stays open with its queued audio dropped, and its spec comes back
+    /// for the next start to ask for again; anything else is released as by
+    /// `stop_and_wait`. A stop, a released pause and sleep still close it.
+    pub fn switch_and_wait(&mut self, generation: u64) -> Result<Option<SinkSpec>, String> {
+        self.release_and_wait(generation, Duration::from_secs(2), SinkCommand::Switch)
+    }
     fn stop_and_wait_with_timeout(
         &mut self,
         generation: u64,
         timeout: Duration,
     ) -> Result<(), String> {
+        self.release_and_wait(generation, timeout, |reply| SinkCommand::Stop(Some(reply)))
+    }
+    fn release_and_wait<T>(
+        &mut self,
+        generation: u64,
+        timeout: Duration,
+        command: impl FnOnce(SyncSender<T>) -> SinkCommand,
+    ) -> Result<T, String> {
         let deadline = Instant::now() + timeout;
         self.hold.store(false, Ordering::Release);
         self.epoch.store(generation, Ordering::Release);
@@ -1855,7 +2027,7 @@ impl Playback {
         let (tx, rx) = sync_channel(1);
         send_before_deadline(
             &self.sink,
-            SinkCommand::Stop(Some(tx)),
+            command(tx),
             deadline,
             "audio worker unavailable",
             "audio sink release deadline exceeded",
@@ -2931,6 +3103,162 @@ mod tests {
         }
         assert_eq!(opened.load(Ordering::Relaxed), 2);
         p.stop(4);
+    }
+    #[test]
+    fn a_kept_sink_plays_on_only_for_exactly_its_spec_and_wired_settings() {
+        let wired = spec(AudioOutput::Wired, 44_100);
+        assert_eq!(sink_change(&wired, 3, &wired.clone(), 3), None);
+        assert_eq!(
+            sink_change(&wired, 3, &spec(AudioOutput::Wired, 48_000), 3),
+            Some("rate")
+        );
+        let mut s24 = wired.clone();
+        s24.format = PcmFormat::S24LE;
+        assert_eq!(sink_change(&wired, 3, &s24, 3), Some("format"));
+        let bluetooth = spec(AudioOutput::Bluetooth("12:34:56:78:90:AB".into()), 44_100);
+        assert_eq!(sink_change(&wired, 3, &bluetooth, 3), Some("output"));
+        // A Bluetooth sink is never kept, even for the same transport.
+        assert_eq!(
+            sink_change(&bluetooth, 3, &bluetooth.clone(), 3),
+            Some("output")
+        );
+        let mut other_device = wired.clone();
+        other_device.device = "other".into();
+        assert_eq!(sink_change(&wired, 3, &other_device, 3), Some("spec"));
+        // A new headphone level or DAC filter needs the amplifier powered up.
+        assert_eq!(
+            sink_change(&wired, 3, &wired.clone(), 4),
+            Some("wired_settings")
+        );
+    }
+    /// A track change keeps the wired sink open when the next track wants
+    /// the same one (#52): its queued audio is dropped and nothing reopens.
+    /// Another rate or output opens a new sink after the kept one closed; a
+    /// kept sink no stream asks for closes on its own.
+    #[test]
+    fn consecutive_tracks_with_one_wired_spec_open_the_sink_once() {
+        struct KeptTestSink {
+            open: Arc<AtomicU64>,
+            discards: Arc<AtomicU64>,
+            rate: u32,
+        }
+        impl AudioSink for KeptTestSink {
+            fn parameters(&self) -> Parameters {
+                Parameters {
+                    rate: self.rate,
+                    period: 512,
+                    buffer: 4096,
+                    format: PcmFormat::S32LE,
+                    channels: 2,
+                    device: "test".into(),
+                    ..Default::default()
+                }
+            }
+            fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+                thread::sleep(Duration::from_millis(2));
+                Ok((s.len() / 8).min(128))
+            }
+            fn discard(&mut self) -> Result<(), String> {
+                self.discards.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            fn delay(&self) -> u64 {
+                0
+            }
+        }
+        impl Drop for KeptTestSink {
+            fn drop(&mut self) {
+                self.open.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+        let opens = Arc::new(AtomicU64::new(0));
+        let open = Arc::new(AtomicU64::new(0));
+        let peak = Arc::new(AtomicU64::new(0));
+        let discards = Arc::new(AtomicU64::new(0));
+        let (factory_opens, factory_open, factory_peak, factory_discards) =
+            (opens.clone(), open.clone(), peak.clone(), discards.clone());
+        let root = std::env::temp_dir().join(format!("reborn-kept-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let mut p = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |requested, _, _| {
+                factory_opens.fetch_add(1, Ordering::Relaxed);
+                let now = factory_open.fetch_add(1, Ordering::AcqRel) + 1;
+                factory_peak.fetch_max(now, Ordering::AcqRel);
+                Ok(Box::new(KeptTestSink {
+                    open: factory_open.clone(),
+                    discards: factory_discards.clone(),
+                    rate: requested.rate,
+                }))
+            }),
+        )
+        .unwrap();
+        let start = |p: &mut Playback, generation: u64, spec: SinkSpec| {
+            let kept = p.switch_and_wait(generation).unwrap();
+            p.start_with_gapless(LoadRequest {
+                track: track(),
+                music_root: track().path.parent().unwrap().into(),
+                entry_id: QueueEntryId(generation),
+                queue: vec![],
+                queue_entry_ids: vec![],
+                position: 0,
+                spec,
+                generation,
+                dsp: DspConfig::with_volume(35),
+                gapless_enabled: true,
+                id: generation,
+                fade_in: false,
+            })
+            .unwrap();
+            let until = Instant::now() + Duration::from_secs(2);
+            loop {
+                if let Ok(PlaybackEvent::Core(Event::TrackStarted { generation: g })) =
+                    p.events.recv_timeout(Duration::from_millis(100))
+                {
+                    if g == generation {
+                        break;
+                    }
+                }
+                assert!(Instant::now() < until, "track {generation} never started");
+            }
+            kept
+        };
+        let wired = spec(AudioOutput::Wired, 44_100);
+        assert_eq!(start(&mut p, 1, wired.clone()), None);
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+        // Next: the same sink, its old audio dropped.
+        assert_eq!(start(&mut p, 2, wired.clone()), Some(wired.clone()));
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+        assert!(discards.load(Ordering::Relaxed) >= 1);
+        assert_eq!(open.load(Ordering::Acquire), 1);
+        // Another rate: the kept sink closes before the new one opens.
+        assert_eq!(
+            start(&mut p, 3, spec(AudioOutput::Wired, 48_000)),
+            Some(wired)
+        );
+        assert_eq!(opens.load(Ordering::Relaxed), 2);
+        assert_eq!(peak.load(Ordering::Acquire), 1);
+        // Kept for a stream that never comes: it closes on its own.
+        assert!(p.switch_and_wait(4).unwrap().is_some());
+        assert_eq!(open.load(Ordering::Acquire), 1);
+        let until = Instant::now() + KEEP_SINK_FOR + Duration::from_secs(1);
+        while open.load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < until, "the kept sink stayed open");
+            thread::sleep(Duration::from_millis(20));
+        }
+        // Another output opens its own sink, which is not kept.
+        let bluetooth = spec(AudioOutput::Bluetooth("12:34:56:78:90:AB".into()), 48_000);
+        assert_eq!(start(&mut p, 5, bluetooth), None);
+        assert_eq!(opens.load(Ordering::Relaxed), 3);
+        assert_eq!(p.switch_and_wait(6).unwrap(), None);
+        assert_eq!(open.load(Ordering::Acquire), 0);
+        // A stop closes a kept wired sink at once.
+        assert_eq!(start(&mut p, 7, spec(AudioOutput::Wired, 48_000)), None);
+        p.stop_and_wait(8).unwrap();
+        assert_eq!(open.load(Ordering::Acquire), 0);
+        assert_eq!(opens.load(Ordering::Relaxed), 4);
+        p.shutdown(9).unwrap();
     }
     #[test]
     fn decoder_and_sink_agree_on_both_baseline_rates() {

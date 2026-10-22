@@ -144,6 +144,35 @@ pub fn set_brightness(percent: u8) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Keep the headphone DAC powered (true) or let it power down two idle
+/// minutes later (false), through the Y2Linux kernel's hold (Beta 8.23). The
+/// stock firmware keeps the DAC and its crystal running while the screen is
+/// on; a marginal crystal stops after enough power cycles (#52). Best effort:
+/// Ok(false) where the kernel has no hold (older Y2Linux), nothing written.
+pub fn dac_hold(on: bool) -> Result<bool, String> {
+    dac_hold_at(Path::new("/sys/bus/i2c/devices"), on)
+}
+fn dac_hold_at(devices: &Path, on: bool) -> Result<bool, String> {
+    let Some(path) = dac_hold_path(devices) else {
+        return Ok(false);
+    };
+    fs::write(&path, if on { "1\n" } else { "0\n" })
+        .map(|()| true)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+/// The DAC (I2C address 0x30) sits on bus 0 or 1, by probe order.
+fn dac_hold_path(devices: &Path) -> Option<PathBuf> {
+    let mut holds = fs::read_dir(devices)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.ends_with("-0030")))
+        .map(|e| e.path().join("y2_hp/hold"))
+        .filter(|p| p.is_file())
+        .collect::<Vec<_>>();
+    holds.sort();
+    holds.into_iter().next()
+}
+
 fn brightness_value(max: u32, percent: u8) -> u32 {
     let percent = u32::from(percent.clamp(10, 100));
     (max * percent).div_ceil(100).clamp(1, max.max(1))
@@ -274,6 +303,30 @@ mod tests {
         let unknown = battery(&json!({"platform":{"battery":{"source":"guess","percent":72}}}));
         assert_eq!(unknown.percent, None);
         assert_eq!(unknown.charging, ChargingState::Unknown);
+    }
+
+    #[test]
+    fn dac_hold_finds_the_dac_on_either_bus_and_is_quiet_without_one() {
+        let root = std::env::temp_dir().join(format!("reborn-dac-hold-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // An older kernel: the DAC without a hold, other devices, no hold.
+        fs::create_dir_all(root.join("1-0030")).unwrap();
+        fs::create_dir_all(root.join("0-0050/y2_hp")).unwrap();
+        fs::write(root.join("0-0050/y2_hp/hold"), "0\n").unwrap();
+        fs::create_dir_all(root.join("i2c-1")).unwrap();
+        assert_eq!(dac_hold_path(&root), None);
+        assert_eq!(dac_hold_at(&root, true), Ok(false));
+        assert_eq!(dac_hold_at(&root.join("missing"), true), Ok(false));
+        // This kernel: bus 1 here (probe order), written as asked.
+        fs::create_dir_all(root.join("1-0030/y2_hp")).unwrap();
+        let hold = root.join("1-0030/y2_hp/hold");
+        fs::write(&hold, "0\n").unwrap();
+        assert_eq!(dac_hold_path(&root), Some(hold.clone()));
+        assert_eq!(dac_hold_at(&root, true), Ok(true));
+        assert_eq!(fs::read_to_string(&hold).unwrap(), "1\n");
+        assert_eq!(dac_hold_at(&root, false), Ok(true));
+        assert_eq!(fs::read_to_string(&hold).unwrap(), "0\n");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
