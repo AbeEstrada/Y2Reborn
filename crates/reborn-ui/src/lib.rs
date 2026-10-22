@@ -2007,6 +2007,9 @@ impl Ui {
             Self::go(m, Screen::DateTime, "");
             return Effect::None;
         }
+        if key.starts_with("date_") && date_time::network_time(m) {
+            return Effect::None;
+        }
         if let Some(field) = key.strip_prefix("date_field:").and_then(date_time::field) {
             let focus = date_time::picker(self, m, field).1;
             Self::open_modal(m, Modal::DateField(field));

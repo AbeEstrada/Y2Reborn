@@ -158,9 +158,20 @@ fn choices(ui: &Ui, m: &AppModel, field: DateField) -> std::ops::RangeInclusive<
     }
 }
 
+/// The clock came from the network this boot: it is right, and a running
+/// time server would not take a hand-set time back for minutes while calling
+/// it network time (8.22 test build). Only shown then.
+pub(crate) fn network_time(m: &AppModel) -> bool {
+    m.platform.snapshot.info.clock_source.as_deref() == Some("ntp")
+}
+
 /// The page: year, month, day and time (hour, then minute), then Set; five
-/// rows, so Set is on screen without scrolling.
+/// rows, so Set is on screen without scrolling. With network time only the
+/// clock itself.
 pub(crate) fn rows(ui: &Ui, m: &AppModel) -> Vec<Item> {
+    if network_time(m) {
+        return vec![Item::new("Date & Time", "").with_secondary(summary(ui, m))];
+    }
     let (t, twelve) = (draft(ui, m), twelve_hour(m));
     let mut rows: Vec<Item> = FIELDS[..3]
         .iter()
@@ -184,8 +195,8 @@ pub(crate) fn then(field: DateField) -> Option<DateField> {
 
 /// The line under the page.
 pub(crate) fn hint(m: &AppModel) -> &'static str {
-    if m.platform.snapshot.info.clock_source.as_deref() == Some("ntp") {
-        "The time came from the internet. It is set again whenever Wi-Fi connects."
+    if network_time(m) {
+        "The time comes from the internet while Wi-Fi is connected."
     } else {
         "With Wi-Fi the player sets the time by itself."
     }
@@ -305,7 +316,12 @@ mod tests {
         choose(&mut ui, &m, DateField::Month, 12);
         assert_eq!(instant(&ui, &m), Err("Choose an earlier date."));
         let offline = hint(&m);
+        assert_eq!(rows(&ui, &m).len(), 5);
         m.platform.snapshot.info.clock_source = Some("ntp".into());
         assert_ne!(hint(&m), offline);
+        // Network time: the clock only, nothing to set.
+        let shown = rows(&ui, &m);
+        assert_eq!(shown.len(), 1);
+        assert!(!shown[0].key.starts_with("date_"));
     }
 }

@@ -358,6 +358,8 @@ pub fn report_state(value: &Value) -> Option<ReportState> {
 fn clock_error(error: &str) -> String {
     if error.contains("date_out_of_range") {
         "Choose a date closer to today.".into()
+    } else if error.contains("network_time_active") {
+        "The time already comes from the internet.".into()
     } else {
         "The time couldn't be set. Please try again.".into()
     }
