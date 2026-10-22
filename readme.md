@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.8.23, part of Y2Linux 1.0 Beta 8.23 (Baseline 122, 2026-10-22), public beta.**
-> Git tag `baseline-122` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.8.24, part of Y2Linux 1.0 Beta 8.24 (Baseline 123, 2026-10-23), public beta.**
+> Git tag `baseline-123` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
@@ -18,7 +18,7 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   works](https://github.com/SchulzCode/Y2Linux/blob/main/docs/STORAGE.md)),
   with cover art from the album folder first and the embedded picture otherwise (thumbnails
   cached in `/data/reborn/cache`); Albums as Cover Flow or a grid, and Genres.
-- Wired playback at 44.1/48 kHz S16 stereo; higher-rate files are decoded and converted.
+- Wired playback at 44.1 kHz S16 stereo, as on stock; 48 kHz and other rates are decoded and converted.
   Bluetooth playback; the codec is chosen automatically (SBC, AAC and LDAC in the public images;
   aptX/aptX HD only in owner-private builds). The output follows the headphones: Bluetooth
   headphones take over from the jack as soon as they connect (playback continues there), the

@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.23 — Y2Linux 1.0 Beta 8.23 (Baseline 122), 2026-10-22 (latest): output kept, DAC hold, update task queue
+## 1.0.0-beta.8.24 — Y2Linux 1.0 Beta 8.24 (Baseline 123), 2026-10-23 (latest): wired output at 44.1 kHz only (#52)
+
+Published as `baseline-123` (Reborn `e199d9c`, sequence 8800), installed on the owner's player before publishing. #52:
+every failure was a 48 kHz start through the DAC's PLL, which stock never runs (stock output: 44.1 kHz only). The wired
+plan always asks for `reborn_audio::WIRED_RATE` (44.1 kHz) and the decoder converts other rates; the kept-sink rule is
+now "wired, 44.1 kHz", so tracks of any rate play on in the open sink (device: 50 reuses across 48/44.1 kHz, 0
+reopens). The per-rate `wired_plan`, the rate fallback and the unused rate arguments are gone.
+
+## 1.0.0-beta.8.23 — Y2Linux 1.0 Beta 8.23 (Baseline 122), 2026-10-22: output kept, DAC hold, update task queue
 
 Published as `baseline-122` (Reborn `0779d8b`, sequence 8705), installed on the owner's player before publishing.
 #52/#54: the wired sink stays open across track changes with the same output, rate, format and wired settings (old
