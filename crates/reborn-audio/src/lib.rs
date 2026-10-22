@@ -152,14 +152,12 @@ pub trait AudioSink {
         Ok(())
     }
 }
-/// Keep the source rate family when the native sink cannot accept its rate.
-pub fn fallback_rate(rate: u32) -> u32 {
-    if rate != 0 && rate.is_multiple_of(48_000) {
-        48_000
-    } else {
-        44_100
-    }
-}
+/// The headphone output's only rate, as on the stock firmware. The DAC's
+/// crystal (22.5792 MHz) clocks 44.1 kHz directly; 48 kHz needs the codec's
+/// PLL, which stock never runs (its only output rate is 44.1 kHz) and which
+/// knocks the crystal out on some players (#52). The SoC's I2S offers 44.1
+/// and 48 kHz only, so every wired source is converted to 44.1 kHz.
+pub const WIRED_RATE: u32 = 44_100;
 pub fn valid_address(s: &str) -> bool {
     s.len() == 17
         && s.split(':').count() == 6
@@ -175,11 +173,8 @@ mod tests {
         assert!(!valid_address("12:34:56:78:90:AB,PROFILE=hfp"));
     }
     #[test]
-    fn high_source_rates_convert_within_their_clock_family() {
-        assert_eq!(fallback_rate(88_200), 44_100);
-        assert_eq!(fallback_rate(96_000), 48_000);
-        assert_eq!(fallback_rate(192_000), 48_000);
-        assert_eq!(fallback_rate(0), 44_100);
+    fn the_wired_rate_runs_from_the_crystal_without_the_pll() {
+        assert_eq!(22_579_200 % WIRED_RATE, 0);
     }
     #[test]
     fn missing_sink_is_error() {

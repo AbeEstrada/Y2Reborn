@@ -270,9 +270,6 @@ struct Runtime {
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
-    /// The last wired sink plan: the rate asked for and the rate it gave
-    /// (`keeps_wired_sink`).
-    wired_plan: Option<(u32, u32)>,
     active_transport_generation: Option<u64>,
     input_resume: bool,
     sleep_prepared: bool,
@@ -405,18 +402,12 @@ fn run_sink_reconfiguration<P>(
 }
 
 /// The kept wired sink plays the next stream when that stream's plan would
-/// give its spec: a wired plan depends only on the rate asked for, and gives
-/// that rate or, for a rate the output refuses, the one the last plan for it
-/// gave (`last_plan`: asked, given).
-fn keeps_wired_sink(
-    kept: &reborn_audio::SinkSpec,
-    output: &AudioOutput,
-    requested_rate: u32,
-    last_plan: Option<(u32, u32)>,
-) -> bool {
+/// give its spec: the wired plan converts every source to 44.1 kHz (#52), so
+/// any track plays on in the open headphone sink.
+fn keeps_wired_sink(kept: &reborn_audio::SinkSpec, output: &AudioOutput) -> bool {
     matches!(output, AudioOutput::Wired)
         && kept.output == *output
-        && (kept.rate == requested_rate || last_plan == Some((requested_rate, kept.rate)))
+        && kept.rate == reborn_audio::WIRED_RATE
 }
 
 fn failed_reconfiguration_model(
@@ -1515,11 +1506,6 @@ impl Runtime {
             AudioOutput::Bluetooth(address) => Some(self.bt_state.playback_pcm(address)?),
             AudioOutput::Wired => None,
         };
-        let requested_rate = match bluetooth_pcm.as_ref() {
-            Some(pcm) => pcm.negotiated_rate()?,
-            None if track.sample_rate >= 8_000 => track.sample_rate,
-            None => self.output_rate()?,
-        };
         let generation = self.model.generation.wrapping_add(1);
         self.transition_generation = Some(generation);
         let entry_id = self
@@ -1580,49 +1566,22 @@ impl Runtime {
         let correlation = self.log.correlation();
         let plan_output = output.clone();
         self.sink_release_started = true;
-        let last_plan = self.wired_plan;
-        let mut planned_rate = None;
         let playback = &mut self.playback;
         run_sink_reconfiguration(
             playback,
             generation,
-            |kept| keeps_wired_sink(kept, &output, requested_rate, last_plan).then(|| kept.clone()),
+            |kept| keeps_wired_sink(kept, &output).then(|| kept.clone()),
             || {
-                let plan = |rate| match bluetooth_pcm.as_ref() {
+                match bluetooth_pcm.as_ref() {
                     Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
                         &plan_output,
                         pcm,
                         log.clone(),
                         correlation,
                     ),
-                    None => {
-                        reborn_audio::AlsaSink::plan(&plan_output, rate, log.clone(), correlation)
-                    }
-                };
-                let planned = match plan(requested_rate) {
-                    Ok((spec, _planned)) => Ok(spec),
-                    Err(error)
-                        if matches!(&plan_output, AudioOutput::Wired)
-                            && requested_rate != 44_100 =>
-                    {
-                        log.emit(
-                            Level::Warn,
-                            "audio",
-                            "enabled_rate_fallback",
-                            "Native source rate unavailable; converting within its rate family",
-                            Some(correlation),
-                            json!({"source_rate":requested_rate,"selected_rate":reborn_audio::fallback_rate(requested_rate),"reason":error}),
-                        );
-                        plan(reborn_audio::fallback_rate(requested_rate))
-                            .or_else(|_| plan(44_100))
-                            .map(|(spec, _planned)| spec)
-                    }
-                    Err(error) => Err(error),
-                };
-                if let Ok(spec) = &planned {
-                    planned_rate = matches!(spec.output, AudioOutput::Wired).then_some(spec.rate);
+                    None => reborn_audio::AlsaSink::plan(&plan_output, log.clone(), correlation),
                 }
-                planned
+                .map(|(spec, _planned)| spec)
             },
             move |playback, spec| {
                 let (
@@ -1653,9 +1612,6 @@ impl Runtime {
                 })
             },
         )?;
-        if let Some(rate) = planned_rate {
-            self.wired_plan = Some((requested_rate, rate));
-        }
         self.loaded_dsp = Some(loaded);
         self.model.generation = generation;
         self.model.playback = PlaybackState::Buffering;
@@ -1664,12 +1620,6 @@ impl Runtime {
         self.art = false;
         self.dirty.mark_both();
         Ok(())
-    }
-    fn output_rate(&self) -> Result<u32, String> {
-        match &self.model.output {
-            AudioOutput::Wired => Ok(44100),
-            AudioOutput::Bluetooth(address) => self.bt_state.playback_rate(address),
-        }
     }
     /// Move the position by `delta` ms. While playing, the sound holds and
     /// playback restarts once at the target after the last step
@@ -4237,7 +4187,6 @@ fn run() -> Result<(), String> {
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
-        wired_plan: None,
         active_transport_generation: None,
         input_resume: false,
         sleep_prepared: false,
@@ -5311,7 +5260,6 @@ fn run() -> Result<(), String> {
                         sources: rt.model.sources.clone(),
                         graphics,
                         output: rt.model.output.clone(),
-                        output_rate: rt.output_rate(),
                         audio_busy: matches!(
                             rt.model.playback,
                             PlaybackState::Playing | PlaybackState::Buffering
@@ -6591,29 +6539,13 @@ mod runtime_reconfiguration_tests {
     fn a_kept_wired_sink_is_taken_only_where_the_plan_would_give_it() {
         let kept = test_spec();
         let wired = AudioOutput::Wired;
-        assert!(keeps_wired_sink(&kept, &wired, 44_100, None));
-        assert!(!keeps_wired_sink(&kept, &wired, 48_000, None));
-        // 88.2 kHz planned as 44.1 kHz last time: the same again.
-        assert!(keeps_wired_sink(
-            &kept,
-            &wired,
-            88_200,
-            Some((88_200, 44_100))
-        ));
-        assert!(!keeps_wired_sink(
-            &kept,
-            &wired,
-            88_200,
-            Some((88_200, 48_000))
-        ));
-        assert!(!keeps_wired_sink(
-            &kept,
-            &wired,
-            96_000,
-            Some((88_200, 44_100))
-        ));
+        assert!(keeps_wired_sink(&kept, &wired));
+        // A sink some other plan gave (not the 44.1 kHz all wired plans give).
+        let mut other = test_spec();
+        other.rate = 48_000;
+        assert!(!keeps_wired_sink(&other, &wired));
         let bluetooth = AudioOutput::Bluetooth("12:34:56:78:90:AB".into());
-        assert!(!keeps_wired_sink(&kept, &bluetooth, 44_100, None));
+        assert!(!keeps_wired_sink(&kept, &bluetooth));
     }
 
     #[test]

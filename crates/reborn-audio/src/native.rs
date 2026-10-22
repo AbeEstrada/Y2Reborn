@@ -249,9 +249,9 @@ pub struct AlsaSink {
     pacing: WritePacing,
 }
 impl AlsaSink {
+    /// The wired sink, always at `WIRED_RATE` (the decoder converts).
     pub fn plan(
         output: &AudioOutput,
-        rate: u32,
         log: Observer,
         id: u64,
     ) -> Result<(SinkSpec, Parameters), String> {
@@ -262,7 +262,7 @@ impl AlsaSink {
         Self::plan_named(
             &device,
             output.clone(),
-            rate,
+            crate::WIRED_RATE,
             wired,
             PcmFormat::S32LE,
             false,
@@ -407,8 +407,8 @@ impl AlsaSink {
         }
         Ok((spec, params))
     }
-    pub fn open(output: &AudioOutput, rate: u32, log: Observer, id: u64) -> Result<Self, String> {
-        let (spec, _) = Self::plan(output, rate, log.clone(), id)?;
+    pub fn open(output: &AudioOutput, log: Observer, id: u64) -> Result<Self, String> {
+        let (spec, _) = Self::plan(output, log.clone(), id)?;
         Self::open_spec(&spec, log, id)
     }
     pub fn open_spec(spec: &SinkSpec, log: Observer, id: u64) -> Result<Self, String> {
