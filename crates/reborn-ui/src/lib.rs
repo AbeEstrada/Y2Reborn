@@ -152,6 +152,23 @@ pub struct NetworkView {
     pub visible: bool,
 }
 
+/// How the owner's last join went (Y2Reborn #20: tried before it is saved).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WifiJoinOutcome {
+    Checking,
+    Joined,
+    WrongPassword,
+    NotFound,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiJoin {
+    pub attempt: u64,
+    pub ssid: String,
+    pub outcome: WifiJoinOutcome,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WifiView {
     pub available: bool,
@@ -159,6 +176,9 @@ pub struct WifiView {
     pub scan: RadioScan,
     pub status: WifiStatus,
     pub problem: Option<WifiProblem>,
+    /// The saved network the problem belongs to (its password failed).
+    pub problem_network: Option<String>,
+    pub join: Option<WifiJoin>,
     /// Joined network first, then saved, then others; already de-duplicated.
     pub networks: Vec<NetworkView>,
 }
@@ -347,6 +367,11 @@ pub struct Ui {
     pub pairing_focus: usize,
     /// The full-screen keyboard, while it is open.
     pub keyboard: Option<keyboard::Keyboard>,
+    /// The network and password of the join being checked, in memory only:
+    /// a wrong password reopens the keyboard with it, to fix one letter.
+    wifi_typed: Option<(String, String)>,
+    /// The last join outcome already said.
+    wifi_join_seen: u64,
     /// Playlist files as read, and what the Playlist screens are doing.
     pub playlists: playlists_ui::PlaylistsView,
     /// Which library song each playlist entry names.
@@ -1402,14 +1427,22 @@ impl Ui {
                     .iter()
                     .find(|n| n.saved_id.map(|v| v.to_string()).as_deref() == Some(id))
                     .is_some_and(|n| self.wifi.status.network() == Some(n.ssid.as_str()));
-                vec![
-                    if joined {
-                        Item::new("Disconnect", "wifi_disconnect")
-                    } else {
-                        Item::new("Connect", "wifi_connect")
-                    },
-                    Item::new("Forget Network", "wifi_forget"),
-                ]
+                let secured = self
+                    .wifi
+                    .networks
+                    .iter()
+                    .find(|n| n.saved_id.map(|v| v.to_string()).as_deref() == Some(id))
+                    .is_some_and(|n| n.secured == Some(true));
+                let mut items = vec![if joined {
+                    Item::new("Disconnect", "wifi_disconnect")
+                } else {
+                    Item::new("Connect", "wifi_connect")
+                }];
+                if secured {
+                    items.push(Item::new("Change Password", "wifi_change_password"));
+                }
+                items.push(Item::new("Forget Network", "wifi_forget"));
+                items
             }
             _ => vec![],
         }
@@ -2464,6 +2497,11 @@ impl Ui {
                 Self::open_modal(m, Modal::ContextMenu);
                 return Effect::None;
             }
+            // Its password failed: ask for the new one instead of trying it again.
+            if let Some(ssid) = self.wifi_failed_ssid(id) {
+                self.open_wifi_keyboard(ssid, "");
+                return Effect::None;
+            }
             return id.parse().map(Effect::WifiSaved).unwrap_or(Effect::None);
         }
         let Some(ssid) = key.strip_prefix("ssid:") else {
@@ -2481,13 +2519,73 @@ impl Ui {
                 password: String::new(),
             },
             Some(true) => {
-                self.keyboard = Some(keyboard::Keyboard::new(
-                    keyboard::Purpose::WifiPassword { ssid: ssid.into() },
-                    "",
-                ));
+                self.open_wifi_keyboard(ssid.to_owned(), "");
                 Effect::None
             }
             None => Effect::None,
+        }
+    }
+
+    fn open_wifi_keyboard(&mut self, ssid: String, text: &str) {
+        self.keyboard = Some(keyboard::Keyboard::new(
+            keyboard::Purpose::WifiPassword { ssid },
+            text,
+        ));
+    }
+
+    /// The name of saved network `id` when its password failed.
+    fn wifi_failed_ssid(&self, id: &str) -> Option<String> {
+        let ssid = &self
+            .wifi
+            .networks
+            .iter()
+            .find(|n| n.saved_id.map(|v| v.to_string()).as_deref() == Some(id))?
+            .ssid;
+        let failed =
+            self.wifi.problem == Some(WifiProblem::WrongPassword)
+                && self.wifi.problem_network.as_deref() == Some(ssid.as_str())
+                || self.wifi.join.as_ref().is_some_and(|j| {
+                    j.ssid == *ssid && j.outcome == WifiJoinOutcome::WrongPassword
+                });
+        failed.then(|| ssid.clone())
+    }
+
+    /// Say how a join ended, once (called after each Wi-Fi observation). A
+    /// wrong typed password reopens the keyboard with it and says so.
+    pub fn wifi_join_changed(&mut self) {
+        let Some(join) = self.wifi.join.clone() else {
+            return;
+        };
+        if join.outcome == WifiJoinOutcome::Checking || join.attempt <= self.wifi_join_seen {
+            return;
+        }
+        self.wifi_join_seen = join.attempt;
+        let typed = self
+            .wifi_typed
+            .take()
+            .filter(|(ssid, _)| *ssid == join.ssid)
+            .map(|(_, password)| password);
+        match join.outcome {
+            WifiJoinOutcome::Joined => self.flash(format!("Connected to {}", join.ssid)),
+            WifiJoinOutcome::WrongPassword => match typed {
+                Some(password) => {
+                    self.open_wifi_keyboard(join.ssid.clone(), &password);
+                    if let Some(k) = self.keyboard.as_mut() {
+                        k.note = "Wrong password".into();
+                    }
+                }
+                None => self.flash(format!(
+                    "Wrong password for {}. Select it to enter the new one",
+                    join.ssid
+                )),
+            },
+            WifiJoinOutcome::NotFound => self.flash(format!(
+                "{} is not in range. Move closer and try again",
+                join.ssid
+            )),
+            WifiJoinOutcome::Failed | WifiJoinOutcome::Checking => {
+                self.flash(format!("Couldn't connect to {}. Try again", join.ssid))
+            }
         }
     }
 
@@ -2773,6 +2871,27 @@ impl Ui {
                 m.navigation.modal_focus = 0;
                 return Effect::None;
             }
+            "wifi_change_password" => {
+                let ssid = m
+                    .navigation
+                    .context_key
+                    .as_deref()
+                    .and_then(|k| k.strip_prefix("saved:"))
+                    .and_then(|id| {
+                        self.wifi
+                            .networks
+                            .iter()
+                            .find(|n| n.saved_id.map(|v| v.to_string()).as_deref() == Some(id))
+                    })
+                    .map(|n| n.ssid.clone());
+                Self::close_modal(m);
+                if let Some(ssid) = ssid {
+                    // Joined like a new network: kept only if it connects,
+                    // and then it replaces the old entry.
+                    self.open_wifi_keyboard(ssid, "");
+                }
+                return Effect::None;
+            }
             "wifi_forget" => {
                 m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ForgetWifi));
                 m.navigation.modal_focus = 0;
@@ -2930,6 +3049,7 @@ impl Ui {
                         }
                         let password = std::mem::take(&mut k.text);
                         self.keyboard = None;
+                        self.wifi_typed = Some((ssid.clone(), password.clone()));
                         Effect::WifiConnect { ssid, password }
                     }
                     Purpose::LastFmUser => {

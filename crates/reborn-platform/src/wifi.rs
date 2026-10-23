@@ -55,6 +55,29 @@ pub struct Status {
     pub error: Option<String>,
     #[serde(default)]
     pub scan: RadioScan,
+    /// The owner's last join (a typed password or a saved network) and how it
+    /// ended; kept until the next one.
+    #[serde(default)]
+    pub join: Option<Join>,
+    /// The saved network whose password failed (the platform's record).
+    #[serde(default)]
+    pub failed_network_id: Option<u32>,
+}
+/// A join is tried before it is saved (Y2Reborn #20: a wrong password was
+/// saved at once, the list said "Saved" and nothing ever said why).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Join {
+    pub attempt: u64,
+    pub ssid: String,
+    pub outcome: JoinOutcome,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JoinOutcome {
+    Checking,
+    Joined,
+    WrongPassword,
+    NotFound,
+    Failed,
 }
 pub enum Command {
     Power(bool),
@@ -236,6 +259,16 @@ pub fn problem(s: &Status) -> Option<reborn_core::platform::WifiProblem> {
         .or(s.error.as_deref())
         .unwrap_or("")
         .to_ascii_lowercase();
+    // A join being checked says its own outcome; a failed network that is no
+    // longer saved (a removed join, a forgotten network) is not a problem.
+    if s.join
+        .as_ref()
+        .is_some_and(|j| j.outcome == JoinOutcome::Checking)
+        || s.failed_network_id
+            .is_some_and(|id| !s.saved.iter().any(|n| n.saved_id == Some(id)))
+    {
+        return None;
+    }
     let dns = reason.contains("dns");
     if s.readiness == "Authenticated" && dns {
         return Some(WifiProblem::NoInternetNames);
@@ -264,7 +297,8 @@ pub fn problem(s: &Status) -> Option<reborn_core::platform::WifiProblem> {
 pub fn radio(on: bool, persist: bool) -> Result<(), String> {
     Paths::default().radio(on, persist)
 }
-fn connect(c: &Control, ssid: &str, password: &str) -> Result<(), String> {
+/// A new network block for a join, not selected and not saved yet.
+fn add_network(c: &Control, ssid: &str, password: &str) -> Result<u32, String> {
     if ssid.is_empty()
         || ssid.len() > 32
         || (!password.is_empty() && !(8..=63).contains(&password.len()))
@@ -285,14 +319,182 @@ fn connect(c: &Control, ssid: &str, password: &str) -> Result<(), String> {
             c.request(&format!("SET_NETWORK {id} psk {psk}"))?;
             c.request(&format!("SET_NETWORK {id} key_mgmt WPA-PSK"))?;
         }
-        c.request(&format!("SELECT_NETWORK {id}"))?;
-        c.request("SAVE_CONFIG")?;
-        Ok(())
+        Ok(id)
     })();
     if result.is_err() {
         let _ = c.request(&format!("REMOVE_NETWORK {id}"));
     }
     result
+}
+
+/// How long a join may take before it counts as failed. A wrong password is
+/// known after one 4-way handshake (≈10 s on the Y2, owner's player 8.27).
+const JOIN_SECONDS: u64 = 30;
+
+/// One join being checked: the supplicant's events say whether it connected,
+/// the password was wrong or the network is not in range.
+struct PendingJoin {
+    attempt: u64,
+    ssid: String,
+    id: u32,
+    /// A new block (a typed password): removed again unless it connected.
+    added: bool,
+    deadline: Instant,
+    monitor: Control,
+    auth_failures: u32,
+    not_found: u32,
+    status_at: Instant,
+}
+
+/// `id=7` in a supplicant event (`[id=7 id_str=]`, `id=7 ssid=…`).
+fn event_network(event: &str) -> Option<u32> {
+    let at = event.find(" id=").or_else(|| event.find("[id="))? + 4;
+    event[at..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// A GET_NETWORK ssid answer (`"name"` or hex) as the hex `hex_ssid` sends.
+fn ssid_hex(value: &str) -> String {
+    match value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        Some(name) => hex_ssid(name),
+        None => value.to_ascii_lowercase(),
+    }
+}
+
+impl PendingJoin {
+    fn start(
+        paths: &Paths,
+        attempt: u64,
+        ssid: &str,
+        password: Option<&str>,
+        saved: Option<u32>,
+    ) -> Result<Self, String> {
+        let c = Control::at(paths)?;
+        // Attach before selecting: no event of this join may be missed.
+        let mut monitor = Control::at(paths)?;
+        monitor.request("ATTACH")?;
+        monitor.attached = true;
+        monitor
+            .socket
+            .set_nonblocking(true)
+            .map_err(|e| e.to_string())?;
+        let (id, added) = match saved {
+            Some(id) => (id, false),
+            None => (add_network(&c, ssid, password.unwrap_or(""))?, true),
+        };
+        if let Err(e) = c.request(&format!("SELECT_NETWORK {id}")) {
+            if added {
+                let _ = c.request(&format!("REMOVE_NETWORK {id}"));
+            }
+            return Err(e);
+        }
+        let now = Instant::now();
+        Ok(Self {
+            attempt,
+            ssid: ssid.to_owned(),
+            id,
+            added,
+            deadline: now + Duration::from_secs(JOIN_SECONDS),
+            monitor,
+            auth_failures: 0,
+            not_found: 0,
+            status_at: now,
+        })
+    }
+
+    /// The outcome once there is one.
+    fn step(&mut self, paths: &Paths, now: Instant) -> Option<JoinOutcome> {
+        for _ in 0..32 {
+            let mut bytes = [0; 4096];
+            let n = match self.monitor.socket.recv(&mut bytes) {
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            };
+            let text = String::from_utf8_lossy(&bytes[..n]);
+            let event = text.split_once('>').map(|(_, s)| s).unwrap_or(&text).trim();
+            let ours = event_network(event) == Some(self.id);
+            if event.starts_with("CTRL-EVENT-CONNECTED") && ours {
+                return Some(JoinOutcome::Joined);
+            }
+            if event.starts_with("CTRL-EVENT-SSID-TEMP-DISABLED") && ours {
+                if event.contains("reason=WRONG_KEY") {
+                    return Some(JoinOutcome::WrongPassword);
+                }
+                self.auth_failures += 1;
+            } else if event.starts_with("CTRL-EVENT-AUTH-REJECT") {
+                self.auth_failures += 1;
+            } else if event.starts_with("CTRL-EVENT-NETWORK-NOT-FOUND") {
+                self.not_found += 1;
+            }
+            if self.auth_failures >= 2 {
+                return Some(JoinOutcome::Failed);
+            }
+            if self.not_found >= 3 {
+                return Some(JoinOutcome::NotFound);
+            }
+        }
+        // A missed event: the supplicant's own state, once a second.
+        if now.duration_since(self.status_at) >= Duration::from_secs(1) {
+            self.status_at = now;
+            if let Ok(text) = Control::at(paths).and_then(|c| c.request("STATUS")) {
+                let field = |k: &str| {
+                    text.lines()
+                        .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+                        .map(str::to_owned)
+                };
+                if field("wpa_state").as_deref() == Some("COMPLETED")
+                    && field("id").and_then(|v| v.parse().ok()) == Some(self.id)
+                {
+                    return Some(JoinOutcome::Joined);
+                }
+            }
+        }
+        if now >= self.deadline {
+            return Some(if self.not_found > 0 && self.auth_failures == 0 {
+                JoinOutcome::NotFound
+            } else {
+                JoinOutcome::Failed
+            });
+        }
+        None
+    }
+
+    /// Keep a network that connected (and drop older blocks of the same name);
+    /// remove one that did not. Every other saved network is enabled again
+    /// (SELECT_NETWORK disabled them, and the old flow saved them disabled).
+    fn finish(&self, paths: &Paths, outcome: JoinOutcome) -> Result<(), String> {
+        let c = Control::at(paths)?;
+        if outcome == JoinOutcome::Joined {
+            if self.added {
+                let name = hex_ssid(&self.ssid);
+                let list = c.request("LIST_NETWORKS")?;
+                for other in list
+                    .lines()
+                    .skip(1)
+                    .filter_map(|l| l.split('\t').next()?.parse::<u32>().ok())
+                    .filter(|other| *other != self.id)
+                {
+                    if c.request(&format!("GET_NETWORK {other} ssid"))
+                        .is_ok_and(|v| ssid_hex(&v) == name)
+                    {
+                        c.request(&format!("REMOVE_NETWORK {other}"))?;
+                    }
+                }
+            }
+            c.request("ENABLE_NETWORK all")?;
+            c.request("SAVE_CONFIG")?;
+        } else {
+            if self.added {
+                c.request(&format!("REMOVE_NETWORK {}", self.id))?;
+            }
+            c.request("ENABLE_NETWORK all")?;
+        }
+        Ok(())
+    }
 }
 fn networks(text: &str) -> Result<Vec<Network>, String> {
     if !text.starts_with("bssid / frequency / signal level / flags / ssid") {
@@ -418,11 +620,19 @@ fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
         let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
         let observed = record.and_then(|r| {
-            network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?, &s)
+            let state =
+                network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?, &s)?;
+            Some((
+                state,
+                r["failed_network_id"]
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok()),
+            ))
         });
-        if let Some((state, reason)) = observed {
+        if let Some(((state, reason), failed)) = observed {
             s.readiness = state;
             s.readiness_reason = reason;
+            s.failed_network_id = failed;
         } else {
             // No usable record: the supplicant's own state decides (an empty
             // readiness). "Unavailable" showed a working, associated player
@@ -593,8 +803,10 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
     let mut refresh = Instant::now() - Duration::from_secs(4);
     let mut inventory_refresh = refresh;
     let mut publish = true;
+    let mut join: Option<PendingJoin> = None;
+    let mut attempts = 0u64;
     loop {
-        let wait = if scan.is_some() || publish {
+        let wait = if scan.is_some() || join.is_some() || publish {
             Duration::from_millis(200)
         } else {
             Duration::from_secs(3)
@@ -611,6 +823,14 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
         if explicit && !duplicate_scan {
             operation_error = None;
             current.error = None;
+        }
+        // Any other owner command ends a join still being checked (its block
+        // is removed again unless it connected).
+        if explicit && !matches!(command, Command::Scan) {
+            if let Some(pending) = join.take() {
+                let _ = pending.finish(&paths, JoinOutcome::Failed);
+                current.join = None;
+            }
         }
         let result = match command {
             Command::Stop | Command::Refresh => Ok(()),
@@ -653,13 +873,36 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                     Some(id),
                     json!({"ssid":ssid}),
                 );
-                Control::at(&paths).and_then(|c| connect(&c, &ssid, &password))
+                attempts += 1;
+                PendingJoin::start(&paths, attempts, &ssid, Some(&password), None).map(|pending| {
+                    current.join = Some(Join {
+                        attempt: pending.attempt,
+                        ssid: ssid.clone(),
+                        outcome: JoinOutcome::Checking,
+                    });
+                    join = Some(pending);
+                })
             }
             Command::Disconnect => {
                 Control::at(&paths).and_then(|c| c.request("DISCONNECT").map(|_| ()))
             }
-            Command::Saved(id) => Control::at(&paths)
-                .and_then(|c| c.request(&format!("SELECT_NETWORK {id}")).map(|_| ())),
+            Command::Saved(network) => {
+                let ssid = current
+                    .saved
+                    .iter()
+                    .find(|n| n.saved_id == Some(network))
+                    .map(|n| n.ssid.clone())
+                    .unwrap_or_default();
+                attempts += 1;
+                PendingJoin::start(&paths, attempts, &ssid, None, Some(network)).map(|pending| {
+                    current.join = Some(Join {
+                        attempt: pending.attempt,
+                        ssid,
+                        outcome: JoinOutcome::Checking,
+                    });
+                    join = Some(pending);
+                })
+            }
             Command::Forget(id) => Control::at(&paths).and_then(|c| {
                 c.request(&format!("REMOVE_NETWORK {id}"))?;
                 c.request("SAVE_CONFIG").map(|_| ())
@@ -689,6 +932,7 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                 inventory_refresh = Instant::now();
             }
             s.scan = current.scan.clone();
+            s.join = current.join.clone();
             current = s;
             refresh = Instant::now();
             publish = true;
@@ -735,6 +979,34 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
             publish |= current.scan != previous;
             if !current.scan.active() {
                 scan = None;
+            }
+        }
+        if let Some(pending) = join.as_mut() {
+            if let Some(outcome) = pending.step(&paths, Instant::now()) {
+                let finished = pending.finish(&paths, outcome);
+                log.emit(
+                    if outcome == JoinOutcome::Joined {
+                        Level::Info
+                    } else {
+                        Level::Warn
+                    },
+                    "wifi",
+                    "join_result",
+                    "Wi-Fi join checked",
+                    Some(id),
+                    json!({"outcome":format!("{outcome:?}"),"new_network":pending.added,
+                        "cleanup_error":finished.err()}),
+                );
+                current.join = Some(Join {
+                    attempt: pending.attempt,
+                    ssid: pending.ssid.clone(),
+                    outcome,
+                });
+                join = None;
+                // The saved list changed: read it again at once.
+                inventory_refresh = Instant::now() - Duration::from_secs(60);
+                refresh = Instant::now() - Duration::from_secs(4);
+                publish = true;
             }
         }
         if operation_error.is_some() {
@@ -826,6 +1098,48 @@ pub fn saved_test(id: u32) -> Result<serde_json::Value, String> {
         }
         thread::sleep(Duration::from_millis(250));
     }
+}
+/// Owner diagnostic: the Wi-Fi page's join on saved network `id`, or (wrong)
+/// a new entry with its name and a wrong password. Nothing is left behind by
+/// the wrong one; the saved network's own entry is never changed.
+pub fn join_test(id: u32, wrong: bool) -> Result<serde_json::Value, String> {
+    let paths = Paths::default();
+    let c = Control::at(&paths)?;
+    let count = |c: &Control| -> Result<usize, String> {
+        Ok(c.request("LIST_NETWORKS")?.lines().skip(1).count())
+    };
+    let before = count(&c)?;
+    let raw = c.request(&format!("GET_NETWORK {id} ssid"))?;
+    let ssid = match raw.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        Some(name) => name.to_owned(),
+        None => {
+            let bytes = (0..raw.len() / 2)
+                .map(|i| u8::from_str_radix(raw.get(i * 2..i * 2 + 2).unwrap_or(""), 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| "unreadable network name")?;
+            String::from_utf8(bytes).map_err(|_| "network name is not text")?
+        }
+    };
+    let mut join = if wrong {
+        PendingJoin::start(&paths, 0, &ssid, Some("y2-wrong-password-test"), None)?
+    } else {
+        PendingJoin::start(&paths, 0, &ssid, None, Some(id))?
+    };
+    let started = Instant::now();
+    let outcome = loop {
+        if let Some(outcome) = join.step(&paths, Instant::now()) {
+            break outcome;
+        }
+        thread::sleep(Duration::from_millis(200));
+    };
+    join.finish(&paths, outcome)?;
+    Ok(json!({
+        "passed": outcome == if wrong { JoinOutcome::WrongPassword } else { JoinOutcome::Joined },
+        "outcome": format!("{outcome:?}"),
+        "seconds": started.elapsed().as_secs_f32(),
+        "networks_before": before,
+        "networks_after": count(&Control::at(&paths)?)?,
+    }))
 }
 #[cfg(test)]
 mod tests {
@@ -948,6 +1262,8 @@ mod tests {
         monitor: Arc<Mutex<Option<PathBuf>>>,
         scans: Arc<AtomicUsize>,
         requests: Arc<Mutex<Vec<String>>>,
+        /// LIST_NETWORKS rows after the header (`id\tssid\tany\t`).
+        saved: Arc<Mutex<String>>,
         stop: Arc<AtomicBool>,
         worker: Option<thread::JoinHandle<()>>,
     }
@@ -985,6 +1301,8 @@ mod tests {
             let count = scans.clone();
             let requests = Arc::new(Mutex::new(Vec::new()));
             let observed_requests = requests.clone();
+            let saved = Arc::new(Mutex::new(String::new()));
+            let listed = saved.clone();
             let stop = Arc::new(AtomicBool::new(false));
             let ending = stop.clone();
             let worker = thread::spawn(move || {
@@ -1016,7 +1334,33 @@ mod tests {
                                 "wpa_state=DISCONNECTED\n"
                             }
                             "SCAN_RESULTS" => &results,
-                            "LIST_NETWORKS" => "network id / ssid / bssid / flags\n",
+                            "LIST_NETWORKS" => &format!(
+                                "network id / ssid / bssid / flags\n{}",
+                                listed.lock().unwrap()
+                            ),
+                            "ADD_NETWORK" => "3\n",
+                            c if c.starts_with("GET_NETWORK ") && c.ends_with(" ssid") => {
+                                let id = c.split(' ').nth(1).unwrap_or("");
+                                &listed
+                                    .lock()
+                                    .unwrap()
+                                    .lines()
+                                    .find(|l| l.split('\t').next() == Some(id))
+                                    .and_then(|l| l.split('\t').nth(1))
+                                    .map_or("FAIL\n".to_owned(), |name| format!("\"{name}\"\n"))
+                            }
+                            c if [
+                                "SET_NETWORK ",
+                                "SELECT_NETWORK ",
+                                "REMOVE_NETWORK ",
+                                "ENABLE_NETWORK ",
+                            ]
+                            .iter()
+                            .any(|p| c.starts_with(p))
+                                || c == "SAVE_CONFIG" =>
+                            {
+                                "OK\n"
+                            }
                             _ => "FAIL\n",
                         };
                         let _ = socket.send_to(response.as_bytes(), from);
@@ -1031,6 +1375,7 @@ mod tests {
                 monitor,
                 scans,
                 requests,
+                saved,
                 stop,
                 worker: Some(worker),
             }
@@ -1061,6 +1406,107 @@ mod tests {
                 return s;
             }
         }
+    }
+    fn outcome(join: &mut PendingJoin, paths: &Paths) -> JoinOutcome {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(outcome) = join.step(paths, Instant::now()) {
+                return outcome;
+            }
+            assert!(Instant::now() < until, "no join outcome");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[test]
+    fn a_join_is_saved_only_when_it_connects() {
+        // Y2Reborn #20: one wrong letter, 15 tries; each try was saved at once,
+        // the list said "Saved" and nothing ever said the password was wrong.
+        let fake = Supplicant::new(HEADER.into());
+        fake.paths.radio(true, false).unwrap();
+        *fake.saved.lock().unwrap() = "0\tHome\tany\t\n".into();
+        let sent = |fake: &Supplicant| fake.requests.lock().unwrap().clone();
+        let mut join =
+            PendingJoin::start(&fake.paths, 1, "Home", Some("wrongpassword"), None).unwrap();
+        assert_eq!((join.id, join.added), (3, true));
+        let order = sent(&fake);
+        let at = |c: &str| order.iter().position(|r| r.starts_with(c)).unwrap();
+        assert!(
+            at("ATTACH") < at("SELECT_NETWORK 3") && at("ADD_NETWORK") < at("SELECT_NETWORK 3")
+        );
+        // Another network's failure is not ours.
+        fake.event("<3>CTRL-EVENT-SSID-TEMP-DISABLED id=13 ssid=\"Other\" auth_failures=1 reason=WRONG_KEY");
+        fake.event("<3>CTRL-EVENT-SSID-TEMP-DISABLED id=3 ssid=\"Home\" auth_failures=1 duration=10 reason=WRONG_KEY");
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::WrongPassword);
+        fake.requests.lock().unwrap().clear();
+        join.finish(&fake.paths, JoinOutcome::WrongPassword)
+            .unwrap();
+        assert_eq!(sent(&fake), ["REMOVE_NETWORK 3", "ENABLE_NETWORK all"]);
+        // The right password: kept, the older entry of the same name goes, and
+        // the other saved networks are enabled again before saving.
+        *fake.saved.lock().unwrap() =
+            "0\tHome\tany\t\n1\tCafe\tany\t\n3\tHome\tany\t[CURRENT]\n".into();
+        let mut join =
+            PendingJoin::start(&fake.paths, 2, "Home", Some("rightpassword"), None).unwrap();
+        fake.event(
+            "<3>CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=3 id_str=]",
+        );
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::Joined);
+        fake.requests.lock().unwrap().clear();
+        join.finish(&fake.paths, JoinOutcome::Joined).unwrap();
+        let done = sent(&fake);
+        assert!(done.contains(&"REMOVE_NETWORK 0".to_owned()));
+        assert!(!done
+            .iter()
+            .any(|r| r == "REMOVE_NETWORK 1" || r == "REMOVE_NETWORK 3"));
+        let at = |c: &str| done.iter().position(|r| r == c).unwrap();
+        assert!(at("ENABLE_NETWORK all") < at("SAVE_CONFIG"));
+        // Out of range: three "not found" in a row.
+        let mut join =
+            PendingJoin::start(&fake.paths, 3, "Home", Some("rightpassword"), None).unwrap();
+        for _ in 0..3 {
+            fake.event("<3>CTRL-EVENT-NETWORK-NOT-FOUND");
+        }
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::NotFound);
+        // A saved network is selected, never removed when it fails.
+        let mut join = PendingJoin::start(&fake.paths, 4, "Home", None, Some(0)).unwrap();
+        assert!(!join.added);
+        fake.event("<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid=\"Home\" reason=WRONG_KEY");
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::WrongPassword);
+        fake.requests.lock().unwrap().clear();
+        join.finish(&fake.paths, JoinOutcome::WrongPassword)
+            .unwrap();
+        assert_eq!(sent(&fake), ["ENABLE_NETWORK all"]);
+        assert_eq!(
+            event_network("CTRL-EVENT-CONNECTED - Connection to x completed [id=17 id_str=]"),
+            Some(17)
+        );
+        assert_eq!(ssid_hex("\"Ab\""), "4162");
+    }
+    #[test]
+    fn a_failed_network_that_is_no_longer_saved_is_not_a_problem() {
+        let mut s = Status {
+            readiness: "Failed".into(),
+            readiness_reason: Some("wrong_credentials".into()),
+            failed_network_id: Some(3),
+            saved: vec![Network {
+                ssid: "Home".into(),
+                saved_id: Some(0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(problem(&s), None);
+        s.failed_network_id = Some(0);
+        assert_eq!(
+            problem(&s),
+            Some(reborn_core::platform::WifiProblem::WrongPassword)
+        );
+        s.join = Some(Join {
+            attempt: 1,
+            ssid: "Home".into(),
+            outcome: JoinOutcome::Checking,
+        });
+        assert_eq!(problem(&s), None);
     }
     #[test]
     fn status_survives_measured_vendor_statistics_delay() {

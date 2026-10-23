@@ -778,8 +778,24 @@ fn wifi(ui: &Ui) -> Page {
     }
     let mut rows = vec![row("Wi-Fi", "wifi_power", "").with_kind(RowKind::Toggle(true))];
     let connected = w.status.network();
+    let checking = w
+        .join
+        .as_ref()
+        .filter(|j| j.outcome == crate::WifiJoinOutcome::Checking)
+        .map(|j| j.ssid.as_str());
     for n in &w.networks {
-        let state = if connected == Some(n.ssid.as_str()) && w.problem.is_some() {
+        let state = if checking == Some(n.ssid.as_str()) {
+            // Tried before it is saved (Y2Reborn #20).
+            if n.saved_id.is_some() || n.secured != Some(true) {
+                "Connecting…".into()
+            } else {
+                "Checking password…".into()
+            }
+        } else if w.problem == Some(WifiProblem::WrongPassword)
+            && w.problem_network.as_deref() == Some(n.ssid.as_str())
+        {
+            "Wrong password".into()
+        } else if connected == Some(n.ssid.as_str()) && w.problem.is_some() {
             "Couldn't Connect".into()
         } else if connected == Some(n.ssid.as_str()) {
             match &w.status {
@@ -832,6 +848,7 @@ pub fn wifi_status_line(ui: &Ui) -> Option<String> {
         let name = w
             .status
             .network()
+            .or(w.problem_network.as_deref())
             .map(|n| format!(" to {n}"))
             .unwrap_or_default();
         return Some(match problem {

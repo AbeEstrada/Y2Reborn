@@ -3580,11 +3580,28 @@ fn wifi_view(s: &wifi::Status) -> WifiView {
             std::cmp::Reverse(n.bars),
         )
     });
+    let problem = wifi::problem(s);
     WifiView {
         available: s.available,
         powered: s.enabled,
         scan: s.scan.clone(),
-        problem: wifi::problem(s),
+        problem_network: s
+            .failed_network_id
+            .filter(|_| problem == Some(reborn_core::platform::WifiProblem::WrongPassword))
+            .and_then(|id| s.saved.iter().find(|n| n.saved_id == Some(id)))
+            .map(|n| n.ssid.clone()),
+        problem,
+        join: s.join.as_ref().map(|j| reborn_ui::WifiJoin {
+            attempt: j.attempt,
+            ssid: j.ssid.clone(),
+            outcome: match j.outcome {
+                wifi::JoinOutcome::Checking => reborn_ui::WifiJoinOutcome::Checking,
+                wifi::JoinOutcome::Joined => reborn_ui::WifiJoinOutcome::Joined,
+                wifi::JoinOutcome::WrongPassword => reborn_ui::WifiJoinOutcome::WrongPassword,
+                wifi::JoinOutcome::NotFound => reborn_ui::WifiJoinOutcome::NotFound,
+                wifi::JoinOutcome::Failed => reborn_ui::WifiJoinOutcome::Failed,
+            },
+        }),
         status,
         networks,
     }
@@ -4990,6 +5007,7 @@ fn run() -> Result<(), String> {
                 let view = wifi_view(&s);
                 if view != rt.ui.wifi {
                     rt.ui.wifi = view;
+                    rt.ui.wifi_join_changed();
                     rt.dirty.mark_render();
                 }
                 rt.wifi_state = s;
@@ -6757,6 +6775,18 @@ mod ui_readiness_tests {
             wifi_view(&s).problem,
             Some(reborn_core::platform::WifiProblem::WrongPassword)
         );
+        // Y2Reborn #20: the saved network whose password failed is named; a
+        // join already removed again is not a problem.
+        s.saved = vec![wifi::Network {
+            ssid: "Home".into(),
+            saved_id: Some(4),
+            ..Default::default()
+        }];
+        s.failed_network_id = Some(4);
+        assert_eq!(wifi_view(&s).problem_network.as_deref(), Some("Home"));
+        s.failed_network_id = Some(9);
+        assert_eq!(wifi_view(&s).problem, None);
+        s.failed_network_id = None;
         // Service text can never reach the screen: problems are an enum.
         s.readiness_reason = Some("org.secret.service credential=abc".into());
         assert_eq!(

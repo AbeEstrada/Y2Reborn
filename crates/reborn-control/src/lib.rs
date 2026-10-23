@@ -113,6 +113,10 @@ pub enum Test {
     Input,
     WifiScan,
     WifiConnect,
+    /// The join the Wi-Fi page runs (Y2Reborn #20), on a saved network.
+    WifiJoin,
+    /// The same with a wrong password under the saved network's name.
+    WifiJoinWrong,
     Bluetooth,
     BluetoothScan,
     AudioWired,
@@ -129,6 +133,8 @@ pub const TESTS: &[(&str, bool)] = &[
     ("input", false),
     ("wifi-scan", false),
     ("wifi-connect", false),
+    ("wifi-join", false),
+    ("wifi-join-wrong", false),
     ("bluetooth", false),
     ("bluetooth-scan", false),
     ("audio-wired", true),

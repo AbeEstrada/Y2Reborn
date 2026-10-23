@@ -666,6 +666,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             k.col = 1;
         }
     });
+    // Y2Reborn #20: a wrong password reopens the keyboard with it.
+    case!("26c-wifi-wrong-password", at(Screen::Wifi, ""), |ui, m| {
+        m.navigation.focus = 3;
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "Correct Horse 43".into();
+            k.note = "Wrong password".into();
+        }
+    });
     // Keyboard and library search (Beta 5)
     case!("70-search-keyboard", at(Screen::Home, ""), |ui, m| {
         home_focus(ui, m, "search");

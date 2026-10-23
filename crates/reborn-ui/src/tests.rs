@@ -1454,6 +1454,71 @@ fn password_keyboard_types_with_buttons_and_never_draws_the_password() {
 }
 
 #[test]
+fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
+    // Y2Reborn #20: one wrong letter, 15 tries; the player showed
+    // "Connecting…" then "Saved" and never said the password was wrong.
+    use crate::{WifiJoin, WifiJoinOutcome};
+    let mut ui = radios();
+    let mut m = app(Screen::Wifi);
+    select_key(&mut ui, &mut m, "ssid:Café");
+    ui.keyboard.as_mut().unwrap().text = "secretpasz".into();
+    assert!(matches!(
+        ui.model_action(&mut m, Action::ContextMenu),
+        Effect::WifiConnect { .. }
+    ));
+    let join = |outcome, attempt| WifiJoin {
+        attempt,
+        ssid: "Café".into(),
+        outcome,
+    };
+    ui.wifi.join = Some(join(WifiJoinOutcome::Checking, 1));
+    ui.wifi_join_changed();
+    assert!(visible_text(&ui, &m).contains("Checking password…"));
+    ui.wifi.join = Some(join(WifiJoinOutcome::WrongPassword, 1));
+    ui.wifi_join_changed();
+    let k = ui.keyboard.as_ref().expect("keyboard again");
+    assert_eq!(k.text, "secretpasz");
+    assert!(k.note.contains("Wrong password"));
+    assert!(
+        matches!(&k.purpose, crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Café")
+    );
+    // Said once: the same outcome again does nothing.
+    ui.keyboard = None;
+    ui.wifi_join_changed();
+    assert!(ui.keyboard.is_none());
+    // Fixed letter: joined.
+    ui.wifi.join = Some(join(WifiJoinOutcome::Joined, 2));
+    ui.wifi_join_changed();
+    assert!(ui.notice.contains("Connected to Café"));
+    // A saved network whose password stopped working: Wrong password on its
+    // row, and selecting it asks for the new one instead of trying it again.
+    ui.wifi.status = WifiStatus::Disconnected;
+    ui.wifi.problem = Some(reborn_core::platform::WifiProblem::WrongPassword);
+    ui.wifi.problem_network = Some("Home".into());
+    assert!(visible_text(&ui, &m).contains("Wrong password"));
+    assert!(visible_text(&ui, &m).contains("Check the password"));
+    assert_eq!(select_key(&mut ui, &mut m, "saved:7"), Effect::None);
+    assert!(matches!(&ui.keyboard.as_ref().unwrap().purpose,
+        crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Home"));
+    ui.keyboard = None;
+    // Change Password is in the saved network's menu.
+    ui.wifi.problem = None;
+    ui.wifi.problem_network = None;
+    let rows = ui.rows(&m, &[]);
+    m.navigation.focus = rows.iter().position(|r| r.key == "saved:7").unwrap();
+    ui.model_action(&mut m, Action::ContextMenu);
+    let menu = ui.modal_rows_public(&m, &[]);
+    let at = menu
+        .iter()
+        .position(|r| r.key == "wifi_change_password")
+        .expect("Change Password");
+    m.navigation.modal_focus = at;
+    ui.model_action(&mut m, Action::Select);
+    assert!(matches!(&ui.keyboard.as_ref().unwrap().purpose,
+        crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Home"));
+}
+
+#[test]
 fn library_search_counts_while_typing_and_lists_artists_albums_songs() {
     let mut ui = Ui::default();
     let mut m = app(Screen::Home);

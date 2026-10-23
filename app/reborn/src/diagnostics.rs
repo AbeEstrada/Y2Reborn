@@ -280,6 +280,10 @@ fn run(
         ),
         Test::WifiScan => wifi::scan_test(),
         Test::WifiConnect => wifi::saved_test(saved.ok_or("--saved ID is required")?),
+        Test::WifiJoin | Test::WifiJoinWrong => wifi::join_test(
+            saved.ok_or("--saved ID is required")?,
+            matches!(name, Test::WifiJoinWrong),
+        ),
         Test::Bluetooth => bluetooth::service_test(),
         Test::BluetoothScan => bluetooth::scan_test(seconds.unwrap_or(10)),
         Test::AudioWired | Test::AudioBluetooth => {
