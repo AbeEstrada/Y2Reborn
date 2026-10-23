@@ -243,6 +243,15 @@ fn execute(task: PlatformTask) -> Reply {
             );
         }
         InternalStorageSetup => call(&["internal-media", "setup", "--confirm-shown"], 300),
+        // A large card can take minutes; the platform bounds it at 30.
+        SdRepair => {
+            return Reply::Operation(
+                task,
+                call(&["media", "repair"], 1900)
+                    .map(|v| sd_repair_result(&v))
+                    .map_err(|e| sd_repair_error(&e)),
+            )
+        }
         StorageBenchmark => call(
             &[
                 "bench-storage",
@@ -350,6 +359,72 @@ pub fn report_state(value: &Value) -> Option<ReportState> {
                     .collect()
             }),
     })
+}
+
+/// What `y2-platform media repair` changed, as facts for Latest Result.
+fn sd_repair_result(v: &Value) -> OperationResult {
+    let changed = &v["repair"]["changed"];
+    let count = |key: &str| changed[key].as_u64().unwrap_or(0);
+    let mut facts = vec![Fact::new("State", shown(&v["state"]))];
+    for (label, key) in [
+        ("Files shortened", "files_shortened"),
+        ("Entries removed", "entries_removed"),
+        ("Shared parts split", "shared_chains"),
+    ] {
+        facts.push(Fact::new(label, count(key).to_string()));
+    }
+    facts.push(Fact::new(
+        "Copy of the card's tables",
+        if v["repair"]["backup"]["saved"] == true {
+            "Saved on the player"
+        } else {
+            "Not saved"
+        },
+    ));
+    OperationResult {
+        succeeded: v["state"] == "Ready",
+        facts,
+    }
+}
+
+/// `y2-platform media repair` refusals in the owner's words.
+fn sd_repair_error(error: &str) -> String {
+    if error.contains("charger_or_battery") {
+        "Connect a charger first, or charge to at least 30 %."
+    } else if error.contains("usb") {
+        "Unplug the player from the computer first."
+    } else if error.contains("unmount_busy") || error.contains("busy") {
+        "The SD card is still in use. Stop the music, then try again."
+    } else if error.contains("not_marked") {
+        "The SD card doesn't need a repair."
+    } else if error.contains("card_changed") {
+        "The SD card was changed. Try again."
+    } else if error.contains("not_repairable") {
+        "This card can't be repaired on the player. Check it on a computer."
+    } else if error.contains("timed_out") || error.contains("timeout") {
+        "The repair took too long. Check the card on a computer."
+    } else if error.contains("in_progress") {
+        "The SD card is busy. Try again in a moment."
+    } else if error.contains("errors_left") {
+        "Some errors are left. Check the card on a computer."
+    } else {
+        "The SD card couldn't be repaired. Check it on a computer."
+    }
+    .into()
+}
+
+/// The SD card is read-only between writes (Y2Linux 8.27): open (or end)
+/// Reborn's write window around a change to a file on it. Off the platform,
+/// and on a damaged card (refused), the write is simply tried.
+pub fn sd_write_window(open: bool) -> Result<(), String> {
+    if !crate::storage::platform_manages_media() {
+        return Ok(());
+    }
+    let mut args = vec!["media", "write", "--holder", "reborn", "--seconds", "60"];
+    if !open {
+        args.push("--release");
+    }
+    call(&args, 15).map(|_| ())
 }
 
 /// User-language text for a platform failure code. Raw service text is never
@@ -492,6 +567,14 @@ pub fn storage(status: &Value) -> StorageState {
     let sd = match volume(status, "/media/sd") {
         None => SdCard::Unknown,
         Some(v) if v["state"] == "Ready" => SdCard::Ready(space(&v)),
+        // Mounted read-only by the platform after its check (Y2Linux 8.27).
+        Some(v) if v["state"] == "Degraded" && v["reason"] == "read_only" => {
+            match v["read_only_reason"].as_str() {
+                Some("filesystem_errors") => SdCard::ReadOnly(space(&v)),
+                Some("check_timed_out") => SdCard::Unchecked(space(&v)),
+                _ => SdCard::Error,
+            }
+        }
         Some(v) => match v["reason"].as_str() {
             // The platform's own vocabulary for "no card inserted".
             Some(r)
@@ -1510,6 +1593,33 @@ mod tests {
     }
 
     #[test]
+    fn sd_repair_answers_are_counts_and_plain_words() {
+        let done = json!({"state":"Ready","repair":{"changed":{"files_shortened":2,"entries_removed":1,
+            "shared_chains":0},"backup":{"saved":true}}});
+        let result = sd_repair_result(&done);
+        assert!(result.succeeded);
+        assert!(result
+            .facts
+            .iter()
+            .any(|f| f.label == "Files shortened" && f.value == "2"));
+        assert!(result
+            .facts
+            .iter()
+            .any(|f| f.value == "Saved on the player"));
+        for (failure, words) in [
+            ("repair_needs_charger_or_battery", "charger"),
+            ("usb_release_failed", "computer"),
+            ("unmount_busy", "Stop the music"),
+            ("card_not_marked_for_repair", "doesn't need"),
+            ("errors_left", "errors are left"),
+            ("repair_timed_out", "too long"),
+            ("something_new", "couldn't be repaired"),
+        ] {
+            assert!(sd_repair_error(failure).contains(words), "{failure}");
+        }
+    }
+
+    #[test]
     fn typed_projection_presents_states_not_platform_fields() {
         let s = snapshot(&status(), &caps());
         assert!(s.observed);
@@ -1535,6 +1645,41 @@ mod tests {
             snapshot(&refused, &caps()).storage.sd,
             SdCard::CheckTimedOut
         );
+        // Y2Linux 8.27: mounted read-only after the check; a protected healthy
+        // card is Ready (writable only inside a window).
+        for (fields, expected) in [
+            (
+                json!({"state":"Degraded","reason":"read_only","read_only_reason":"filesystem_errors"}),
+                "ReadOnly",
+            ),
+            (
+                json!({"state":"Degraded","reason":"read_only","read_only_reason":"check_timed_out"}),
+                "Unchecked",
+            ),
+            (
+                json!({"state":"Degraded","reason":"read_only","read_only_reason":"mounted_read_only"}),
+                "Error",
+            ),
+            (
+                json!({"state":"Ready","reason":null,"writable":false}),
+                "Ready",
+            ),
+        ] {
+            for v in refused["storage"]["volumes"].as_array_mut().unwrap() {
+                if v["path"] == "/media/sd" {
+                    *v = json!({"path":"/media/sd","available_bytes":5_u64,"free_bytes":5_u64,"total_bytes":9_u64});
+                    for (k, value) in fields.as_object().unwrap() {
+                        v[k] = value.clone();
+                    }
+                }
+            }
+            let sd = snapshot(&refused, &caps()).storage.sd;
+            assert!(format!("{sd:?}").starts_with(expected), "{sd:?}");
+            assert_eq!(
+                sd.repairable(),
+                matches!(expected, "ReadOnly" | "Unchecked")
+            );
+        }
         assert_eq!(s.usb, UsbTransfer::Developer);
         assert_eq!(
             s.update.phase,

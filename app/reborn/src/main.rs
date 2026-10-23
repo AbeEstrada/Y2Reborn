@@ -1985,6 +1985,23 @@ impl Runtime {
                 {
                     return Err("Unplug from the computer first".into());
                 }
+                if task == reborn_core::PlatformTask::SdRepair {
+                    // The card is unmounted for the repair: nothing may hold a
+                    // song or its folder open on it.
+                    let on_card = self.model.current().is_some_and(|t| {
+                        self.model.sources.iter().any(|s| {
+                            s.id == t.source_id
+                                && matches!(s.kind, reborn_core::MediaSource::SdCard(_))
+                        })
+                    });
+                    if on_card {
+                        if self.model.playback == PlaybackState::Playing {
+                            self.pause();
+                        }
+                        self.release_hold_with(true);
+                        self.playback.stop(self.model.generation);
+                    }
+                }
                 if task == reborn_core::PlatformTask::SleepRequest {
                     self.sleep_attempt = Some(Instant::now());
                     use reborn_core::platform::{SleepPhase, SleepProblem, SleepState};
@@ -2916,7 +2933,19 @@ impl Runtime {
                 let health = p.snapshot.health;
                 let health_section = p.snapshot.section("health").cloned();
                 let firmware_before = p.snapshot.radio_firmware;
+                let sd_before = p.snapshot.storage.sd;
                 p.snapshot = *snapshot;
+                // Y2Linux 8.27: a card with errors plays read-only; say so once
+                // when it arrives (Settings > Storage offers the repair).
+                if matches!(
+                    p.snapshot.storage.sd,
+                    reborn_core::platform::SdCard::ReadOnly(_)
+                ) && !matches!(sd_before, reborn_core::platform::SdCard::ReadOnly(_))
+                {
+                    self.ui.flash(
+                        "SD card has errors · Playing only. Repair it in Settings > Storage",
+                    );
+                }
                 // The status call took ≈1.6 s: the live cable state is newer.
                 let usb = client::usb_now();
                 if usb != reborn_core::platform::UsbTransfer::Unknown {
@@ -3106,6 +3135,25 @@ impl Runtime {
                                 // Internal Storage.
                                 self.ui.flash("Internal Storage is ready. Restarting…");
                                 restart_after_setup = true;
+                            }
+                            SdRepair => {
+                                let shortened = p
+                                    .result
+                                    .as_ref()
+                                    .and_then(|r| {
+                                        r.facts.iter().find(|f| f.label == "Files shortened")
+                                    })
+                                    .and_then(|f| f.value.parse::<u64>().ok())
+                                    .unwrap_or(0);
+                                self.ui.flash(match shortened {
+                                    0 => "SD card repaired".to_owned(),
+                                    1 => {
+                                        "SD card repaired · 1 damaged file was shortened".to_owned()
+                                    }
+                                    n => format!(
+                                        "SD card repaired · {n} damaged files were shortened"
+                                    ),
+                                });
                             }
                             SetClock(_) => {
                                 // A time set by hand is never trusted: read

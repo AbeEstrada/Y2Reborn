@@ -275,7 +275,22 @@ pub enum SdCard {
     /// Inserted, but its filesystem check did not finish in time (a slow or
     /// very full card): not damage, and inserting it again checks it again.
     CheckTimedOut,
+    /// Mounted read-only because its check found errors (Y2Linux 8.27): the
+    /// music plays, nothing is written to it; Repair makes it writable again.
+    ReadOnly(VolumeSpace),
+    /// Mounted read-only because its check did not finish in time.
+    Unchecked(VolumeSpace),
     Ready(VolumeSpace),
+}
+
+impl SdCard {
+    /// The player can repair it (Settings → Storage → Repair SD Card).
+    pub fn repairable(&self) -> bool {
+        matches!(
+            self,
+            Self::ReadOnly(_) | Self::Unchecked(_) | Self::NeedsRepair
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

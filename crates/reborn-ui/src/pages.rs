@@ -1375,6 +1375,22 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
             .with_kind(RowKind::Chevron),
         );
     }
+    // Y2Linux 8.27: a card whose check found errors plays read-only; the
+    // owner may repair it here (it can shorten or remove damaged files).
+    if s.storage.sd.repairable() {
+        page.rows.push(
+            row(
+                "Repair SD Card",
+                "confirm:sd_repair",
+                match s.storage.sd {
+                    SdCard::NeedsRepair => "Not playing · Has errors",
+                    SdCard::Unchecked(_) => "Not checked yet · Playing only",
+                    _ => "Has errors · Playing only",
+                },
+            )
+            .with_kind(RowKind::Chevron),
+        );
+    }
     page = page.fact(
         "Internal Storage",
         match s.internal_setup {
@@ -1392,6 +1408,8 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
             SdCard::Error => "SD card error · Reinsert the card".into(),
             SdCard::NeedsRepair => "Needs repair · Check it on a computer".into(),
             SdCard::CheckTimedOut => "Check took too long · Insert it again".into(),
+            SdCard::ReadOnly(_) => "Has errors · Playing only".into(),
+            SdCard::Unchecked(_) => "Not checked · Playing only".into(),
             SdCard::Unknown => "Checking…".into(),
         },
     );

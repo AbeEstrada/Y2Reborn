@@ -58,8 +58,22 @@ impl Worker {
             .name("playlists".into())
             .spawn(move || {
                 while let Ok(job) = queue.recv() {
+                    // Y2Linux 8.27: the SD card is read-only between writes;
+                    // a change to a playlist on it runs inside a write window.
+                    let window = on_card(&job)
+                        && reborn_platform::client::sd_write_window(true).is_ok();
                     // A bug on one odd file costs that job, not the player.
                     let reply = isolated(|| run(job)).unwrap_or_else(Reply::Failed);
+                    if window {
+                        let _ = reborn_platform::client::sd_write_window(false);
+                    }
+                    let reply = match reply {
+                        Reply::Failed(error) if error.contains("os error 30") => Reply::Failed(
+                            "The SD card can't be changed right now. If it has errors, repair it in Settings > Storage."
+                                .into(),
+                        ),
+                        reply => reply,
+                    };
                     if replies_tx.send(reply).is_err() {
                         return;
                     }
@@ -71,6 +85,17 @@ impl Worker {
     pub fn send(&self, job: Job) {
         let _ = self.jobs.send(job);
     }
+}
+
+/// The job writes on the SD card (the platform's mount point).
+fn on_card(job: &Job) -> bool {
+    let path = match job {
+        Job::Refresh(_) => return false,
+        Job::Create { dir, .. } => dir,
+        Job::Edit { path, .. } | Job::Rename { path, .. } => path,
+        Job::Duplicate(path) | Job::Delete(path) => path,
+    };
+    path.starts_with("/media/sd")
 }
 
 fn run(job: Job) -> Reply {
@@ -163,6 +188,25 @@ fn copy_name(dir: &Path, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_writes_on_the_sd_card_take_a_write_window() {
+        let sd = PathBuf::from("/media/sd/Playlists/Road.m3u8");
+        let internal = PathBuf::from("/media/internal/music/Playlists/Road.m3u8");
+        assert!(on_card(&Job::Delete(sd.clone())));
+        assert!(on_card(&Job::Rename {
+            path: sd.clone(),
+            name: "x".into()
+        }));
+        assert!(on_card(&Job::Duplicate(sd)));
+        assert!(!on_card(&Job::Delete(internal.clone())));
+        assert!(!on_card(&Job::Create {
+            dir: internal,
+            name: "x".into(),
+            entries: vec![]
+        }));
+        assert!(!on_card(&Job::Refresh(vec![PathBuf::from("/media/sd")])));
+    }
 
     #[test]
     fn edits_create_favorites_duplicate_rename_and_delete_through_the_worker() {

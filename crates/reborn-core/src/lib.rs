@@ -863,6 +863,9 @@ pub enum PlatformTask {
     NetworkCheck,
     /// Set up Internal Storage over the old storage the platform reported waiting (erases it).
     InternalStorageSetup,
+    /// Repair the SD card the platform marked (read-only with errors, or
+    /// refused); damaged files may be shortened or removed.
+    SdRepair,
     /// Error reports on (true) or off; off also drops the waiting reports.
     ReportEnable(bool),
     /// A new random install ID.

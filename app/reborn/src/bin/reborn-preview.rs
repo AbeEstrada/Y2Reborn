@@ -885,6 +885,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.navigation.focus = 0;
         m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::NeedsRepair;
     });
+    case!("32-storage-sd-errors", at(Screen::Storage, ""), |_, m| {
+        m.navigation.focus = 1;
+        m.platform.snapshot.storage.sd =
+            reborn_core::platform::SdCard::ReadOnly(reborn_core::platform::VolumeSpace {
+                free_bytes: Some(9_700_000_000),
+                total_bytes: Some(62_400_000_000),
+                ..Default::default()
+            });
+    });
+    case!(
+        "32-storage-sd-repair-question",
+        at(Screen::Storage, ""),
+        |_, m| {
+            m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::ReadOnly(
+                reborn_core::platform::VolumeSpace::default(),
+            );
+            m.navigation.modal = Some(reborn_core::Modal::Confirm(
+                reborn_core::ConfirmAction::Platform(reborn_core::PlatformTask::SdRepair),
+            ));
+        }
+    );
     case!("33-about", at(Screen::Update, ""), |_, m| {
         m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Available {
             version: "1.1.0".into(),

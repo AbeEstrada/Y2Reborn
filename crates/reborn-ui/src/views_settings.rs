@@ -757,7 +757,9 @@ fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive:
         (
             "SD Card",
             match &snapshot.storage.sd {
-                SdCard::Ready(space) => Some(space),
+                SdCard::Ready(space) | SdCard::ReadOnly(space) | SdCard::Unchecked(space) => {
+                    Some(space)
+                }
                 _ => None,
             },
             0x3CC878FF,

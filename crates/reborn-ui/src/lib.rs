@@ -1496,6 +1496,8 @@ impl Ui {
                                 m.platform.snapshot.internal_setup,
                                 reborn_core::platform::InternalSetup::Waiting { .. }
                             ),
+                            // Only a card the platform marked (read-only or refused).
+                            PlatformTask::SdRepair => m.platform.snapshot.storage.sd.repairable(),
                             _ => true,
                         };
                 }
@@ -3236,6 +3238,7 @@ fn platform_task(name: &str) -> PlatformTask {
         "library_benchmark" => LibraryBenchmark,
         "network" => NetworkCheck,
         "internal_setup" => InternalStorageSetup,
+        "sd_repair" => SdRepair,
         _ => Refresh,
     }
 }
@@ -3250,15 +3253,19 @@ fn confirm_action(name: &str) -> Option<ConfirmAction> {
         "forget_bluetooth" => ConfirmAction::ForgetAllBluetooth,
         "clear_cache" => ConfirmAction::ClearCache,
         "update_apply" | "update_cancel" | "update_rollback" | "storage_benchmark"
-        | "library_benchmark" | "internal_setup" => ConfirmAction::Platform(platform_task(name)),
+        | "library_benchmark" | "internal_setup" | "sd_repair" => {
+            ConfirmAction::Platform(platform_task(name))
+        }
         "report_new_id" => ConfirmAction::Platform(PlatformTask::ReportNewId),
         _ => return None,
     })
 }
 
-/// Red (cannot be undone): everything except platform checks, and erasing the old storage.
+/// Red (cannot be undone): everything except platform checks; erasing the old
+/// storage and repairing the SD card (it may shorten damaged files) are red.
 pub(crate) fn confirm_is_danger(action: ConfirmAction) -> bool {
-    !matches!(action, ConfirmAction::Platform(task) if task != PlatformTask::InternalStorageSetup)
+    !matches!(action, ConfirmAction::Platform(task)
+        if !matches!(task, PlatformTask::InternalStorageSetup | PlatformTask::SdRepair))
 }
 
 fn confirm_label(action: ConfirmAction) -> &'static str {
@@ -3277,6 +3284,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::Platform(PlatformTask::UpdateCancel) => "Cancel Update",
         ConfirmAction::Platform(PlatformTask::UpdateRollback) => "Restore",
         ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => "Set Up Now",
+        ConfirmAction::Platform(PlatformTask::SdRepair) => "Repair",
         ConfirmAction::Platform(PlatformTask::ReportNewId) => "New ID",
         ConfirmAction::ReportsQuestion => "Send Reports",
         ConfirmAction::Platform(_) => "Run",
@@ -3338,6 +3346,10 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::Platform(PlatformTask::InternalStorageSetup) => (
             "Set Up Internal Storage?",
             "You get 5.4 GB for music. The old Innioasis storage and every file on it are erased: copy them to a computer first (the Old Storage drive). The player restarts afterwards.",
+        ),
+        ConfirmAction::Platform(PlatformTask::SdRepair) => (
+            "Repair SD Card?",
+            "Fixes the card so music can be added again. Damaged files may be shortened or removed; the rest stays. Keep the player charging or above 30 %.",
         ),
         ConfirmAction::Platform(PlatformTask::ReportNewId) => (
             "Make a New Install ID?",

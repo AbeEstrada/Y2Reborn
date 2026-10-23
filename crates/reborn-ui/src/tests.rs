@@ -3937,6 +3937,58 @@ fn internal_storage_setup_is_offered_only_for_a_waiting_old_library_and_confirme
 }
 
 #[test]
+fn a_card_with_errors_plays_and_offers_a_confirmed_repair() {
+    use reborn_core::platform::{SdCard, VolumeSpace};
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Storage);
+    m.platform.snapshot.observed = true;
+    m.platform.snapshot.storage.sd = SdCard::Ready(VolumeSpace::default());
+    assert!(!ui
+        .rows(&m, &[])
+        .iter()
+        .any(|r| r.key == "confirm:sd_repair"));
+    m.platform.snapshot.storage.sd = SdCard::ReadOnly(VolumeSpace::default());
+    assert!(visible_text(&ui, &m).contains("Has errors · Playing only"));
+    let row = ui
+        .rows(&m, &[])
+        .into_iter()
+        .find(|r| r.key == "confirm:sd_repair")
+        .expect("Repair SD Card row");
+    assert_eq!(row.label, "Repair SD Card");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "confirm:sd_repair"),
+        Effect::None
+    );
+    let (title, body) = ui.modal_copy(&m);
+    assert_eq!(title, "Repair SD Card?");
+    assert!(body.contains("shortened or removed") && body.contains("30 %"));
+    assert!(crate::confirm_is_danger(ConfirmAction::Platform(
+        PlatformTask::SdRepair
+    )));
+    // Cancel has the focus; Repair runs the platform task.
+    assert_eq!(m.navigation.modal_focus, 0);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::SdRepair)
+    );
+    // A stale question cannot run once the card is fine (or gone).
+    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::Platform(
+        PlatformTask::SdRepair,
+    )));
+    m.platform.snapshot.storage.sd = SdCard::Ready(VolumeSpace::default());
+    assert!(!ui.modal_rows_public(&m, &[])[1].enabled);
+    // A refused card (ext4 with errors) and an unfinished check are repairable too.
+    m.navigation.modal = None;
+    m.platform.snapshot.storage.sd = SdCard::Unchecked(VolumeSpace::default());
+    assert!(visible_text(&ui, &m).contains("Not checked"));
+    assert!(ui
+        .rows(&m, &[])
+        .iter()
+        .any(|r| r.key == "confirm:sd_repair"));
+}
+
+#[test]
 fn radio_firmware_page_names_the_right_place_and_a_space_refusal() {
     use reborn_core::platform::RadioFirmware;
     let ui = radios();
