@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.27 — Y2Linux 1.0 Beta 8.27 (Baseline 126), 2026-10-23 (latest): SD cards with errors
+## 1.0.0-beta.8.28 — Y2Linux 1.0 Beta 8.28 (Baseline 127), 2026-10-23 (latest): Wi-Fi wrong password (#20)
+
+Published as `baseline-127` (Reborn `e5b54fb` + identity `f6eb0b2`, sequence 9200), installed on the owner's player
+first. #20: a wrong password was saved at once and never said. Now the Wi-Fi worker tries a join before saving it
+(`PendingJoin`: ATTACH, SELECT_NETWORK, the supplicant's events; kept only on connect, older entries of the same name
+removed, the other saved networks enabled again; a failed try removed and the previous network back). A wrong typed
+password reopens the keyboard with the text and *Wrong password*; rows say *Checking password…* / *Wrong password*; a
+saved network whose password failed asks for the new one; **Change Password** in its menu; `rebornctl test wifi-join`
+and `wifi-join-wrong`.
+
+## 1.0.0-beta.8.27 — Y2Linux 1.0 Beta 8.27 (Baseline 126), 2026-10-23: SD cards with errors
 
 Published as `baseline-126` (Reborn `c1e60d6` + identity `4947352`, sequence 9100), installed on the owner's player
 first. The platform mounts a FAT32/exFAT card whose check finds errors read-only: `SdCard::ReadOnly` (or `Unchecked`
