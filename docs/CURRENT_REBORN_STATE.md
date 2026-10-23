@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.24 — Y2Linux 1.0 Beta 8.24 (Baseline 123), 2026-10-23 (latest): wired output at 44.1 kHz only (#52)
+## 1.0.0-beta.8.25 — Y2Linux 1.0 Beta 8.25 (Baseline 124), 2026-10-23 (latest): version only (#52/#54 kernel fix)
+
+Published as `baseline-124` (Reborn `40386bc`, sequence 8901). No Reborn code change: 8.25 changes how the kernel starts
+the DAC's crystal (#52, #54; see the Y2Linux Beta 8.25 report).
+
+## 1.0.0-beta.8.24 — Y2Linux 1.0 Beta 8.24 (Baseline 123), 2026-10-23: wired output at 44.1 kHz only (#52)
 
 Published as `baseline-123` (Reborn `e199d9c`, sequence 8800), installed on the owner's player before publishing. #52:
 every failure was a 48 kHz start through the DAC's PLL, which stock never runs (stock output: 44.1 kHz only). The wired
