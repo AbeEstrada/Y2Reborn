@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.28 — Y2Linux 1.0 Beta 8.28 (Baseline 127), 2026-10-23 (latest): Wi-Fi wrong password (#20)
+## 1.0.0-beta.8.29 — Y2Linux 1.0 Beta 8.29 (Baseline 128), 2026-10-24 (latest): charging fix (platform only)
+
+Published as `baseline-128` (identity `e58980c`, sequence 9300). No Reborn code change: the release fixes charging on
+players whose PMIC has no die calibration fuse (Y2Linux kernel, report 09888d70).
+
+## 1.0.0-beta.8.28 — Y2Linux 1.0 Beta 8.28 (Baseline 127), 2026-10-23: Wi-Fi wrong password (#20)
 
 Published as `baseline-127` (Reborn `e5b54fb` + identity `f6eb0b2`, sequence 9200), installed on the owner's player
 first. #20: a wrong password was saved at once and never said. Now the Wi-Fi worker tries a join before saving it
