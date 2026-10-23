@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.26 — Y2Linux 1.0 Beta 8.26 (Baseline 125), 2026-10-23 (latest): version only (platform report fixes)
+## 1.0.0-beta.8.27 — Y2Linux 1.0 Beta 8.27 (Baseline 126), 2026-10-23 (latest): SD cards with errors
+
+Published as `baseline-126` (Reborn `c1e60d6` + identity `4947352`, sequence 9100), installed on the owner's player
+first. The platform mounts a FAT32/exFAT card whose check finds errors read-only: `SdCard::ReadOnly` (or `Unchecked`
+after an unfinished check) plays, Settings → Storage says *Has errors · Playing only* and offers **Repair SD Card**
+(red confirmation; `PlatformTask::SdRepair` stops playback from the card, runs `y2-platform media repair` and names the
+outcome); a notice when such a card comes in. A healthy card is read-only between writes: playlist changes on the SD
+run inside the platform's write window (`client::sd_write_window`), and a read-only refusal is said plainly.
+
+## 1.0.0-beta.8.26 — Y2Linux 1.0 Beta 8.26 (Baseline 125), 2026-10-23: version only (platform report fixes)
 
 Published as `baseline-125` (Reborn `404edb3`, sequence 9000). No Reborn code change: 8.26 fixes platform findings
 F35–F41 from uploaded reports (battery start on a charger, Wi-Fi switch-on after a sleep with Wi-Fi off, charging,
