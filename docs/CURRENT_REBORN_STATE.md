@@ -1,6 +1,12 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.25 — Y2Linux 1.0 Beta 8.25 (Baseline 124), 2026-10-23 (latest): version only (#52/#54 kernel fix)
+## 1.0.0-beta.8.26 — Y2Linux 1.0 Beta 8.26 (Baseline 125), 2026-10-23 (latest): version only (platform report fixes)
+
+Published as `baseline-125` (Reborn `404edb3`, sequence 9000). No Reborn code change: 8.26 fixes platform findings
+F35–F41 from uploaded reports (battery start on a charger, Wi-Fi switch-on after a sleep with Wi-Fi off, charging,
+shutdown trail, report evidence; see the Y2Linux Beta 8.26 report).
+
+## 1.0.0-beta.8.25 — Y2Linux 1.0 Beta 8.25 (Baseline 124), 2026-10-23: version only (#52/#54 kernel fix)
 
 Published as `baseline-124` (Reborn `40386bc`, sequence 8901). No Reborn code change: 8.25 changes how the kernel starts
 the DAC's crystal (#52, #54; see the Y2Linux Beta 8.25 report).
