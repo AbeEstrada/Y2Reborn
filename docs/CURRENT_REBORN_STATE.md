@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.30 — Y2Linux 1.0 Beta 8.30 (Baseline 129), 2026-10-24 (latest): GitHub triage fixes
+## 1.0.0-beta.8.31 — Y2Linux 1.0 Beta 8.31 (Baseline 130), 2026-10-24 (latest): left/right balance
+
+Published as `baseline-130` (Reborn `b12a1ee` + identity `b07cb9d`, sequence 9500), installed on the owner's player
+first. Settings → Sound → Balance (user request: one ear hears less): `settings.balance` -10..=10 dB (negative = left
+louder), applied per channel at the live sink gain (`VolumeRamp::balance`) by lowering the other side, so it never
+clips; jack and Bluetooth, live. The list opens on the current value; the Sound page drops its first row once the
+focus reaches Balance. Previews 29d, 29e.
+
+## 1.0.0-beta.8.30 — Y2Linux 1.0 Beta 8.30 (Baseline 129), 2026-10-24: GitHub triage fixes
 
 Published as `baseline-129` (Reborn `20a493b` + seek fix `44481c3`, sequence 9401), installed on the owner's player
 first. Music queues never include audiobook parts (`track_matches` requires `is_music`, `play_index` too; Y2Linux #58);
