@@ -5028,6 +5028,12 @@ fn run() -> Result<(), String> {
                 }
                 playback::PlaybackEvent::Core(event) => {
                     if let Event::Position { generation, ms } = event {
+                        // A pending seek's target is the position: a late
+                        // report of the held stream would undo it (Previous
+                        // after 3 s kept playing on, 8.30 device test).
+                        if rt.seek_until.is_some() {
+                            continue;
+                        }
                         if generation == rt.model.generation && ms != rt.model.position_ms {
                             rt.dirty.mark_persistence();
                             if ms / 1000 != rt.model.position_ms / 1000
