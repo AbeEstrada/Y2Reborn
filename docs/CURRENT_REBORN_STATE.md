@@ -1,6 +1,17 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.29 — Y2Linux 1.0 Beta 8.29 (Baseline 128), 2026-10-24 (latest): charging fix (platform only)
+## 1.0.0-beta.8.30 — Y2Linux 1.0 Beta 8.30 (Baseline 129), 2026-10-24 (latest): GitHub triage fixes
+
+Published as `baseline-129` (Reborn `20a493b` + seek fix `44481c3`, sequence 9401), installed on the owner's player
+first. Music queues never include audiobook parts (`track_matches` requires `is_music`, `play_index` too; Y2Linux #58);
+a song picked on Songs is followed by the next row (`filtered_indices` uses the catalog for Songs; #21); Previous more
+than 3 s into a song restarts it (#21), and a pending seek ignores late position reports (the restart kept playing on
+in the device test); headphones with AVRCP absolute volume follow `settings.volume` through BlueZ's transport `Volume`
+with the software level at full, changes on the headphones come back, `wired_volume` keeps the wired level and the
+first takeover never gets louder (#22, not run with real headphones); a toast too long for one line takes two
+(16 were cut, Y2Linux #55). Preview 44b.
+
+## 1.0.0-beta.8.29 — Y2Linux 1.0 Beta 8.29 (Baseline 128), 2026-10-24: charging fix (platform only)
 
 Published as `baseline-128` (identity `e58980c`, sequence 9300). No Reborn code change: the release fixes charging on
 players whose PMIC has no die calibration fuse (Y2Linux kernel, report 09888d70).
