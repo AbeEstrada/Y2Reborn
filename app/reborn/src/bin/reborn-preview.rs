@@ -1180,6 +1180,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .flash("SD card removed"));
     case!("44-songs-added", at(Screen::Tracks, ""), |ui, _| ui
         .flash("12 new songs added"));
+    case!("44b-long-toast", at(Screen::Tracks, ""), |ui, _| ui.flash(
+        "Couldn't reach the update server. Try again in a moment."
+    ));
     case!("45-empty-library", at(Screen::Albums, ""), |_, m| {
         m.library.tracks.clear();
         m.queue.clear();

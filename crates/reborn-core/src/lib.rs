@@ -934,6 +934,14 @@ pub struct ScanSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub volume: u8,
+    /// The wired volume, kept while Bluetooth headphones with their own
+    /// (AVRCP absolute) volume follow `volume` (Y2Reborn #22).
+    #[serde(default)]
+    pub wired_volume: Option<u8>,
+    /// Headphones have followed `volume` before: their own level is the
+    /// whole loudness, Reborn's software level no longer applies to them.
+    #[serde(default)]
+    pub bluetooth_absolute_volume: bool,
     #[serde(default)]
     pub codec_preference: CodecPreference,
     pub screen_timeout_seconds: u32,
@@ -1117,6 +1125,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             volume: 35,
+            wired_volume: None,
+            bluetooth_absolute_volume: false,
             codec_preference: CodecPreference::Auto,
             screen_timeout_seconds: 60,
             music_directory: "/data/music".into(),

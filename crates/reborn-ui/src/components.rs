@@ -803,22 +803,31 @@ pub fn toast(c: &mut Canvas, message: &str, tone: Tone) {
         }
     }
     let start = c.draw.len();
-    let h = 30.;
-    let w = (text::width(Face::S15, message) + 60.).min(WIDTH - 100.);
+    // A message too long for one line takes a second one instead of being
+    // cut ("Couldn't reach the update server. Try again in a m…", #55).
+    let lines = text::wrap(Face::S15, message, WIDTH - 154., 2);
+    let h = 10. + 20. * lines.len().max(1) as f32;
+    let w = if lines.len() > 1 {
+        WIDTH - 100.
+    } else {
+        (text::width(Face::S15, message) + 60.).min(WIDTH - 100.)
+    };
     let x = (WIDTH - w) / 2.;
     let y = 3.;
-    c.rrect(x, y, w, h, h / 2., 0x1A1D24FA);
-    c.rrect_outline(x, y, w, h, h / 2., 1., color::GLASS);
+    c.rrect(x, y, w, h, 15., 0x1A1D24FA);
+    c.rrect_outline(x, y, w, h, 15., 1., color::GLASS);
     let (icon, tint) = toast_icon(message, tone);
     c.icon(icon, x + 22., y + h / 2., 18., tint);
-    c.text_mid(
-        x + 40.,
-        y + h / 2.,
-        w - 54.,
-        message,
-        Face::S15,
-        color::TEXT,
-    );
+    for (i, line) in lines.iter().enumerate() {
+        c.text_mid(
+            x + 40.,
+            y + 15. + 20. * i as f32,
+            w - 54.,
+            line,
+            Face::S15,
+            color::TEXT,
+        );
+    }
     let end = c.draw.len();
     c.mark_moving(Moving::Toast { start, end });
 }

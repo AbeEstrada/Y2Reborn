@@ -39,6 +39,13 @@ pub struct Device {
     pub trusted: bool,
     pub connected: bool,
     pub audio: bool,
+    /// The headphones' own volume (AVRCP absolute volume, 0..=127), only
+    /// when they report one: BlueZ's A2DP transport `Volume` (Y2Reborn #22).
+    #[serde(default)]
+    pub volume: Option<u8>,
+    /// That transport's object, where a new volume is set.
+    #[serde(default)]
+    pub transport: Option<String>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Status {
@@ -216,6 +223,11 @@ pub enum Command {
     Codec {
         address: String,
         preference: reborn_core::CodecPreference,
+    },
+    /// The headphones' own volume (0..=127) for the device at this path.
+    Volume {
+        device: String,
+        volume: u8,
     },
     Stop,
 }
@@ -622,7 +634,20 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
         .bluez_owner
         .as_deref()
         .ok_or("BlueZ owner unavailable")?;
+    // Device path -> (transport path, volume) of its A2DP transports that
+    // carry a volume; BlueZ shows it only once the headphones reported one.
+    let mut volumes = HashMap::new();
     for (path, interfaces) in objects(c, owner)? {
+        if let Some(p) = interfaces.get("org.bluez.MediaTransport1") {
+            if let Some(volume) = p
+                .get("Volume")
+                .and_then(|v| v.0.as_u64())
+                .and_then(|v| u8::try_from(v).ok())
+                .filter(|v| *v <= 127)
+            {
+                volumes.insert(text(p, "Device"), (path.to_string(), volume));
+            }
+        }
         if let Some(p) = interfaces.get("org.bluez.Adapter1") {
             if adapter.is_empty() {
                 adapter = path.to_string();
@@ -647,7 +672,15 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
                 trusted: yes(p, "Trusted"),
                 connected: yes(p, "Connected"),
                 audio,
+                volume: None,
+                transport: None,
             });
+        }
+    }
+    for device in &mut state.devices {
+        if let Some((transport, volume)) = volumes.remove(&device.path) {
+            device.transport = Some(transport);
+            device.volume = Some(volume);
         }
     }
     state.bluealsa = state.bluealsa_owner.is_some();
@@ -1471,6 +1504,7 @@ impl Bluetooth {
                                             "org.bluez.Adapter1" => &["Powered", "Discovering"],
                                             "org.bluez.Device1" => &["Alias", "Address", "UUIDs", "Paired", "Bonded", "Trusted", "Connected"],
                                             "org.bluealsa.PCM1" => &["Device", "Transport", "Mode", "Codec", "Format", "Rate", "Channels", "Running"],
+                                            "org.bluez.MediaTransport1" => &["Volume"],
                                             _ => &[],
                                         };
                                         keys.iter().any(|key| changed.contains_key(*key) || invalidated.iter().any(|v| v == key))
@@ -1719,6 +1753,22 @@ impl Bluetooth {
                                 cancel_operations(&c, &operations);
                                 return;
                             }
+                            // The headphones' volume is no operation: no error
+                            // state, no busy wait; a refused step only logs, the
+                            // next one tries again.
+                            if let Command::Volume { device, volume } = &cmd {
+                                if let (Some(owner), Some(transport)) = (
+                                    current.bluez_owner.as_deref(),
+                                    current.devices.iter().find(|d| &d.path == device).and_then(|d| d.transport.as_deref()),
+                                ) {
+                                    let set = c.with_proxy(owner, transport, Duration::from_secs(1))
+                                        .set("org.bluez.MediaTransport1", "Volume", u16::from((*volume).min(127)));
+                                    if let Err(error) = set {
+                                        log.emit(Level::Warn, "bluetooth", "volume_failed", &dbus_error(error), None, json!({"volume":volume}));
+                                    }
+                                }
+                                continue;
+                            }
                             let id = log.correlation();
                             let operation = match &cmd {
                                 Command::Power(_) => "Powered",
@@ -1746,7 +1796,7 @@ impl Bluetooth {
                                 current.error = None;
                             }
                             let result = match cmd {
-                                Command::Stop | Command::Refresh => Ok(()),
+                                Command::Stop | Command::Refresh | Command::Volume { .. } => Ok(()),
                                 Command::Codec { address, preference } => {
                                     match codec_request(&c, &current, &address, preference) {
                                         Ok(session) => { let error=session.reason.clone(); current.codec_policy=Some(session); error.map_or(Ok(()),Err) },

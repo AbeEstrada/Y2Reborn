@@ -2436,8 +2436,9 @@ impl Ui {
         effect
     }
     fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
-        if m.screen == Screen::Album || m.screen == Screen::Search {
-            // The page's own order (album, or search results), not library order.
+        if matches!(m.screen, Screen::Album | Screen::Search | Screen::Tracks) {
+            // The page's own order (album, search results, Songs A to Z),
+            // not library order: Next plays the row below (Y2Reborn #21).
             let mut c = self.catalog.borrow_mut();
             c.ensure(m, tracks);
             return c.rows.iter().filter_map(catalog::Row::track).collect();
@@ -3558,8 +3559,9 @@ fn display_or_unknown(value: &str) -> &str {
 pub(crate) fn library_stamp(tracks: &[Track]) -> (usize, usize) {
     (tracks.as_ptr() as usize, tracks.len())
 }
+/// A music track (never an audiobook part) shown under `filter`.
 fn track_matches(track: &Track, filter: &str) -> bool {
-    if !track.online {
+    if !track.is_music() {
         return false;
     }
     if let Some(value) = filter.strip_prefix("artist:") {

@@ -4361,3 +4361,58 @@ fn cjk_titles_draw_from_the_runtime_glyph_page_or_show_the_replacement() {
         assert!(drawn_text(&quads).contains('\u{FFFD}'));
     }
 }
+
+#[test]
+fn music_queues_skip_audiobooks_and_songs_play_in_list_order() {
+    // Y2Linux #58: audiobook parts never join a music queue; Y2Reborn #21:
+    // a song picked on Songs is followed by the row below it.
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    for (i, t) in m.library.tracks.iter_mut().enumerate() {
+        t.title = format!("Song {}", 8 - i);
+        t.genre = "Jazz".into();
+        t.book = i >= 6;
+    }
+    let rows = ui.rows(&m, &m.library.tracks);
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        ["track:5", "track:4", "track:3", "track:2", "track:1", "track:0"]
+    );
+    match select_key(&mut ui, &mut m, "track:3") {
+        Effect::PlayCollection {
+            selected, members, ..
+        } => {
+            assert_eq!(selected, 3);
+            assert_eq!(members, [5, 4, 3, 2, 1, 0]);
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut m = app(Screen::Albums);
+    for (i, t) in m.library.tracks.iter_mut().enumerate() {
+        t.genre = "Jazz".into();
+        t.book = i >= 6;
+    }
+    m.navigation.filter = "genre:Jazz".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows[0].secondary, "6 songs");
+    match select_key(&mut ui, &mut m, "shuffle:collection") {
+        Effect::PlayCollection {
+            members, shuffle, ..
+        } => {
+            assert!(shuffle);
+            assert_eq!(members, [0, 1, 2, 3, 4, 5]);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_long_message_takes_two_lines_instead_of_being_cut() {
+    // Y2Linux #55 (recovery screen) had the same fault in Reborn's toasts.
+    let mut ui = radios();
+    let m = app(Screen::Tracks);
+    ui.flash("Couldn't reach the update server. Try again in a moment.");
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(text.contains("Couldn") && text.contains("moment.") && !text.contains('…'));
+}

@@ -41,6 +41,56 @@ use std::{
 const HOLD_LIMIT: Duration = Duration::from_secs(180);
 /// Seek steps closer together than this are one seek.
 const SEEK_SETTLE: Duration = Duration::from_millis(350);
+/// Previous restarts the song after this far into it (Y2Player, iPod).
+const RESTART_SONG_AFTER_MS: u64 = 3_000;
+/// Headphone volume reports this soon after the player set it are its echo
+/// (headphones round to their own steps), not a change on the headphones.
+const BT_VOLUME_ECHO: Duration = Duration::from_secs(1);
+
+/// Bluetooth headphones that report their own volume (AVRCP absolute
+/// volume) follow the player's volume, and Reborn's software level stays
+/// at full for them; others keep the software level (Y2Reborn #22).
+#[derive(Default)]
+struct BtVolume {
+    /// The headphones (device path) whose level `settings.volume` is.
+    device: Option<String>,
+    /// Their last reported level, 0..=127.
+    reported: Option<u8>,
+    /// When the player last set it.
+    sent: Option<Instant>,
+    /// A level the full command queue refused; sent again next tick.
+    unsent: bool,
+}
+fn avrcp_to_percent(volume: u8) -> u8 {
+    ((u32::from(volume.min(127)) * 100 + 63) / 127) as u8
+}
+fn percent_to_avrcp(volume: u8) -> u8 {
+    ((u32::from(volume.min(100)) * 127 + 50) / 100) as u8
+}
+/// The headphones' level when they take the volume over: their level times
+/// the software level they played at, so nothing gets louder.
+fn takeover_level(reported: u8, software: u8) -> u8 {
+    ((u16::from(reported.min(127)) * u16::from(software.min(100)) + 50) / 100) as u8
+}
+
+#[cfg(test)]
+mod bt_volume_tests {
+    use super::{avrcp_to_percent, percent_to_avrcp, takeover_level};
+
+    #[test]
+    fn levels_round_trip_and_a_takeover_never_gets_louder() {
+        for percent in 0..=100 {
+            assert_eq!(avrcp_to_percent(percent_to_avrcp(percent)), percent);
+        }
+        assert_eq!((percent_to_avrcp(0), percent_to_avrcp(100)), (0, 127));
+        // Software at 100 % (the #22 report): the headphones' own level stays.
+        assert_eq!(takeover_level(40, 100), 40);
+        // Software at 30 % with the headphones at full: 30 % on the headphones.
+        assert_eq!(takeover_level(127, 30), 38);
+        assert_eq!(takeover_level(0, 100), 0);
+        assert!((0..=127).all(|r| takeover_level(r, 55) <= r));
+    }
+}
 
 /// The step of a held Previous/Next seek (one every 90 ms): small at first,
 /// larger the longer the button is held, at most 1/60 of the song (a fixed
@@ -209,6 +259,7 @@ struct Runtime {
     bluetooth: Option<bluetooth::Bluetooth>,
     wifi_state: wifi::Status,
     bt_state: bluetooth::Status,
+    bt_volume: BtVolume,
     graphics: Option<Renderer>,
     graphics_recovery: graphics_recovery::Recovery,
     /// The last screen wake, until its first frame was presented or retried.
@@ -546,6 +597,7 @@ impl Runtime {
         previous.library.shelf = std::mem::take(&mut self.model.library.shelf);
         previous.library.chapters = std::mem::take(&mut self.model.library.chapters);
         previous.platform = std::mem::take(&mut self.model.platform);
+        self.keep_held_volume(&mut previous);
         if !sink_release_started {
             self.model = previous;
             self.dirty = dirty_before;
@@ -617,18 +669,128 @@ impl Runtime {
         }
     }
     fn abandon_pending_reconfiguration(&mut self) {
-        if let Some(pending) = self.pending_reconfiguration.take() {
+        if let Some(mut pending) = self.pending_reconfiguration.take() {
+            self.keep_held_volume(&mut pending.previous);
             self.model = pending.previous;
             self.dirty = pending.dirty_before;
         }
     }
+    /// A rolled-back model keeps the level headphones hold: it is theirs,
+    /// set on them already, not part of the change that failed.
+    fn keep_held_volume(&self, previous: &mut AppModel) {
+        if self.bt_volume.device.is_some() {
+            let now = &self.model.settings;
+            previous.settings.volume = now.volume;
+            previous.settings.wired_volume = now.wired_volume;
+            previous.settings.bluetooth_absolute_volume = now.bluetooth_absolute_volume;
+        }
+    }
 
+    /// The software level: full for headphones that hold the volume.
+    fn sink_volume(&self) -> u8 {
+        if self.bt_volume.device.is_some() {
+            100
+        } else {
+            self.model.settings.volume
+        }
+    }
+    /// The playing Bluetooth headphones and their level, when they report one.
+    fn absolute_volume_peer(&self) -> Option<(String, u8)> {
+        let AudioOutput::Bluetooth(address) = &self.model.output else {
+            return None;
+        };
+        self.bt_state
+            .devices
+            .iter()
+            .find(|d| d.address.eq_ignore_ascii_case(address) && d.connected)
+            .and_then(|d| Some((d.path.clone(), d.volume?)))
+    }
+    fn send_bt_volume(&mut self) {
+        let (Some(device), Some(service)) = (self.bt_volume.device.clone(), &self.bluetooth) else {
+            return;
+        };
+        let volume = percent_to_avrcp(self.model.settings.volume);
+        self.bt_volume.unsent = service
+            .commands
+            .try_send(bluetooth::Command::Volume { device, volume })
+            .is_err();
+        self.bt_volume.sent = Some(Instant::now());
+    }
+    /// Follows headphones that hold their own volume: taking it over when
+    /// they become the output, adopting changes made on them, and giving
+    /// the wired volume back when they stop being the output.
+    fn sync_bt_volume(&mut self) {
+        let peer = self.absolute_volume_peer();
+        if self.bt_volume.device.is_some()
+            && peer.as_ref().map(|(device, _)| device) != self.bt_volume.device.as_ref()
+        {
+            if let Some(wired) = self.model.settings.wired_volume.take() {
+                self.model.settings.volume = wired;
+            }
+            self.bt_volume = BtVolume::default();
+            self.playback.set_volume(self.model.settings.volume);
+            self.dirty.mark_both();
+            self.dirty.mark_persistence();
+        }
+        let Some((device, reported)) = peer else {
+            return;
+        };
+        if self.bt_volume.device.is_none() {
+            let wired = self.model.settings.volume;
+            // The loudness so far stays: the software level (before any
+            // headphones held the volume) moves into the headphones' level.
+            let software = if self.model.settings.bluetooth_absolute_volume {
+                100
+            } else {
+                wired
+            };
+            let level = takeover_level(reported, software);
+            self.model.settings.wired_volume = Some(wired);
+            self.model.settings.volume = avrcp_to_percent(level);
+            self.model.settings.bluetooth_absolute_volume = true;
+            self.bt_volume = BtVolume {
+                device: Some(device),
+                reported: Some(reported),
+                sent: None,
+                unsent: level != reported,
+            };
+            self.playback.set_volume(100);
+            self.log.emit(
+                Level::Info,
+                "audio",
+                "bluetooth_volume",
+                "headphones hold the volume (absolute volume)",
+                None,
+                json!({"reported":reported,"volume":self.model.settings.volume,"wired":wired}),
+            );
+            self.dirty.mark_both();
+            self.dirty.mark_persistence();
+        } else if self.bt_volume.reported != Some(reported) {
+            self.bt_volume.reported = Some(reported);
+            let echo = self
+                .bt_volume
+                .sent
+                .is_some_and(|sent| sent.elapsed() < BT_VOLUME_ECHO);
+            if !echo && !self.bt_volume.unsent {
+                // Changed on the headphones.
+                self.model.settings.volume = avrcp_to_percent(reported);
+                self.ui.show_volume();
+                self.dirty.mark_both();
+                self.dirty.mark_persistence();
+            }
+        }
+        if self.bt_volume.unsent {
+            self.send_bt_volume();
+        }
+    }
     fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
-        self.play_members(
-            index,
-            (0..self.model.library.tracks.len()).collect(),
-            force_shuffle,
-        )
+        // The music library around the song; audiobook parts stay out of
+        // it (Y2Linux #58), they play through Effect::PlayBook.
+        let tracks = &self.model.library.tracks;
+        let members = (0..tracks.len())
+            .filter(|&i| i == index || tracks[i].is_music())
+            .collect();
+        self.play_members(index, members, force_shuffle)
     }
 
     /// Internet radio requests from the Radio screens and Now Playing.
@@ -1479,6 +1641,8 @@ impl Runtime {
         }
     }
     fn load(&mut self) -> Result<(), String> {
+        // The output may just have become headphones with their own volume.
+        self.sync_bt_volume();
         // Restore coordinator-owned cores before decoder/device startup.
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
@@ -1536,7 +1700,7 @@ impl Runtime {
         let loaded = (self.model.settings.replay_gain, eq.clone());
         let fade_in = dsp_rise_fades(self.loaded_dsp.as_ref(), &loaded);
         let dsp = reborn_media::DspConfig {
-            volume: self.model.settings.volume,
+            volume: self.sink_volume(),
             replay_gain: self.model.settings.replay_gain,
             eq_enabled: eq.is_some(),
             preamp_db: eq.as_ref().map_or(0.0, |(preamp, _)| *preamp),
@@ -2257,6 +2421,13 @@ impl Runtime {
                 // A station has no next track: the next station of its list.
                 } else if self.model.current().is_some_and(Track::is_radio) {
                     self.zap(delta)?;
+                // Previous more than 3 s into a song starts it again; a
+                // second press goes back a song (Y2Reborn #21).
+                } else if delta < 0
+                    && self.model.current().is_some()
+                    && self.model.position_ms > RESTART_SONG_AFTER_MS
+                {
+                    self.seek_by(-(self.model.position_ms as i64));
                 } else if self.model.step(delta) {
                     self.load()?
                 } else {
@@ -2270,7 +2441,8 @@ impl Runtime {
             Effect::AdjustVolume(delta) => {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
-                self.playback.set_volume(self.model.settings.volume);
+                self.playback.set_volume(self.sink_volume());
+                self.send_bt_volume();
                 self.ui.show_volume();
                 self.dirty.mark_render();
                 // A hold may adjust every 90 ms. Keep the atomic audio target
@@ -2557,6 +2729,8 @@ impl Runtime {
                 // preferences a reset should surprise the listener with.
                 let defaults = reborn_core::Settings {
                     volume: self.model.settings.volume,
+                    wired_volume: self.model.settings.wired_volume,
+                    bluetooth_absolute_volume: self.model.settings.bluetooth_absolute_volume,
                     music_directory: self.model.settings.music_directory.clone(),
                     ..Default::default()
                 };
@@ -3472,7 +3646,8 @@ impl Runtime {
             PlaybackAction::Volume(v) => {
                 self.model.settings.volume = v.min(100);
                 self.dirty.mark_both();
-                self.playback.set_volume(self.model.settings.volume);
+                self.playback.set_volume(self.sink_volume());
+                self.send_bt_volume();
                 Ok(())
             }
         }
@@ -4206,6 +4381,7 @@ fn run() -> Result<(), String> {
         bluetooth,
         wifi_state: Default::default(),
         bt_state: Default::default(),
+        bt_volume: BtVolume::default(),
         graphics,
         graphics_recovery: graphics_recovery::Recovery::default(),
         woke_at: None,
@@ -5098,6 +5274,7 @@ fn run() -> Result<(), String> {
         if bt_lost {
             rt.bluetooth_peer_lost("paused");
         }
+        rt.sync_bt_volume();
         if rt.pending_reconfiguration.is_none() {
             if let Some(address) = auto_output.next(&rt.bt_state, &rt.model.output) {
                 let name = rt
@@ -5809,6 +5986,11 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
         }
     }
     let mut settings: Settings = serde_json::from_value(merged).ok()?;
+    // Saved while headphones held the volume: the wired one comes back
+    // until they connect again.
+    if let Some(wired) = settings.wired_volume.take() {
+        settings.volume = wired;
+    }
     settings.volume = settings.volume.min(100);
     settings.crossfade_ms = settings.crossfade_ms.min(30_000);
     settings.eq_bands.truncate(8);
