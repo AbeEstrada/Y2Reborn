@@ -1,4 +1,4 @@
-use crate::volume::VolumeRamp;
+use crate::volume::{VolumeRamp, MAX_BALANCE};
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{AudioOutput, Event, PcmFormat, QueueEntryId, Track};
 use reborn_graphics::ART_SIZE;
@@ -12,7 +12,7 @@ use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicI8, AtomicU64, AtomicU8, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -197,6 +197,8 @@ pub struct Playback {
     event_sender: SyncSender<PlaybackEvent>,
     epoch: Arc<AtomicU64>,
     volume: Arc<AtomicU8>,
+    /// Left/right balance in dB, -10..=10 (negative: the left is louder).
+    balance: Arc<AtomicI8>,
     /// Paused in place: the audio thread stops writing and pauses the open
     /// device; the decoder waits on the full queue. Resume is instant.
     hold: Arc<AtomicBool>,
@@ -855,6 +857,8 @@ impl Playback {
         let buffered = Arc::new(AtomicU64::new(0));
         let volume = Arc::new(AtomicU8::new(100));
         let sink_volume = volume.clone();
+        let balance = Arc::new(AtomicI8::new(0));
+        let sink_balance = balance.clone();
         let hold = Arc::new(AtomicBool::new(false));
         let sink_hold = hold.clone();
         let state = Arc::new(Mutex::new(json!({
@@ -1680,6 +1684,7 @@ impl Playback {
                         let max_bytes = 512 * frame_bytes;
                         let end = (*offset + max_bytes).min(block.data.len());
                         gain.target(sink_volume.load(Ordering::Relaxed));
+                        gain.balance(sink_balance.load(Ordering::Relaxed));
                         let scaled = gain.render(&block.data[*offset..end], block.format);
                         match s.write(&scaled) {
                             Ok(n) => {
@@ -1793,6 +1798,7 @@ impl Playback {
             event_sender,
             epoch,
             volume,
+            balance,
             hold,
             cancel: None,
             pending_start: None,
@@ -1927,6 +1933,12 @@ impl Playback {
     /// A pause is held in place; any stop or new start ends it.
     pub fn is_held(&self) -> bool {
         self.hold.load(Ordering::Acquire)
+    }
+    /// Left/right balance in dB (negative: the left is louder), live like
+    /// the volume.
+    pub(crate) fn set_balance(&self, balance: i8) {
+        self.balance
+            .store(balance.clamp(-MAX_BALANCE, MAX_BALANCE), Ordering::Relaxed);
     }
     pub(crate) fn set_volume(&self, volume: u8) {
         self.volume.store(volume.min(100), Ordering::Relaxed);
@@ -2778,6 +2790,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             volume: Arc::new(AtomicU8::new(100)),
+            balance: Arc::new(AtomicI8::new(0)),
             hold: Arc::new(AtomicBool::new(false)),
             cancel: None,
             pending_start: None,
@@ -2811,6 +2824,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             volume: Arc::new(AtomicU8::new(100)),
+            balance: Arc::new(AtomicI8::new(0)),
             hold: Arc::new(AtomicBool::new(false)),
             cancel: None,
             pending_start: None,

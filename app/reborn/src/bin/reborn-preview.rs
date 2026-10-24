@@ -762,6 +762,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("29-crossfade", at(Screen::Crossfade, ""), |_, m| {
         m.navigation.focus = 2;
     });
+    case!("29d-balance", at(Screen::Balance, ""), |_, m| {
+        m.settings.balance = -1;
+        m.navigation.focus = 9;
+    });
+    case!(
+        "29e-sound-balance",
+        at(Screen::SettingsAudio, ""),
+        |_, m| {
+            m.settings.balance = -1;
+            m.navigation.focus = 4;
+        }
+    );
     case!(
         "28b-eq-profiles",
         at(Screen::Equalizer, "profile"),

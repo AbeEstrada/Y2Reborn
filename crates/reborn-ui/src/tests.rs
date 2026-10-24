@@ -1131,10 +1131,10 @@ fn sound_pickers_set_exact_values_and_show_the_current_one() {
 #[test]
 fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
     let mut ui = radios();
-    // Sound fits one screen: the jack's settings sit on the Output page.
+    // Sound fits about one screen: the jack's settings sit on the Output page.
     let mut m = app(Screen::SettingsAudio);
     let rows = ui.rows(&m, &m.library.tracks);
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 6);
     assert_eq!(pages::jack_summary(&m), "Level Low · Filter Fast");
     assert_eq!(select_key(&mut ui, &mut m, "output_page"), Effect::None);
     assert_eq!(m.screen, Screen::Output);
@@ -4415,4 +4415,32 @@ fn a_long_message_takes_two_lines_instead_of_being_cut() {
     ui.flash("Couldn't reach the update server. Try again in a moment.");
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(text.contains("Couldn") && text.contains("moment.") && !text.contains('…'));
+}
+
+#[test]
+fn balance_opens_on_the_current_side_and_sets_it() {
+    // A hearing difference between the ears: Settings > Sound > Balance.
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsAudio);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let row = rows.iter().find(|r| r.key == "balance").unwrap();
+    assert_eq!(row.secondary, "Center");
+    assert_eq!(select_key(&mut ui, &mut m, "balance"), Effect::None);
+    assert_eq!(m.screen, Screen::Balance);
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 21);
+    assert_eq!(rows[0].label, "Left +10 dB");
+    assert_eq!(rows[m.navigation.focus].label, "Center");
+    assert_eq!(rows[20].label, "Right +10 dB");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "balance_set:-1"),
+        Effect::SetBalance(-1)
+    );
+    m.settings.balance = -1;
+    m.screen = Screen::SettingsAudio;
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(
+        rows.iter().find(|r| r.key == "balance").unwrap().secondary,
+        "Left +1 dB"
+    );
 }

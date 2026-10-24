@@ -2120,6 +2120,11 @@ impl Ui {
         }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
+            if screen == Screen::Balance {
+                // 21 rows: open on the current balance, not Left +10 dB.
+                m.navigation.focus =
+                    (m.settings.balance + reborn_core::MAX_BALANCE).max(0) as usize;
+            }
             // The picker lists what is installed now (skins arrive over MTP).
             return if screen == Screen::Theme {
                 Effect::ScanThemes
@@ -2330,6 +2335,9 @@ impl Ui {
             }),
             k if k.starts_with("crossfade_set:") => {
                 Effect::SetCrossfade(k["crossfade_set:".len()..].parse().ok()?)
+            }
+            k if k.starts_with("balance_set:") => {
+                Effect::SetBalance(k["balance_set:".len()..].parse().ok()?)
             }
             k if k.starts_with("theme_set:") => {
                 Effect::SetTheme(k["theme_set:".len()..].to_owned())
@@ -3304,6 +3312,7 @@ fn route(key: &str) -> Option<Screen> {
         "equalizer" => Screen::Equalizer,
         "playback" => Screen::SettingsPlayback,
         "crossfade" => Screen::Crossfade,
+        "balance" => Screen::Balance,
         "screen_timeout" => Screen::ScreenTimeout,
         "output_page" => Screen::Output,
         "hp_level" => Screen::HeadphoneLevel,

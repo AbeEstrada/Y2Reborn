@@ -3,6 +3,9 @@
 //! or ALSA and lets volume changes affect already buffered/crossfaded samples.
 use reborn_core::PcmFormat;
 
+/// The largest balance in dB either way (Settings > Sound > Balance).
+pub(crate) const MAX_BALANCE: i8 = reborn_core::MAX_BALANCE;
+
 pub(crate) struct VolumeRamp {
     gain: f64,
     target: f64,
@@ -11,6 +14,9 @@ pub(crate) struct VolumeRamp {
     ramp_frames: usize,
     /// A fade-in is running (it carries over a reopened sink).
     fading: bool,
+    /// Per-channel factor of a stereo stream: the balance lowers the side
+    /// away from it, never raises the other (no clipping).
+    channels: [f64; 2],
 }
 impl VolumeRamp {
     pub(crate) fn new(volume: u8, rate: u32) -> Self {
@@ -22,6 +28,7 @@ impl VolumeRamp {
             remaining: 0,
             ramp_frames: (rate as usize / 200).max(1), // five milliseconds
             fading: false,
+            channels: [1.0; 2],
         }
     }
     /// Start from silence and reach `volume` over `ms`: the first stream after
@@ -73,16 +80,33 @@ impl VolumeRamp {
             self.step = (target - self.gain) / self.remaining as f64;
         }
     }
+    /// The balance in dB: negative lowers the right, positive the left.
+    pub(crate) fn balance(&mut self, db: i8) {
+        let db = db.clamp(-MAX_BALANCE, MAX_BALANCE);
+        let lower = 10f64.powf(-f64::from(db.unsigned_abs()) / 20.0);
+        self.channels = match db.signum() {
+            -1 => [1.0, lower],
+            1 => [lower, 1.0],
+            _ => [1.0; 2],
+        };
+    }
     /// Render speculatively; the sink may accept only part (or none) of it.
     /// Call advance only for frames actually accepted by the sink.
     pub(crate) fn render(&self, data: &[u8], format: PcmFormat) -> Vec<u8> {
-        if self.remaining == 0 && self.gain == 1.0 {
+        // Frames are always stereo (PcmFormat::bytes_per_frame).
+        let balanced = self.channels == [1.0; 2];
+        if self.remaining == 0 && self.gain == 1.0 && balanced {
             return data.to_vec();
         }
         let mut result = Vec::with_capacity(data.len());
         for (index, frame) in data.chunks_exact(format.bytes_per_frame()).enumerate() {
-            let gain = self.at(index + 1);
-            for sample in frame.chunks_exact(format.bytes_per_sample()) {
+            let frame_gain = self.at(index + 1);
+            for (channel, sample) in frame.chunks_exact(format.bytes_per_sample()).enumerate() {
+                let gain = if balanced {
+                    frame_gain
+                } else {
+                    frame_gain * self.channels[channel]
+                };
                 match format {
                     PcmFormat::S16LE => {
                         let value = i16::from_le_bytes(sample.try_into().unwrap());
@@ -199,6 +223,24 @@ mod tests {
             .iter()
             .map(|s| i16::from_le_bytes(*s))
             .collect()
+    }
+    #[test]
+    fn balance_lowers_only_the_other_side() {
+        let mut ramp = VolumeRamp::new(100, 1000);
+        ramp.balance(-1); // left louder: the right is 1 dB lower
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [10_000, 8913]
+        );
+        ramp.balance(6);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [5012, 10_000]
+        );
+        // Center is a pass-through again.
+        ramp.balance(0);
+        let data = stereo16(1234, 2);
+        assert_eq!(ramp.render(&data, PcmFormat::S16LE), data);
     }
     #[test]
     fn live_change_ramps_both_channels_and_reaches_exact_mute() {

@@ -162,6 +162,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::LastFm => lastfm(ui, m),
         Screen::Equalizer => equalizer(ui, m),
         Screen::Crossfade => crossfade(m),
+        Screen::Balance => balance(m),
         Screen::ScreenTimeout => screen_timeout(m),
         Screen::Output => output(ui, m),
         Screen::HeadphoneLevel => headphone_level(m),
@@ -420,6 +421,7 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
             crate::crossfade_label(m.settings.crossfade_ms),
         )
         .with_kind(RowKind::Chevron),
+        row("Balance", "balance", balance_label(m.settings.balance)).with_kind(RowKind::Chevron),
         row("Output", "output_page", output_name(ui, m)).with_kind(RowKind::Chevron),
     ])
 }
@@ -507,6 +509,30 @@ fn crossfade(m: &AppModel) -> Page {
                 };
                 row(&label, &format!("crossfade_set:{}", s * 1000), "")
                     .with_kind(RowKind::Check(m.settings.crossfade_ms == s * 1000))
+            })
+            .collect(),
+    )
+}
+
+/// "Center", "Left +2 dB": the louder side and by how much.
+pub(crate) fn balance_label(balance: i8) -> String {
+    match balance.signum() {
+        -1 => format!("Left +{} dB", balance.unsigned_abs()),
+        1 => format!("Right +{balance} dB"),
+        _ => "Center".into(),
+    }
+}
+
+/// Left +10 dB at the top, Center in the middle, Right +10 dB at the bottom:
+/// the louder side is raised by lowering the other (a hearing difference
+/// between the ears; user request).
+fn balance(m: &AppModel) -> Page {
+    let max = reborn_core::MAX_BALANCE;
+    Page::rows(
+        (-max..=max)
+            .map(|b| {
+                row(&balance_label(b), &format!("balance_set:{b}"), "")
+                    .with_kind(RowKind::Check(m.settings.balance == b))
             })
             .collect(),
     )

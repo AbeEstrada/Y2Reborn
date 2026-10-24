@@ -389,6 +389,9 @@ pub struct Track {
     pub book: bool,
 }
 
+/// The largest left/right balance in dB (Settings > Sound > Balance).
+pub const MAX_BALANCE: i8 = 10;
+
 /// `Track::source_id` of an internet radio station in the queue.
 pub const RADIO_SOURCE: &str = "radio";
 impl Track {
@@ -719,6 +722,8 @@ pub enum Screen {
     SettingsPlayback,
     /// Crossfade length picker.
     Crossfade,
+    /// Left/right balance picker.
+    Balance,
     /// Screen-off delay picker.
     ScreenTimeout,
     /// Where music plays, and the headphone jack's settings (Settings > Sound).
@@ -938,6 +943,10 @@ pub struct Settings {
     /// (AVRCP absolute) volume follow `volume` (Y2Reborn #22).
     #[serde(default)]
     pub wired_volume: Option<u8>,
+    /// Left/right balance in dB, -MAX_BALANCE..=MAX_BALANCE: negative makes
+    /// the left louder (the right is lowered), positive the right.
+    #[serde(default)]
+    pub balance: i8,
     /// Headphones have followed `volume` before: their own level is the
     /// whole loudness, Reborn's software level no longer applies to them.
     #[serde(default)]
@@ -1126,6 +1135,7 @@ impl Default for Settings {
         Self {
             volume: 35,
             wired_volume: None,
+            balance: 0,
             bluetooth_absolute_volume: false,
             codec_preference: CodecPreference::Auto,
             screen_timeout_seconds: 60,
@@ -1367,6 +1377,7 @@ pub enum Effect {
     SetDacFilter(DacFilter),
     SetBrightness(u8),
     SetCrossfade(u32),
+    SetBalance(i8),
     SetGapless(bool),
     SetAlbumView(AlbumView),
     SetWrapAround(WrapAround),
@@ -1712,6 +1723,7 @@ impl AppModel {
         m.navigation = NavigationState::default();
         m.settings.volume = m.settings.volume.min(100);
         m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
+        m.settings.balance = m.settings.balance.clamp(-MAX_BALANCE, MAX_BALANCE);
         m.settings.eq_bands.truncate(8);
         m.settings.sanitize_eq_profile();
         m.settings.brightness = m.settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);

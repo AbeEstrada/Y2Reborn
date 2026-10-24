@@ -1643,6 +1643,7 @@ impl Runtime {
     fn load(&mut self) -> Result<(), String> {
         // The output may just have become headphones with their own volume.
         self.sync_bt_volume();
+        self.playback.set_balance(self.model.settings.balance);
         // Restore coordinator-owned cores before decoder/device startup.
         self.playback_hints
             .publish(reborn_platform::workload::playback_class(
@@ -2812,6 +2813,13 @@ impl Runtime {
                 } else {
                     "Couldn't clear everything. Try again."
                 });
+            }
+            Effect::SetBalance(balance) => {
+                self.model.settings.balance =
+                    balance.clamp(-reborn_core::MAX_BALANCE, reborn_core::MAX_BALANCE);
+                self.playback.set_balance(self.model.settings.balance);
+                self.dirty.mark_both();
+                self.checkpoint();
             }
             Effect::SetCrossfade(milliseconds) => {
                 self.model.settings.crossfade_ms = milliseconds.min(30_000);
@@ -5998,6 +6006,9 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
         settings.volume = wired;
     }
     settings.volume = settings.volume.min(100);
+    settings.balance = settings
+        .balance
+        .clamp(-reborn_core::MAX_BALANCE, reborn_core::MAX_BALANCE);
     settings.crossfade_ms = settings.crossfade_ms.min(30_000);
     settings.eq_bands.truncate(8);
     settings.sanitize_eq_profile();

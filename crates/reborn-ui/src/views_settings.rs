@@ -480,21 +480,25 @@ fn radio(
 // -------------------------------------------------------------- sound etc.
 
 fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
-    // Rows 0–3 playback, 4 the output card (its page holds the jack's
-    // level and DAC filter).
+    // Rows 0–4 playback and balance, 5 the output card (its page holds the
+    // jack's level and DAC filter). One row taller than the screen: as on
+    // Display, the first row scrolls away once the focus reaches Balance.
+    let card = page.rows.len().saturating_sub(1);
+    let fits = 38. + card as f32 * 50. + 4. + 38. + 56. + 4. <= HEIGHT;
+    let first = usize::from(!fits && focus + 2 > card);
     let bottom = group(
         c,
         ui,
-        &page.rows[..4.min(page.rows.len())],
-        0,
+        &page.rows[first..card],
+        first,
         focus,
         interactive,
         38.,
     );
     components::section_label(c, 28., bottom + 24., "Output");
-    if let Some(row) = page.rows.get(4) {
+    if let Some(row) = page.rows.get(card) {
         let y = bottom + 38.;
-        if interactive && focus == 4 {
+        if interactive && focus == card {
             components::focus_row(c, 10., y, WIDTH - 20., 56.);
         } else {
             components::card(c, 10., y, WIDTH - 20., 56.);

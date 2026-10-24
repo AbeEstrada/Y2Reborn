@@ -559,6 +559,7 @@ pub const LAYOUTS: &[&str] = &[
     "equalizer",
     "playback",
     "crossfade",
+    "balance",
     "screen_off",
     "output",
     "headphone_level",
