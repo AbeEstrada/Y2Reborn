@@ -14,11 +14,13 @@ pub mod playlist;
 pub mod queue;
 mod radio;
 pub mod scrobble;
+mod sleep;
 pub mod sort;
 mod zones;
 pub use names::{joined_names, split_artists, split_genres};
 pub use radio::{RadioRequest, RadioStation};
 use serde::{Deserialize, Serialize};
+pub use sleep::{SleepChoice, SleepItem, SleepTimer, SLEEP_MINUTES};
 use std::{
     collections::HashMap,
     fs,
@@ -1586,44 +1588,6 @@ pub struct AppModel {
     pub sleep_timer: Option<SleepTimer>,
 }
 
-/// The sleep timer's choices, picked with the wheel from Now Playing's menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SleepChoice {
-    Off,
-    Minutes(u16),
-    /// The end of the chapter (a book) or the song playing.
-    EndOfItem,
-}
-/// The timed lengths in minutes (#29): short steps first, up to three hours.
-pub const SLEEP_MINUTES: [u16; 12] = [5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 150, 180];
-impl SleepChoice {
-    /// The picker's rows: Off, the end of this song or chapter, the lengths.
-    pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Off, Self::EndOfItem];
-        all.extend(SLEEP_MINUTES.iter().map(|&m| Self::Minutes(m)));
-        all
-    }
-}
-/// A running sleep timer: playback pauses at `until` (after a fade) or when
-/// the item playing when it was set (queue entry, chapter) ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SleepTimer {
-    pub choice: SleepChoice,
-    pub until: Option<std::time::Instant>,
-    pub item: (usize, Option<usize>),
-}
-impl AppModel {
-    /// What plays now, as the sleep timer tells items apart: the queue entry
-    /// and, in a book, the chapter.
-    pub fn sleep_item(&self) -> (usize, Option<usize>) {
-        (
-            self.queue_position,
-            self.book_part()
-                .and_then(|(book, part)| book.chapter_at(part, self.position_ms)),
-        )
-    }
-}
-
 /// How an audiobook starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BookStart {
@@ -2576,26 +2540,6 @@ mod tests {
         assert!(!s.zone_auto());
         s.time_zone_auto = Some(true);
         assert!(s.zone_auto());
-    }
-}
-
-#[cfg(test)]
-mod sleep_timer_tests {
-    use super::*;
-    #[test]
-    fn the_sleep_timer_offers_off_the_end_of_the_item_and_lengths_to_three_hours() {
-        let all = SleepChoice::all();
-        assert_eq!(all.len(), 14);
-        assert_eq!(
-            all[..3],
-            [
-                SleepChoice::Off,
-                SleepChoice::EndOfItem,
-                SleepChoice::Minutes(5)
-            ]
-        );
-        assert_eq!(all.last(), Some(&SleepChoice::Minutes(180)));
-        assert!(SLEEP_MINUTES.windows(2).all(|w| w[0] < w[1]));
     }
 }
 
