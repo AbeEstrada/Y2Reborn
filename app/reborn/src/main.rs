@@ -362,6 +362,8 @@ struct Runtime {
     /// (kept after a failed decode, so a broken logo is not retried).
     radio_art: Option<u64>,
     radio_art_pending: Option<u64>,
+    /// The key of the picture asked for the song restored at boot (see `track_art`).
+    resume_art: Option<u64>,
     /// Playlist files are read and written on their own thread.
     playlist_worker: Option<playlists::Worker>,
     headless: bool,
