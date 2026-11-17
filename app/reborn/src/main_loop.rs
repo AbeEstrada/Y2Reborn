@@ -1,6 +1,7 @@
 //! Startup and the main loop: `run` builds the runtime and drives input, playback, the platform and the screen.
 use crate::*;
 mod render;
+mod track_art;
 use std::ops::ControlFlow;
 
 fn chapter_reader(headless: bool) -> Option<books::ChapterReader> {
@@ -913,20 +914,7 @@ impl MainLoop {
                     })
                     .filter_map(|(key, index)| {
                         let track = tracks.get(index)?;
-                        Some(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        })
+                        Some(track_art::job(&rt.model, track, key, rt.root.join("cache")))
                     })
                     .collect::<Vec<_>>();
                 let mut jobs = jobs;
@@ -986,20 +974,7 @@ impl MainLoop {
                 }
                 if let Some((key, index)) = rt.ui.take_cover_request() {
                     if let Some(track) = tracks.get(index) {
-                        worker.want_cover(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        });
+                        worker.want_cover(track_art::job(&rt.model, track, key, cache.clone()));
                     }
                 }
             }
