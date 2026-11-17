@@ -1783,6 +1783,84 @@ fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
     assert!(silence >= 176, "the clicks played over silence: {silence}");
 }
 
+/// The wired device as it runs dry: a write more than 50 ms after the one before finds the stream
+/// stopped, revives it and takes nothing (the sink's recovered xrun).
+#[derive(Clone, Default)]
+struct DryingDevice {
+    out: Arc<Mutex<Vec<i32>>>,
+    last: Arc<Mutex<Option<Instant>>>,
+}
+impl AudioSink for DryingDevice {
+    fn parameters(&self) -> Parameters {
+        ClickDevice::default().parameters()
+    }
+    fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+        let now = Instant::now();
+        let dry = self
+            .last
+            .lock()
+            .unwrap()
+            .replace(now)
+            .is_some_and(|last| now - last > Duration::from_millis(50));
+        if dry {
+            return Ok(0);
+        }
+        let mut out = self.out.lock().unwrap();
+        out.extend(
+            s.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|f| i32::from_le_bytes(f[..4].try_into().unwrap())),
+        );
+        Ok(s.len() / 8)
+    }
+    fn discard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn delay(&self) -> u64 {
+        0
+    }
+}
+
+/// Y2Linux #127: after a stop (a USB file transfer ends in one) every wheel click sounds, not every
+/// other one.
+#[test]
+fn every_wheel_click_sounds_after_a_stop() {
+    let device = DryingDevice::default();
+    let sink = device.clone();
+    let root = std::env::temp_dir().join(format!("reborn-click-stop-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let mut p = Playback::with_sink(
+        log,
+        root,
+        Box::new(move |_, _, _| Ok(Box::new(sink.clone()))),
+    )
+    .unwrap();
+    p.stop(7);
+    let wired = spec(AudioOutput::Wired, 44100);
+    // A click's start: a non-zero sample after at least 64 silent ones (its wave crosses zero).
+    let clicks = || {
+        let out = device.out.lock().unwrap();
+        let mut silent = 64;
+        let mut starts = 0;
+        for v in out.iter() {
+            if *v == 0 {
+                silent += 1;
+            } else {
+                starts += usize::from(silent >= 64);
+                silent = 0;
+            }
+        }
+        starts
+    };
+    for _ in 0..4 {
+        p.click(Some(wired.clone()));
+        thread::sleep(Duration::from_millis(150));
+    }
+    assert_eq!(clicks(), 4);
+    p.shutdown(2).unwrap();
+}
+
 /// #77: with no song, a click opens the wired output asked for, the next clicks find it open, and
 /// a song started meanwhile plays in it (no second open).
 #[test]

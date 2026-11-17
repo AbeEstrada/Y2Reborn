@@ -67,6 +67,7 @@ impl SinkWorker {
             held,
             open_spec,
             kept,
+            stop_seen: None,
         };
         while let ControlFlow::Continue(()) | ControlFlow::Break(Pass::Again) = self.pass(&mut st) {
         }
@@ -270,7 +271,8 @@ impl SinkWorker {
     fn stopped(&mut self, st: &mut Playing) {
         // Stopped or replaced: the sink waits for the next stream
         // (a Stop closes it, as does the time running out).
-        if st.generation != self.se.load(Ordering::Acquire) {
+        let current = self.se.load(Ordering::Acquire);
+        if st.generation != current {
             if let Some(k) = keep_sink(
                 st.sink.take(),
                 st.open_spec.take(),
@@ -281,7 +283,13 @@ impl SinkWorker {
             }
             st.pending = None;
             st.eof = false;
-            st.forget_clicks();
+            // Once per stop: the generation stays behind until the next song opens, and a click
+            // forgotten on every pass got one queue of silence and no more, so the next click
+            // only revived the run-dry stream and was lost: every other row clicked (Y2Linux #127).
+            if st.stop_seen != Some(current) {
+                st.forget_clicks();
+                st.stop_seen = Some(current);
+            }
         }
         if st.kept.as_ref().is_some_and(|k| Instant::now() >= k.until) {
             st.kept = None;
@@ -790,6 +798,8 @@ pub(super) struct Playing {
     /// Paused in place, the stream plays for clicks: since the last one.
     clicking: Option<Instant>,
     kept: Option<KeptSink>,
+    /// The stop (sink generation) whose clicks were forgotten.
+    stop_seen: Option<u64>,
     open_spec: Option<(SinkSpec, u64)>,
     held: bool,
     last_progress: Instant,
