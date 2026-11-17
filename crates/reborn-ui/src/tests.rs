@@ -6520,7 +6520,13 @@ fn an_album_opened_from_a_genre_shows_that_genres_songs_and_offers_the_rest() {
     let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["Play", "Shuffle", "Song 0", "Song 1", "Show All 3 Songs"]
+        [
+            "Play All",
+            "Shuffle All",
+            "Song 0",
+            "Song 1",
+            "Show All 3 Songs"
+        ]
     );
     assert!(rows[0].secondary.starts_with("Jazz · 2 of 3 songs"));
     assert_eq!(source_label(&m), "Album 0");
