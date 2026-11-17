@@ -57,6 +57,7 @@ unsafe extern "C" {
     fn rb_wired_note_live(live: c_int) -> c_int;
     fn rb_sink_close(p: *mut c_void);
     fn rb_sink_write(p: *mut c_void, b: *const u8, frames: c_int) -> c_int;
+    fn rb_sink_set_master(p: *mut c_void, left_cdb: c_int, right_cdb: c_int) -> c_int;
     fn rb_sink_wait(p: *mut c_void, ms: c_int) -> c_int;
     fn rb_sink_recover(p: *mut c_void, e: c_int) -> c_int;
     fn rb_sink_drop(p: *mut c_void) -> c_int;
@@ -544,14 +545,18 @@ impl AlsaSink {
             );
             return Err(error(r));
         }
+        // The native constructor owns a live handle even if its returned parameter record fails
+        // our format contract: both refusals below close it.
+        let close = || {
+            if !raw.is_null() {
+                // SAFETY: the handle the constructor returned, closed once, on the path that returns.
+                unsafe { rb_sink_close(raw) };
+            }
+        };
         let params = match parameters(&p, planned) {
             Ok(params) => params,
             Err(error) => {
-                // The native constructor owns a live handle even if its returned
-                // parameter record fails our format contract.
-                if !raw.is_null() {
-                    unsafe { rb_sink_close(raw) };
-                }
+                close();
                 return Err(error);
             }
         };
@@ -561,9 +566,7 @@ impl AlsaSink {
                 || params.channels != u32::from(spec.channels)
                 || params.device != spec.device
             {
-                if !raw.is_null() {
-                    unsafe { rb_sink_close(raw) };
-                }
+                close();
                 return Err("opened ALSA sink does not match the planned sink contract".into());
             }
         }
@@ -704,6 +707,15 @@ impl AudioSink for AlsaSink {
         u64::try_from(avail)
             .ok()
             .map(|free| u64::from(self.params.buffer).saturating_sub(free))
+    }
+    fn set_hardware_gain(&mut self, left_cdb: i32, right_cdb: i32) -> Result<bool, String> {
+        // SAFETY: same-thread mixer write on the handle this sink uniquely owns.
+        let r = unsafe { rb_sink_set_master(self.raw.as_ptr(), left_cdb, right_cdb) };
+        match r {
+            0.. => Ok(true),
+            r if r == -libc::ENOTSUP => Ok(false),
+            r => Err(error(r)),
+        }
     }
 }
 impl Drop for AlsaSink {

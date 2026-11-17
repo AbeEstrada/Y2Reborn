@@ -160,6 +160,19 @@ pub trait AudioSink {
         let _ = on;
         Ok(())
     }
+    /// Set the output's own volume per channel, in centi-dB below full scale of the
+    /// stream (the DAC's Master). `Ok(true)`: the output now applies it, so the PCM
+    /// written needs no gain of the user's volume. `Ok(false)` (the default): this
+    /// output has no volume of its own and the caller keeps applying gain itself.
+    fn set_hardware_gain(&mut self, left_cdb: i32, right_cdb: i32) -> Result<bool, String> {
+        let _ = (left_cdb, right_cdb);
+        Ok(false)
+    }
+    /// Whether this output applies the user's volume itself (see `set_hardware_gain`), so the
+    /// PCM written to it is not scaled by it first.
+    fn applies_volume(&self) -> bool {
+        false
+    }
 }
 /// The headphone output's only rate, as on the stock firmware. The DAC's
 /// crystal (22.5792 MHz) clocks 44.1 kHz directly; 48 kHz needs the codec's

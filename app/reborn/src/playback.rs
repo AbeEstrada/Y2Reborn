@@ -20,6 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod click;
+mod dac_volume;
 mod decode;
 mod media_state;
 mod output;
@@ -715,6 +716,8 @@ impl Playback {
     }
 }
 
+#[cfg(test)]
+mod dac_volume_tests;
 #[cfg(test)]
 mod stream_continuity_tests;
 #[cfg(test)]

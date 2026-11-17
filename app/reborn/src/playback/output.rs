@@ -177,7 +177,7 @@ impl SinkWorker {
                             });
                     let opened = match reused {
                         Some(s) => reuse_kept(s, &spec),
-                        None => (self.factory)(&spec, self.al.clone(), id).map(|s| (s, false)),
+                        None => self.open_sink(&spec, id).map(|s| (s, false)),
                     };
                     match opened {
                         Ok((s, reused)) => {
@@ -450,7 +450,10 @@ impl SinkWorker {
             // decoded crossfade. Keep original PCM for partial writes.
             let max_bytes = 512 * frame_bytes;
             let end = (*offset + max_bytes).min(block.data.len());
-            st.gain.target(self.sink_volume.load(Ordering::Relaxed));
+            let volume = self.sink_volume.load(Ordering::Relaxed);
+            // A sink whose DAC applies the volume gets the stream as decoded.
+            st.gain.hardware_volume(s.applies_volume(), volume);
+            st.gain.target(volume);
             st.gain.balance(self.sink_balance.load(Ordering::Relaxed));
             let scaled = st.gain.render(&block.data[*offset..end], block.format);
             match s.write(&scaled) {
@@ -587,7 +590,7 @@ impl SinkWorker {
             st.clicking = Some(Instant::now());
         }
         let Some(since) = st.clicking else { return };
-        let gain = self.click_gain();
+        let gain = self.click_gain(&**s);
         let result = if since.elapsed() < LINGER {
             let resumed = if was_stopped { s.pause(false) } else { Ok(()) };
             resumed
@@ -627,11 +630,11 @@ impl SinkWorker {
             st.clicking = Some(now);
         }
         let Some(since) = st.clicking else { return };
-        let gain = self.click_gain();
         let Some(k) = &mut st.kept else {
             st.clicking = None;
             return;
         };
+        let gain = self.click_gain(&*k.sink);
         let result = if since.elapsed() < LINGER {
             click_over_silence(k.sink.as_mut(), &mut st.click, k.spec.format, gain)
         } else {
@@ -650,7 +653,7 @@ impl SinkWorker {
         }
         drop(st.kept.take());
         st.clicking = None;
-        match (self.factory)(&spec, self.al.clone(), st.correlation) {
+        match self.open_sink(&spec, st.correlation) {
             Ok(sink) => {
                 let since = Instant::now();
                 st.kept = Some(KeptSink {
@@ -665,9 +668,26 @@ impl SinkWorker {
         }
     }
 
-    /// A click's volume: the live one (the sink's ramp is not kept up while no music plays).
-    fn click_gain(&self) -> f64 {
-        reborn_core::volume_gain(self.sink_volume.load(Ordering::Relaxed))
+    /// A sink for `spec`, with the volume in the DAC where the output can take it.
+    fn open_sink(&self, spec: &SinkSpec, id: u64) -> Result<Box<dyn AudioSink>, String> {
+        let sink = (self.factory)(spec, self.al.clone(), id)?;
+        Ok(super::dac_volume::engage(
+            sink,
+            &self.sink_volume,
+            &self.sink_balance,
+            &self.al,
+            id,
+        ))
+    }
+
+    /// A click's volume: the live one (the sink's ramp is not kept up while no music plays); unity
+    /// where the DAC applies the volume.
+    fn click_gain(&self, sink: &dyn AudioSink) -> f64 {
+        if sink.applies_volume() {
+            1.0
+        } else {
+            reborn_core::volume_gain(self.sink_volume.load(Ordering::Relaxed))
+        }
     }
 
     fn click_result(&self, st: &mut Playing, result: Result<(), String>) {
