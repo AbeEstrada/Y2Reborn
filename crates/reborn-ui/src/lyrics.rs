@@ -244,6 +244,11 @@ fn draw_lines(c: &mut Canvas, ui: &Ui, model: &AppModel, prepared: &Prepared) {
         if y >= BOTTOM {
             break;
         }
+        // A row whose baseline went under the title band would show only its descenders below
+        // the band's edge (seen on the player): it is gone.
+        if y + 23. < TOP + 2. {
+            continue;
+        }
         let at = prepared.document.lines[row.entry].at_ms;
         let color = if stamp == Some(at) {
             color::ACCENT
