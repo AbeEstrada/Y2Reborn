@@ -24,6 +24,21 @@ fn an_opened_sink_fades_for_a_rise_and_otherwise_continues_an_unfinished_fade() 
         .is_none());
 }
 
+/// Y2Reborn #133: the position is what the listener hears, also when the output's delay is longer
+/// than what of the block went out (Bluetooth), where it used to stop at the block's start.
+#[test]
+fn the_position_is_what_is_heard_behind_a_long_output_delay() {
+    use super::output::heard_ms;
+    // Wired: 100 ms of the block out, 93 ms queued.
+    assert_eq!(heard_ms(10_000, 4_410, 4_096, 1000, 44_100), 10_008);
+    // Bluetooth: 50 ms of the block out, 450 ms behind it (before: 10 000, 400 ms ahead).
+    assert_eq!(heard_ms(10_000, 2_205, 19_845, 1000, 44_100), 9_600);
+    // A song's start: nothing heard yet is 0, not a time of the song before.
+    assert_eq!(heard_ms(0, 2_205, 19_845, 1000, 44_100), 0);
+    // At 1.5× speed source time runs faster.
+    assert_eq!(heard_ms(10_000, 4_410, 0, 1500, 44_100), 10_150);
+}
+
 struct Sink {
     frames: Arc<AtomicU64>,
     fail: bool,
