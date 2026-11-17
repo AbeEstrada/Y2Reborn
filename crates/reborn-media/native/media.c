@@ -185,6 +185,9 @@ typedef struct {
   uint8_t *pending;
   size_t pending_frames, pending_offset, pending_capacity;
   double applied_gain_db, headroom_db;
+  /* The filter graph changes the signal (volume stage, ReplayGain, EQ, tempo):
+   * set by make_filter_graph, read by init_output_swr. */
+  int graph_alters_signal;
   char filter_description[1024];
   uint64_t open_us, probe_us;
   uint32_t info_runs;
@@ -742,12 +745,15 @@ static int make_filter_graph(RbMedia *m) {
                       "aformat=sample_fmts=fltp:channel_layouts=stereo");
   if (used < 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
+  int tempo = m->dsp.speed >= 0.5 && m->dsp.speed <= 2.0 && fabs(m->dsp.speed - 1.0) > 0.001;
+  int volume_stage = m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0 || preamp != 0.0;
+  m->graph_alters_signal = tempo || volume_stage || active_eq;
   /* Speed without a pitch change (WSOLA). Positions stay in the source's
    * time: the decoder's timestamps come before the filter. */
-  if (m->dsp.speed >= 0.5 && m->dsp.speed <= 2.0 && fabs(m->dsp.speed - 1.0) > 0.001)
+  if (tempo)
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
                      ",atempo=tempo=%.4f", m->dsp.speed);
-  if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0 || preamp != 0.0) {
+  if (volume_stage) {
     double linear = pow(10.0, applied / 20.0);
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
                      ",volume=volume=%.12f", linear);
@@ -1368,6 +1374,34 @@ fail:
   return ret;
 }
 
+/* Whether the final conversion to S16 dithers. FFmpeg dithers every float to
+ * S16 conversion and this graph is always float, so a 16-bit file played as it
+ * is would get noise added to samples that need none: what is bit-exact stays
+ * bit-exact. Dither where the conversion really loses information: a source
+ * deeper than 16 bits or a lossy decode (not S16), another rate, more than two
+ * channels, or a signal the graph changed (volume stage, ReplayGain, EQ,
+ * tempo). Needs make_filter_graph to have run. */
+static int output_dithers(const RbMedia *m) {
+  if (m->output_fmt != AV_SAMPLE_FMT_S16)
+    return 0;
+  int integer16 = m->c->sample_fmt == AV_SAMPLE_FMT_S16 ||
+                  m->c->sample_fmt == AV_SAMPLE_FMT_S16P;
+  int untouched = integer16 && m->c->sample_rate == m->output_rate &&
+                  m->c->ch_layout.nb_channels <= 2 && !m->graph_alters_signal;
+  return !untouched;
+}
+
+/* Initialise the final conversion (m->output_swr, allocated or closed), with
+ * triangular dither shaped away from the middle of the band where
+ * `output_dithers` says so. */
+static int init_output_swr(RbMedia *m) {
+  int r = av_opt_set_int(m->output_swr, "dither_method",
+                         output_dithers(m) ? SWR_DITHER_TRIANGULAR_HIGHPASS
+                                           : SWR_DITHER_NONE,
+                         0);
+  return r < 0 ? r : swr_init(m->output_swr);
+}
+
 int rb_media_open(const char *path, int rate, int output_format,
                   const RbDspConfig *dsp, RbCancel *cancel, RbMedia **out,
                   RbMetadata *meta) {
@@ -1425,9 +1459,10 @@ int rb_media_open(const char *path, int rate, int output_format,
   ret = swr_alloc_set_opts2(&m->output_swr, &stereo, m->output_fmt,
                             m->output_rate, &stereo, AV_SAMPLE_FMT_FLTP,
                             m->c->sample_rate, 0, NULL);
-  if (ret < 0 || (ret = swr_init(m->output_swr)) < 0)
+  if (ret < 0)
     goto fail;
-  if ((ret = make_filter_graph(m)) < 0)
+  /* The graph first: whether it changes the signal decides the dither. */
+  if ((ret = make_filter_graph(m)) < 0 || (ret = init_output_swr(m)) < 0)
     goto fail;
   m->p = av_packet_alloc();
   m->frame = av_frame_alloc();
@@ -1530,10 +1565,10 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
   avcodec_flush_buffers(m->c);
   swr_close(m->canonical_swr);
   swr_close(m->output_swr);
-  if ((r = swr_init(m->canonical_swr)) < 0 || (r = swr_init(m->output_swr)) < 0)
+  if ((r = swr_init(m->canonical_swr)) < 0)
     return r;
   close_graph(m);
-  if ((r = make_filter_graph(m)) < 0)
+  if ((r = make_filter_graph(m)) < 0 || (r = init_output_swr(m)) < 0)
     return r;
   m->decoder_eof = m->source_eof = m->source_null_sent = m->filter_eof = 0;
   m->output_drained = 0;

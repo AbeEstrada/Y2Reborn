@@ -1630,6 +1630,98 @@ mod tests {
         .unwrap();
         assert!(eq.metadata.filters.contains("alimiter"));
     }
+    /// The whole of `name` decoded at `rate` into `format` under `dsp`, as one sample per channel
+    /// value (left first).
+    fn decode_samples(name: &str, rate: u32, format: PcmFormat, dsp: DspConfig) -> Vec<i32> {
+        let mut decoder = Decoder::open_with(
+            &fixture(name),
+            OutputSpec { rate, format },
+            dsp,
+            Cancel::new().unwrap(),
+        )
+        .unwrap();
+        let mut samples = Vec::new();
+        while let Some(block) = decoder.read().unwrap() {
+            match format {
+                PcmFormat::S16LE => samples.extend(
+                    block
+                        .data
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|s| i32::from(i16::from_le_bytes(*s))),
+                ),
+                _ => samples.extend(
+                    block
+                        .data
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|s| i32::from_le_bytes(*s)),
+                ),
+            }
+        }
+        samples
+    }
+    /// How far each S16 sample is from the exact value (the same signal in S32, rounded to 16
+    /// bits): (the largest distance, how many samples are off at all).
+    fn off_from_exact(s16: &[i32], s32: &[i32]) -> (i32, usize) {
+        assert_eq!(s16.len(), s32.len());
+        let mut largest = 0;
+        let mut off = 0;
+        for (a, b) in s16.iter().zip(s32) {
+            let exact = ((i64::from(*b) + 32_768) >> 16).clamp(-32_768, 32_767) as i32;
+            largest = largest.max((a - exact).abs());
+            off += usize::from(*a != exact);
+        }
+        (largest, off)
+    }
+    #[test]
+    fn a_16_bit_file_with_nothing_changing_it_reaches_s16_bit_exact() {
+        let dsp = || DspConfig::with_volume(100);
+        let s16 = decode_samples("flac-16-44100.flac", 44_100, PcmFormat::S16LE, dsp());
+        let s32 = decode_samples("flac-16-44100.flac", 44_100, PcmFormat::S32LE, dsp());
+        assert!(s16.len() > 10_000);
+        // No dither: every sample is the file's own, the S32 reading of it shifted down.
+        assert_eq!(off_from_exact(&s16, &s32), (0, 0));
+    }
+    #[test]
+    fn dither_goes_where_the_conversion_loses_information() {
+        let dsp = || DspConfig::with_volume(100);
+        // A 24-bit source: the last 8 bits are dithered away.
+        let s16 = decode_samples("flac-24-44100.flac", 44_100, PcmFormat::S16LE, dsp());
+        let s32 = decode_samples("flac-24-44100.flac", 44_100, PcmFormat::S32LE, dsp());
+        let (largest, off) = off_from_exact(&s16, &s32);
+        assert!(
+            off > s16.len() / 4,
+            "24-bit source not dithered: {off} of {}",
+            s16.len()
+        );
+        assert!(largest <= 3, "dither stays within a few LSB: {largest}");
+        // A 16-bit file at another rate: the resampler's output is not 16-bit.
+        let s16 = decode_samples("flac-16-44100.flac", 48_000, PcmFormat::S16LE, dsp());
+        let s32 = decode_samples("flac-16-44100.flac", 48_000, PcmFormat::S32LE, dsp());
+        let (largest, off) = off_from_exact(&s16, &s32);
+        assert!(off > s16.len() / 4, "resampled audio not dithered: {off}");
+        assert!(largest <= 3, "{largest}");
+        // A 16-bit file the graph changes (an EQ band): the filtered signal is not 16-bit either.
+        let eq = || DspConfig {
+            volume: 100,
+            eq_enabled: true,
+            eq_bands: vec![EqBand {
+                frequency_hz: 1000.0,
+                gain_db: -2.0,
+                q: 1.0,
+                kind: reborn_core::EqKind::Peak,
+            }],
+            ..Default::default()
+        };
+        let s16 = decode_samples("flac-16-44100.flac", 44_100, PcmFormat::S16LE, eq());
+        let s32 = decode_samples("flac-16-44100.flac", 44_100, PcmFormat::S32LE, eq());
+        let (largest, off) = off_from_exact(&s16, &s32);
+        assert!(off > s16.len() / 4, "filtered audio not dithered: {off}");
+        assert!(largest <= 3, "{largest}");
+    }
     /// Decode the fixture with one filter and the given preamp; return the
     /// largest sample and the reported gain stage.
     fn shaped(
