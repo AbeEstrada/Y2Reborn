@@ -42,13 +42,13 @@ impl Ui {
             .unwrap_or_default();
         vec![
             Item::new("Up Next", "show_queue").with_secondary(next),
-            Item::new("Lyrics", "lyrics"),
             Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
             Item::new("Shuffle", "toggle_shuffle")
                 .with_secondary(m.settings.shuffle_mode().label()),
             Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
             self.favorite_row(m, tracks, self.current_index(m, tracks)),
             Item::new("Add to Playlist…", "add_playlist"),
+            Item::new("Lyrics", "lyrics"),
             // Back to where the music came from (#25, #60): the Go to
             // row of that place, Go to Album's for a playlist or folder.
             match self.origin_label(m) {

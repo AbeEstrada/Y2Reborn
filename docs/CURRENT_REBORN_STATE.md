@@ -1,11 +1,12 @@
 # Current Reborn state on the Y2
 
-## Source candidate: synchronized LRC lyrics, 2026-11-11
+## Lyrics (PR #126 by Lord-Funion, merged 2026-11-17; embedded lyrics added)
 
-The draft lyrics contribution adds Now Playing → Lyrics, bounded background sidecar loading,
-audio-position highlighting, wrapped text and native skin colors. See the [guide](lyrics.md) and
-[host validation](validation/synced-lyrics-host.md). This is not a published image or physical Y2
-qualification; existing release receipts below retain their original scope.
+Now Playing → Lyrics (after Add to Playlist; audiobooks: last row): a `.lrc` file beside the song,
+else the lyrics in the song's tags (`reborn_media::embedded_lyrics`, C `rb_media_lyrics_file`: ID3
+USLT, Vorbis/FLAC LYRICS or UNSYNCEDLYRICS, MP4 ©lyr; header only). Timed lyrics follow the audio
+position; untimed tag lyrics (`Lyrics::synced == false`) are plain text browsed with the wheel. See
+the [guide](lyrics.md).
 
 ## 1.0.0-beta.9.3.20 — Y2Linux 1.0 Beta 9.3.20 (Baseline 229), 2026-11-10: issue fixes (published)
 
