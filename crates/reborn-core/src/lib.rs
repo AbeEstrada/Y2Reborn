@@ -819,6 +819,8 @@ pub enum ConfirmAction {
     ForgetAllBluetooth,
     ClearCache,
     DeletePlaylist,
+    /// Take every song out of a playlist (Y2Linux #103).
+    ClearPlaylist,
     Platform(PlatformTask),
     /// The one-time question after the update: send error reports or not.
     ReportsQuestion,

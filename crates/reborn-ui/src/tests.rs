@@ -4853,6 +4853,7 @@ fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
             "Add to Queue",
             "Sort",
             "Duplicate",
+            "Clear Playlist",
             "Move"
         ]
     );
@@ -4884,6 +4885,64 @@ fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
             "/data/music/Playlists/Road Trip.m3u8".into()
         )))
     );
+}
+
+/// Y2Linux #106: a song already in a playlist is not added again; #103: Clear Playlist asks first
+/// and empties it, Favorites too.
+#[test]
+fn songs_in_a_playlist_are_not_added_twice_and_a_playlist_can_be_cleared() {
+    use reborn_core::{playlist::PlaylistEdit, PlaylistRequest};
+    let (mut ui, mut m) = playlists_app();
+    let tracks = m.library.tracks.clone();
+    let road = "/data/music/Playlists/Road Trip.m3u8";
+    let pick = |ui: &mut Ui, m: &mut AppModel, songs: Vec<usize>| {
+        ui.open_picker(m, songs);
+        ui.picker_action(m, &tracks, &format!("pick:{road}"))
+    };
+    // Song 1 is in Road Trip, song 5 is not: only song 5 goes in.
+    match pick(&mut ui, &mut m, vec![1, 5, 5]) {
+        Effect::Playlist(request) => match *request {
+            PlaylistRequest::Edit {
+                edit: PlaylistEdit::Append(entries),
+                ..
+            } => assert_eq!(entries.len(), 1),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(ui.notice, "1 added to Road Trip, 2 already in it");
+    assert_eq!(pick(&mut ui, &mut m, vec![1]), Effect::None);
+    assert_eq!(ui.notice, "Already in Road Trip");
+    // Clear Playlist on Favorites: the question, then the edit.
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = (ui.modal_rows_public(&m, &tracks).into_iter())
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = options.iter().position(|k| k == "pl_clear").unwrap();
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(
+        m.navigation.modal,
+        Some(reborn_core::Modal::Confirm(
+            reborn_core::ConfirmAction::ClearPlaylist
+        ))
+    );
+    let confirm: Vec<_> = (ui.modal_rows_public(&m, &tracks).into_iter())
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = confirm.iter().position(|k| k != "cancel").unwrap();
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Playlist(Box::new(PlaylistRequest::Edit {
+            path: "/data/music/Playlists/Favorites.m3u8".into(),
+            edit: PlaylistEdit::Clear,
+            create: false,
+        }))
+    );
+    // The edit empties the file's list.
+    let mut cleared = playlist(road, &["../album0/song1.flac"]);
+    cleared.apply(&PlaylistEdit::Clear).unwrap();
+    assert!(cleared.entries.is_empty());
 }
 
 /// Timings for a 20 000-entry playlist on a 20 000-song library

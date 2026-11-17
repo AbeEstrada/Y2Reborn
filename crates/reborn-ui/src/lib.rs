@@ -779,6 +779,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::ResetSettings => "Reset",
         ConfirmAction::ClearCache => "Clear",
         ConfirmAction::DeletePlaylist => "Delete",
+        ConfirmAction::ClearPlaylist => "Clear",
         ConfirmAction::PowerOff => "Power Off",
         ConfirmAction::Reboot => "Restart",
         ConfirmAction::Platform(PlatformTask::UpdateApply) => "Restart and Install",
@@ -799,6 +800,10 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::DeletePlaylist => (
             "Delete This Playlist?",
             "The playlist file is deleted from the player. Your songs stay.",
+        ),
+        ConfirmAction::ClearPlaylist => (
+            "Clear This Playlist?",
+            "Every song is taken out of it. The playlist stays, and so do your songs.",
         ),
         ConfirmAction::ClearQueue => (
             "Clear Upcoming Songs?",

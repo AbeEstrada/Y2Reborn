@@ -102,6 +102,16 @@ impl Ui {
                         }
                         None => Effect::None,
                     },
+                    ConfirmAction::ClearPlaylist => match self.playlists.target.take() {
+                        Some(path) => {
+                            Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Edit {
+                                path,
+                                edit: reborn_core::playlist::PlaylistEdit::Clear,
+                                create: false,
+                            }))
+                        }
+                        None => Effect::None,
+                    },
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
                     ConfirmAction::Platform(task) => Effect::Platform(task),
