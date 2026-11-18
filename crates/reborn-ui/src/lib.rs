@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod accent;
 pub mod art;
 mod boot;
 mod buttons_page;
