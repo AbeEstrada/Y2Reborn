@@ -446,7 +446,9 @@ pub(crate) fn run() -> Result<(), String> {
     let action_router = input::ActionRouter::new();
     let input_screen_off = rt.model.screen_off;
     let last_sd = storage::sd_present();
-    let usb_refresh = storage::TransferRefresh::default();
+    // The start scan covers what was copied before this start (the platform keeps its last
+    // generation across app restarts), so only a later change asks for another scan.
+    let usb_refresh = storage::TransferRefresh::since(storage::usb_changes().0);
     let observation_pending = None;
     let xrun_bundle = 0.;
     let shutdown_intent = None;
