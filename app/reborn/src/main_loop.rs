@@ -188,6 +188,7 @@ pub(crate) fn run() -> Result<(), String> {
     if !headless && storage::sd_present() && !storage::platform_manages_media() {
         let _ = storage::mount_sd();
     }
+    model.play_stats = reborn_core::play_stats::PlayStats::load(&root.join(scrobbling::PLAY_STATS));
     model.sources = if headless {
         vec![Source {
             id: "internal".into(),

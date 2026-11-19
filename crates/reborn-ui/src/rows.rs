@@ -356,19 +356,11 @@ impl Ui {
         if let Some(key) = key.filter(|k| Self::group_key(k)) {
             return Self::group_menu(key);
         }
-        if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
-            let mut rows = vec![
-                Item::new("Play", "collection_play"),
-                Item::new("Shuffle", "collection_shuffle"),
-                Item::new("Play Next", "collection_next"),
-                Item::new("Add to Queue", "collection_queue"),
-                Item::new("Add to Playlist…", "collection_playlist"),
-            ];
-            // An artist's albums, each whole, in random order.
-            if m.screen == Screen::Artist {
-                rows.insert(2, Item::new("Shuffle Albums", "collection_shuffle_albums"));
-            }
-            return rows;
+        if matches!(m.screen, Screen::Album | Screen::Artist | Screen::Tracks)
+            && key.is_some_and(|k| play_options::header_choice(k).is_some())
+        {
+            // An artist's or a list's albums, each whole, in random order.
+            return play_options::menu(play_options::Family::Page, m.screen != Screen::Album);
         }
         match m.screen {
             Screen::Albums | Screen::Artists | Screen::Genres | Screen::Search => vec![],

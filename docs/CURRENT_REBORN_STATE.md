@@ -1,5 +1,21 @@
 # Current Reborn state on the Y2
 
+## Playing a group of songs, in one place; Recently Added, Recently Played, Most Played (#163, #109, #158)
+
+`play_options` (reborn-ui) owns every way a group of songs is played: the header rows (`header_rows`: Play All and
+Shuffle All on an album, Songs and its lists, a genre's songs; Play All on an artist's page; Shuffle All on a folder
+and a genre's albums), the hold-Select menu for a group's row, an album's or artist's page and a playlist (`menu`,
+keys `group_*`, `collection_*`, `pl_*`), and what each choice starts (`Ui::play_choice`, `Ui::play_page`). Before,
+those rows, menus and `PlayCollection` effects were built separately in seven files. Songs gains Play All and
+Shuffle All (#163); the rows have no letter, so fast scrolling steps over them.
+
+Music lists **Recently Added** (newest file first, `play_stats::recently_added`, by `mtime`), **Recently Played** and
+**Most Played** (100 songs each) as Songs with a filter (`recent:added`, `recent:played`, `most:played`). A play
+counts by the scrobbling rule (`scrobble::Tracker`, half the song or 4 minutes heard), now with or without Last.fm and
+for untagged songs too (`Counted::play` is `None` for those, so they are not scrobbled). `play_stats::PlayStats`
+keeps each song's play count and last play as a sequence number by path (a rescan keeps it, at most 5 000 songs),
+saved to `state/play-stats.json` at each counted play; the catalog's stamp carries its generation.
+
 ## Lyrics (PR #126 by Lord-Funion, merged 2026-11-17; embedded lyrics added)
 
 Now Playing → Lyrics (after Add to Playlist; audiobooks: last row): a `.lrc` file beside the song,

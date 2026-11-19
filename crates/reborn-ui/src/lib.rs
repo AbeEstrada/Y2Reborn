@@ -22,6 +22,7 @@ pub mod lyrics;
 mod maskdata;
 mod motion;
 pub mod pages;
+mod play_options;
 pub mod playlist_index;
 mod playlists_ui;
 pub mod qr;
