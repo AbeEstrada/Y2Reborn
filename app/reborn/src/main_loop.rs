@@ -1,6 +1,7 @@
 //! Startup and the main loop: `run` builds the runtime and drives input, playback, the platform and the screen.
 use crate::*;
 mod render;
+mod track_art;
 use std::ops::ControlFlow;
 
 fn chapter_reader(headless: bool) -> Option<books::ChapterReader> {
@@ -9,6 +10,24 @@ fn chapter_reader(headless: bool) -> Option<books::ChapterReader> {
     } else {
         books::ChapterReader::spawn().ok()
     }
+}
+
+/// What a finished library scan tells the owner. A scan the owner asked for
+/// is always answered; one the player started itself (at the start, when a
+/// card appears, after a USB transfer) speaks only to say that new songs
+/// were read.
+pub(crate) fn scan_toast(songs: u64, rescanned: u64, asked: bool) -> Option<String> {
+    if rescanned > 0 && songs > 1 {
+        return Some(format!("{} new songs added", rescanned.min(songs)));
+    }
+    if !asked {
+        return None;
+    }
+    Some(match songs {
+        0 => "Scan finished. No music found.".to_owned(),
+        1 => "Scan finished. 1 song in your library.".to_owned(),
+        n => format!("Scan finished. {n} songs in your library."),
+    })
 }
 
 pub(crate) fn run() -> Result<(), String> {
@@ -257,6 +276,7 @@ pub(crate) fn run() -> Result<(), String> {
         chapters_asked: HashSet::new(),
         shelf_written: Default::default(),
         paused_at: None,
+        scan_asked: false,
         sleep_fading: false,
         sleep_minutes_shown: None,
         headphones: None,
@@ -326,6 +346,7 @@ pub(crate) fn run() -> Result<(), String> {
         },
         radio_art: None,
         radio_art_pending: None,
+        resume_art: None,
         playlist_worker: playlists::Worker::spawn(Some(root.join("cache/playlists.json"))),
         headless,
         last_activity: Instant::now(),
@@ -446,7 +467,9 @@ pub(crate) fn run() -> Result<(), String> {
     let action_router = input::ActionRouter::new();
     let input_screen_off = rt.model.screen_off;
     let last_sd = storage::sd_present();
-    let usb_refresh = storage::TransferRefresh::default();
+    // The start scan covers what was copied before this start (the platform keeps its last
+    // generation across app restarts), so only a later change asks for another scan.
+    let usb_refresh = storage::TransferRefresh::since(storage::usb_changes().0);
     let observation_pending = None;
     let xrun_bundle = 0.;
     let shutdown_intent = None;
@@ -865,6 +888,16 @@ impl MainLoop {
                     }
                     continue;
                 }
+                if reply.full && rt.resume_art == Some(reply.thumb) {
+                    // The song restored at boot: its cover before the first Play.
+                    let song = &rt.model;
+                    let shown = track_art::restored_picture(song, rt.art, reply.thumb, reply.rgba);
+                    if let Some(rgba) = shown.filter(|_| rt.graphics.is_some()) {
+                        rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
+                        logo = Some(rgba);
+                    }
+                    continue;
+                }
                 if reply.full {
                     // Cover Flow's centre cover at full resolution.
                     if let (Some(mut rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
@@ -913,20 +946,7 @@ impl MainLoop {
                     })
                     .filter_map(|(key, index)| {
                         let track = tracks.get(index)?;
-                        Some(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        })
+                        Some(track_art::job(&rt.model, track, key, rt.root.join("cache")))
                     })
                     .collect::<Vec<_>>();
                 let mut jobs = jobs;
@@ -984,22 +1004,14 @@ impl MainLoop {
                         }
                     }
                 }
+                if let Some(job) =
+                    track_art::restored_job(&rt.model, rt.art, &mut rt.resume_art, &cache)
+                {
+                    worker.want_cover(job);
+                }
                 if let Some((key, index)) = rt.ui.take_cover_request() {
                     if let Some(track) = tracks.get(index) {
-                        worker.want_cover(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        });
+                        worker.want_cover(track_art::job(&rt.model, track, key, cache.clone()));
                     }
                 }
             }
@@ -1458,6 +1470,8 @@ impl MainLoop {
     /// The library scanner's results.
     fn scan_results(&mut self, rt: &mut Runtime) {
         if let Ok(result) = rt.scanner.results.try_recv() {
+            // Whichever way this scan ends, the next one starts unasked.
+            let asked = std::mem::take(&mut rt.scan_asked);
             // A no-op scan must not rematerialize the resident catalog or
             // invalidate its cached navigation rows. Deletions alone count.
             let refresh_catalog = match &result {
@@ -1484,14 +1498,9 @@ impl MainLoop {
                     // Files that could not be read are counted on Settings →
                     // Library, not announced after every start.
                     let songs = stats.discovered.saturating_sub(stats.unreadable);
-                    rt.ui.flash(match songs {
-                        _ if stats.rescanned > 0 && songs > 1 => {
-                            format!("{} new songs added", stats.rescanned.min(songs))
-                        }
-                        0 => "Scan finished. No music found.".to_owned(),
-                        1 => "Scan finished. 1 song in your library.".to_owned(),
-                        n => format!("Scan finished. {n} songs in your library."),
-                    });
+                    if let Some(text) = scan_toast(songs, stats.rescanned, asked) {
+                        rt.ui.flash(text);
+                    }
                 }
                 Ok(stats) => {
                     let error = format!(
