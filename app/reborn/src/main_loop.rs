@@ -874,6 +874,7 @@ impl MainLoop {
             self.observation_pending = None;
         }
         rt.background_ticks();
+        // A station's logo (no owner) or the restored song's cover (with its song), shown below.
         let mut logo = None;
         if let Some(worker) = &mut rt.thumbs {
             // Upload finished thumbnails (a few per pass, so a burst never
@@ -892,7 +893,7 @@ impl MainLoop {
                     }
                     if let Some(rgba) = reply.rgba.filter(|_| rt.graphics.is_some()) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
-                        logo = Some(rgba);
+                        logo = Some((rgba, None));
                     }
                     continue;
                 }
@@ -900,9 +901,9 @@ impl MainLoop {
                     // The song restored at boot: its cover before the first Play.
                     let song = &rt.model;
                     let shown = track_art::restored_picture(song, rt.art, reply.thumb, reply.rgba);
-                    if let Some(rgba) = shown.filter(|_| rt.graphics.is_some()) {
+                    if let Some((rgba, owner)) = shown.filter(|_| rt.graphics.is_some()) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
-                        logo = Some(rgba);
+                        logo = Some((rgba, Some(owner)));
                     }
                     continue;
                 }
@@ -1024,8 +1025,8 @@ impl MainLoop {
                 }
             }
         }
-        if let Some(rgba) = logo {
-            rt.show_art(rgba, None);
+        if let Some((rgba, owner)) = logo {
+            rt.show_art(rgba, owner);
         }
     }
 
