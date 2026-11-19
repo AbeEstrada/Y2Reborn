@@ -1,6 +1,7 @@
 //! Startup and the main loop: `run` builds the runtime and drives input, playback, the platform and the screen.
 use crate::*;
 mod render;
+mod track_art;
 use std::ops::ControlFlow;
 
 fn chapter_reader(headless: bool) -> Option<books::ChapterReader> {
@@ -326,6 +327,7 @@ pub(crate) fn run() -> Result<(), String> {
         },
         radio_art: None,
         radio_art_pending: None,
+        resume_art: None,
         playlist_worker: playlists::Worker::spawn(Some(root.join("cache/playlists.json"))),
         headless,
         last_activity: Instant::now(),
@@ -865,6 +867,16 @@ impl MainLoop {
                     }
                     continue;
                 }
+                if reply.full && rt.resume_art == Some(reply.thumb) {
+                    // The song restored at boot: its cover before the first Play.
+                    let song = &rt.model;
+                    let shown = track_art::restored_picture(song, rt.art, reply.thumb, reply.rgba);
+                    if let Some(rgba) = shown.filter(|_| rt.graphics.is_some()) {
+                        rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
+                        logo = Some(rgba);
+                    }
+                    continue;
+                }
                 if reply.full {
                     // Cover Flow's centre cover at full resolution.
                     if let (Some(mut rgba), Some(renderer)) = (reply.rgba, rt.graphics.as_mut()) {
@@ -913,20 +925,7 @@ impl MainLoop {
                     })
                     .filter_map(|(key, index)| {
                         let track = tracks.get(index)?;
-                        Some(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        })
+                        Some(track_art::job(&rt.model, track, key, rt.root.join("cache")))
                     })
                     .collect::<Vec<_>>();
                 let mut jobs = jobs;
@@ -984,22 +983,14 @@ impl MainLoop {
                         }
                     }
                 }
+                if let Some(job) =
+                    track_art::restored_job(&rt.model, rt.art, &mut rt.resume_art, &cache)
+                {
+                    worker.want_cover(job);
+                }
                 if let Some((key, index)) = rt.ui.take_cover_request() {
                     if let Some(track) = tracks.get(index) {
-                        worker.want_cover(artwork::Job {
-                            thumb: key,
-                            art: artwork::Key::new(
-                                track,
-                                rt.model
-                                    .sources
-                                    .iter()
-                                    .find(|s| s.id == track.source_id)
-                                    .and_then(|s| s.mount_id),
-                                &rt.model.settings.music_directory,
-                            )
-                            .into(),
-                            cache: rt.root.join("cache"),
-                        });
+                        worker.want_cover(track_art::job(&rt.model, track, key, cache.clone()));
                     }
                 }
             }
