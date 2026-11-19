@@ -1876,6 +1876,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 2;
         }
     );
+    // Y2Linux #128: Software Update → What's New, with a real release text.
+    case!("78-whats-new", at(Screen::WhatsNew, ""), |ui, _| {
+        let body = concat!(
+            "**Y2Linux 1.0 Beta 9.3.33**: lyrics, Recently Added, ",
+            "Recently Played and Most Played, ",
+            "and Shuffle All for Songs.\n\n## What's new\n",
+            "- **Lyrics** ([Y2Reborn #126](https://x), thanks to Lord-Funion): Now Playing → hold ",
+            "Select → **Lyrics**. They come from a `.lrc` file next to the song, ",
+            "or from the lyrics ",
+            "stored in the song's tags.\n",
+            "- **Recently Added, Recently Played and Most Played** under Music, 100 songs each.\n",
+            "- **Play All and Shuffle All on Songs**.\n\n## Fixed\n",
+            "- **The library was read twice after every start**.\n\nMore details: x\n\n",
+            "<!-- github-only -->\n## Files"
+        );
+        ui.whats_new.set(reborn_ui::whats_new::State::Ready(
+            reborn_core::whats_new::lines(body),
+        ));
+    });
     case!("10c-songs-play-all", at(Screen::Tracks, ""), |_, m| m
         .navigation
         .focus =

@@ -70,6 +70,10 @@ Software Update ends with **Update Notifications** (a toggle, off by default, Y2
 looks at the platform every two minutes while Wi-Fi is up, and when the platform's daily check has found a newer
 version the status bar says "Software update available" once for that version (not on Software Update itself, which
 shows it). The toggle is under every Software Update page that has a choice, not while a check or install runs.
+Under it, **What's New** (Y2Linux #128) opens this version's release notes: the part of the GitHub release written
+for the player (before `<!-- github-only -->`), fetched once over Wi-Fi and kept in `state/whats-new.json`, read
+with the wheel (`Screen::WhatsNew`). **Show What's New After Updates** (off by default) opens them once on the first
+start of a new version, on Home or Now Playing; anywhere else a toast says where they are.
 
 Browsing's **FM Radio** (a switch, on by default) decides whether Radio shows the player's own tuner. With it,
 Radio opens as a choice of **FM Radio** and **Internet Radio** (the internet stations' menu is `Screen::Radio`

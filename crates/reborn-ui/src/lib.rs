@@ -58,6 +58,7 @@ mod views_search;
 mod views_settings;
 mod views_system;
 pub mod views_videos;
+pub mod whats_new;
 
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
@@ -453,6 +454,7 @@ pub struct RadioCategory {
 #[derive(Default)]
 pub struct Ui {
     pub lyrics: lyrics::View,
+    pub whats_new: whats_new::View,
     pub notice: String,
     pub notice_until: Option<Instant>,
     pub wifi: WifiView,

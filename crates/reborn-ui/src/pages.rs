@@ -1513,6 +1513,18 @@ fn update_status(ui: &Ui, m: &AppModel) -> Page {
             row("Update Notifications", "update_notifications", "")
                 .with_kind(RowKind::Toggle(m.settings.update_notifications)),
         );
+        // This version's release notes, and whether they open by themselves after an update
+        // (Y2Linux #128; off unless turned on).
+        page.rows
+            .push(row("What's New", "whats_new", "").with_kind(RowKind::Chevron));
+        page.rows.push(
+            row(
+                "Show What's New After Updates",
+                "whats_new_after_update",
+                "",
+            )
+            .with_kind(RowKind::Toggle(m.settings.whats_new_after_update)),
+        );
     }
     page
 }
