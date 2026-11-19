@@ -19,6 +19,7 @@ pub use glyph_cache::{
     available as cjk_font_available, set_budget as set_glyph_budget, GLYPHS_PER_FRAME,
 };
 pub mod keyboard;
+mod light;
 pub mod lyrics;
 mod maskdata;
 mod motion;
@@ -454,6 +455,8 @@ pub struct RadioCategory {
 #[derive(Default)]
 pub struct Ui {
     pub lyrics: lyrics::View,
+    /// Reborn Light: Reborn's own look in light colours (Y2Linux #112, `light`).
+    pub light: bool,
     pub whats_new: whats_new::View,
     pub notice: String,
     pub notice_until: Option<Instant>,

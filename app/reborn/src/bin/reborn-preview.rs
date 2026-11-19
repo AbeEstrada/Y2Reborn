@@ -411,6 +411,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Each state is drawn once: rasterise every CJK glyph it needs at once.
     reborn_ui::set_glyph_budget(None);
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--light`: every state in Reborn Light (Y2Linux #112).
+    let light = args.iter().any(|a| a == "--light");
     let skin_dir = args
         .iter()
         .position(|a| a == "--skin")
@@ -2088,6 +2090,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, mut m, setup) in cases {
         let mut ui = ui();
         ui.skin = skin.clone();
+        ui.light = light;
         ui.spin_fixed = Some(0.45);
         ui.motion_fixed = true;
         // 09:41 UTC.

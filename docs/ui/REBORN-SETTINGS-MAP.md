@@ -52,7 +52,7 @@ Settings
 │  ├ Playback                Gapless Playback · Crossfade ›
 │  └ Output                  Headphone Jack / Bluetooth devices · Speaker · Headphone Level › · DAC Filter ›
 ├ Display                    Brightness card · Screen Off After ›
-├ Skin                       the skins
+├ Skin                       Reborn · Reborn Light · the installed skins
 ├ Customize                  Home Menu › · Browsing › · Buttons ›
 │  ├ Home Menu               the places on Home and their order
 │  ├ Browsing                Cover Flow · Sort Albums · Artist's Albums › · Artists List
@@ -87,6 +87,11 @@ page is on screen; **Stop Sharing** is Back ([plan](REBORN-WIFI-SHARE.md)).
 
 Library's hint line names the audio the last scan left out because Reborn cannot play its type ("43 files can't
 be played here (WMA, DSD), so they aren't in your library.", Y2Reborn #104); without such files there is no line.
+
+**Reborn Light** (Y2Linux #112) is Reborn's own look in light colours, not a skin folder: the theme id
+`reborn-light` keeps the native drawing and `reborn_ui::light` recolours each finished frame (tokens to light
+counterparts, glass to black, greys turned around, bright colours darkened to 4.5:1; covers untouched). Type on an
+accent fill uses `color::ON_ACCENT`, which stays white there.
 
 Shuffle and Repeat are on Now Playing's menu, the sleep timer on Now Playing too: things you change while
 listening stay where you listen.

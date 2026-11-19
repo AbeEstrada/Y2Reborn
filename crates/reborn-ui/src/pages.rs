@@ -315,7 +315,11 @@ fn settings(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         row(
             "Skin",
             "theme",
-            ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
+            ui.skin
+                .as_deref()
+                .map_or(if ui.light { "Reborn Light" } else { "Reborn" }, |s| {
+                    s.name.as_str()
+                }),
         )
         .with_kind(RowKind::Chevron),
         row("Customize", "customize", "").with_kind(RowKind::Chevron),
@@ -590,8 +594,11 @@ fn screen_timeout(m: &AppModel) -> Page {
 
 /// The skin picker: Reborn's own look first, then every installed skin.
 fn theme(ui: &Ui, m: &AppModel) -> Page {
+    let light = crate::theme::REBORN_LIGHT;
     let mut rows = vec![
-        row("Reborn", "theme_set:", "").with_kind(RowKind::Check(m.settings.theme.is_empty()))
+        row("Reborn", "theme_set:", "").with_kind(RowKind::Check(m.settings.theme.is_empty())),
+        row("Reborn Light", &format!("theme_set:{light}"), "")
+            .with_kind(RowKind::Check(m.settings.theme == light)),
     ];
     for skin in &ui.themes {
         // A skin's swatch says more than its author; only a problem is told.
