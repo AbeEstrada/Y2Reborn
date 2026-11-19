@@ -884,7 +884,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                         // A station without its logo (yet): its initials.
                         components::initials_tile(c, crate::track_title(t), b.x, b.y, b.w);
                     } else {
-                        components::placeholder(c, b.x, b.y, b.w, *radius, 0);
+                        components::placeholder_of(c, b.x, b.y, b.w, *radius, 0, s.m.current());
                     }
                 }
                 ArtSource::Row if row.and_then(|r| s.row_station(r)).is_some() => {
