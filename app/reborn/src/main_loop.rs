@@ -12,6 +12,24 @@ fn chapter_reader(headless: bool) -> Option<books::ChapterReader> {
     }
 }
 
+/// What a finished library scan tells the owner. A scan the owner asked for
+/// is always answered; one the player started itself (at the start, when a
+/// card appears, after a USB transfer) speaks only to say that new songs
+/// were read.
+pub(crate) fn scan_toast(songs: u64, rescanned: u64, asked: bool) -> Option<String> {
+    if rescanned > 0 && songs > 1 {
+        return Some(format!("{} new songs added", rescanned.min(songs)));
+    }
+    if !asked {
+        return None;
+    }
+    Some(match songs {
+        0 => "Scan finished. No music found.".to_owned(),
+        1 => "Scan finished. 1 song in your library.".to_owned(),
+        n => format!("Scan finished. {n} songs in your library."),
+    })
+}
+
 pub(crate) fn run() -> Result<(), String> {
     let process_started = Instant::now();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -258,6 +276,7 @@ pub(crate) fn run() -> Result<(), String> {
         chapters_asked: HashSet::new(),
         shelf_written: Default::default(),
         paused_at: None,
+        scan_asked: false,
         sleep_fading: false,
         sleep_minutes_shown: None,
         headphones: None,
@@ -1449,6 +1468,8 @@ impl MainLoop {
     /// The library scanner's results.
     fn scan_results(&mut self, rt: &mut Runtime) {
         if let Ok(result) = rt.scanner.results.try_recv() {
+            // Whichever way this scan ends, the next one starts unasked.
+            let asked = std::mem::take(&mut rt.scan_asked);
             // A no-op scan must not rematerialize the resident catalog or
             // invalidate its cached navigation rows. Deletions alone count.
             let refresh_catalog = match &result {
@@ -1475,14 +1496,9 @@ impl MainLoop {
                     // Files that could not be read are counted on Settings →
                     // Library, not announced after every start.
                     let songs = stats.discovered.saturating_sub(stats.unreadable);
-                    rt.ui.flash(match songs {
-                        _ if stats.rescanned > 0 && songs > 1 => {
-                            format!("{} new songs added", stats.rescanned.min(songs))
-                        }
-                        0 => "Scan finished. No music found.".to_owned(),
-                        1 => "Scan finished. 1 song in your library.".to_owned(),
-                        n => format!("Scan finished. {n} songs in your library."),
-                    });
+                    if let Some(text) = scan_toast(songs, stats.rescanned, asked) {
+                        rt.ui.flash(text);
+                    }
                 }
                 Ok(stats) => {
                     let error = format!(

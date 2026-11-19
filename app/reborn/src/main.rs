@@ -277,6 +277,11 @@ struct Runtime {
     shelf_written: reborn_core::books::Shelf,
     /// When playback was last paused (a book rewinds after a long pause).
     paused_at: Option<Instant>,
+    /// A library scan the owner asked for (Scan or Rebuild in Settings) is
+    /// running: its result is announced. The scans a start, a changed
+    /// source or a USB transfer begin are not (the empty-library screen and
+    /// the song count say the same).
+    scan_asked: bool,
     /// The sleep timer has lowered the playback volume.
     sleep_fading: bool,
     /// The sleep timer's minutes left as last drawn (they change on screen).
@@ -1051,3 +1056,7 @@ mod shuffle_and_seek_tests;
 #[cfg(test)]
 #[path = "main_tests/update_screen_tests.rs"]
 mod update_screen_tests;
+
+#[cfg(test)]
+#[path = "main_tests/scan_toast_tests.rs"]
+mod scan_toast_tests;
