@@ -46,6 +46,23 @@ pub(crate) fn send_before_deadline<T>(
     }
 }
 
+const QUEUE_POLL_MIN: Duration = Duration::from_millis(5);
+const QUEUE_POLL_MAX: Duration = Duration::from_millis(25);
+
+/// How long to wait before looking at a full queue again: about one block of audio. The queue holds
+/// eight blocks and the decoder runs far faster than real time, so a freed slot is refilled long
+/// before the queue runs dry, and a fixed 5 ms poll only costs about 200 wakeups a second.
+pub(crate) fn queue_poll_interval(item: &Stream, frames: u64) -> Duration {
+    let Stream::Pcm { block, .. } = item else {
+        return QUEUE_POLL_MIN;
+    };
+    if block.rate == 0 || frames == 0 {
+        return QUEUE_POLL_MIN;
+    }
+    Duration::from_millis(frames.saturating_mul(1000) / u64::from(block.rate))
+        .clamp(QUEUE_POLL_MIN, QUEUE_POLL_MAX)
+}
+
 pub(crate) fn send_stream_item(
     tx: &SyncSender<Stream>,
     buffered: &AtomicU64,
@@ -57,6 +74,7 @@ pub(crate) fn send_stream_item(
 ) -> Result<(), String> {
     let mut stalled = false;
     let mut beat = Instant::now();
+    let poll = queue_poll_interval(&item, frames);
     loop {
         if epoch.load(Ordering::Acquire) != generation {
             return Ok(());
@@ -77,7 +95,7 @@ pub(crate) fn send_stream_item(
                     log.heartbeat("playback", 30);
                     beat = Instant::now();
                 }
-                thread::sleep(Duration::from_millis(5));
+                thread::sleep(poll);
             }
             Err(_) => return Err("audio queue closed".into()),
         }

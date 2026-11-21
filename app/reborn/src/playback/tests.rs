@@ -651,6 +651,73 @@ fn partial_window_recovery_is_chunked_under_sink_write_limit() {
     assert_eq!(output, input_samples);
 }
 #[test]
+fn full_queue_is_polled_about_once_per_block_of_audio() {
+    let item = |frames: usize, rate: u32| {
+        let mut block = indexed_pcm(0, frames, 44_100);
+        block.rate = rate;
+        Stream::Pcm {
+            generation: 1,
+            block,
+        }
+    };
+    // An MP3 block (1152 frames at 44.1 kHz) is 26 ms: capped so a cancel is seen within 25 ms.
+    assert_eq!(
+        queue_poll_interval(&item(1152, 44_100), 1152),
+        Duration::from_millis(25)
+    );
+    // A short AAC block (1024 frames at 48 kHz, 21 ms) is polled once per block.
+    assert_eq!(
+        queue_poll_interval(&item(1024, 48_000), 1024),
+        Duration::from_millis(21)
+    );
+    // Tiny blocks and unknown rates keep the old 5 ms poll.
+    assert_eq!(
+        queue_poll_interval(&item(64, 44_100), 64),
+        Duration::from_millis(5)
+    );
+    assert_eq!(
+        queue_poll_interval(&item(1024, 0), 1024),
+        Duration::from_millis(5)
+    );
+    let end = Stream::End { generation: 1 };
+    assert_eq!(queue_poll_interval(&end, 0), Duration::from_millis(5));
+}
+
+#[test]
+fn full_queue_send_still_cancels_with_the_epoch() {
+    let (tx, _rx) = sync_channel::<Stream>(1);
+    let buffered = AtomicU64::new(0);
+    let epoch = Arc::new(AtomicU64::new(3));
+    let root = std::env::temp_dir().join(format!("reborn-poll-cancel-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let pcm = |frames: usize| Stream::Pcm {
+        generation: 3,
+        block: indexed_pcm(0, frames, 44_100),
+    };
+    // Fill the one slot so the next send has to wait for room.
+    send_stream_item(&tx, &buffered, &epoch, 3, pcm(1152), 1152, &log).unwrap();
+    let canceller = {
+        let epoch = epoch.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(60));
+            epoch.store(4, Ordering::Release);
+        })
+    };
+    let started = Instant::now();
+    send_stream_item(&tx, &buffered, &epoch, 3, pcm(1152), 1152, &log).unwrap();
+    let waited = started.elapsed();
+    canceller.join().unwrap();
+    assert!(
+        waited >= Duration::from_millis(55),
+        "returned early: {waited:?}"
+    );
+    assert!(
+        waited < Duration::from_millis(60 + 25 + 40),
+        "cancel took too long: {waited:?}"
+    );
+}
+
+#[test]
 fn async_open_failure_is_reported_without_waiting_or_starting_decode() {
     let root = std::env::temp_dir().join(format!(
         "reborn-open-failure-{}-{}",
