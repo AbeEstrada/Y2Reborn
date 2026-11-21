@@ -126,9 +126,48 @@ pub fn playback_class(playing: bool, heavy: bool, scanning: bool) -> Class {
     }
 }
 
+/// How long playback is held at the heavy class after an underrun. The platform parks cores while
+/// the screen is dark and only ordinary playback is live; a heavy lease keeps all four online.
+pub const XRUN_HEAVY: Duration = Duration::from_secs(300);
+
+/// An underrun is the sign that the cores the platform left online were too few for this music.
+/// Playback then asks for the heavy class for `XRUN_HEAVY` after the latest one.
+#[derive(Default)]
+pub struct XrunGuard {
+    seen: f64,
+    until: Option<Instant>,
+}
+impl XrunGuard {
+    /// Whether to publish the heavy class now, given the running underrun count.
+    pub fn heavy(&mut self, xruns: f64, now: Instant) -> bool {
+        if xruns > self.seen {
+            self.until = Some(now + XRUN_HEAVY);
+        }
+        self.seen = xruns;
+        self.until.is_some_and(|until| now < until)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_underrun_holds_playback_heavy_for_five_minutes() {
+        let start = Instant::now();
+        let mut guard = XrunGuard::default();
+        // No underrun: never heavy.
+        assert!(!guard.heavy(0., start));
+        assert!(!guard.heavy(0., start + Duration::from_secs(60)));
+        let at = start + Duration::from_secs(61);
+        assert!(guard.heavy(1., at));
+        assert!(guard.heavy(1., at + XRUN_HEAVY - Duration::from_secs(1)));
+        assert!(!guard.heavy(1., at + XRUN_HEAVY));
+        // A new one starts the window again; the count not moving never does.
+        let later = at + XRUN_HEAVY + Duration::from_secs(10);
+        assert!(guard.heavy(3., later));
+        assert!(guard.heavy(3., later + Duration::from_secs(299)));
+        assert!(!guard.heavy(3., later + Duration::from_secs(300)));
+    }
     #[test]
     fn every_class_is_one_complete_device_transaction() {
         struct Device {

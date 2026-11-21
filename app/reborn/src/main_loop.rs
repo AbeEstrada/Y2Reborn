@@ -521,6 +521,7 @@ pub(crate) fn run() -> Result<(), String> {
         initial_platform_ready,
         seek_ticked,
         workload_tick,
+        xrun_guard: reborn_platform::workload::XrunGuard::default(),
         observed,
         snapshot_taken,
         snapshot_quiet,
@@ -805,6 +806,8 @@ pub(crate) struct MainLoop {
     initial_platform_ready: bool,
     seek_ticked: Option<Instant>,
     workload_tick: Instant,
+    /// An underrun holds playback at the heavy class so the platform keeps every core online.
+    xrun_guard: reborn_platform::workload::XrunGuard,
     observed: Instant,
     snapshot_taken: Instant,
     snapshot_quiet: bool,
@@ -1934,13 +1937,17 @@ impl MainLoop {
     fn observations(&mut self, rt: &mut Runtime) {
         if self.workload_tick.elapsed() >= Duration::from_secs(1) {
             self.workload_tick = Instant::now();
+            // Not inside the `||`: the guard has to see every count.
+            let xrun_heavy = self
+                .xrun_guard
+                .heavy(self.log.metric("audio_xruns"), Instant::now());
             rt.playback_hints
                 .publish(reborn_platform::workload::playback_class(
                     matches!(
                         rt.model.playback,
                         PlaybackState::Playing | PlaybackState::Buffering
                     ),
-                    rt.model.settings.playback_heavy(),
+                    rt.model.settings.playback_heavy() || xrun_heavy,
                     false, // The scanner owns its independent scoped lease.
                 ));
         }
