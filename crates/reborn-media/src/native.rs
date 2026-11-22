@@ -1428,6 +1428,31 @@ mod tests {
         }
     }
     #[test]
+    fn a_read_fills_its_whole_block_with_the_first_sample_s_position() {
+        // MP3 (1152-sample frames), AAC (1024) and Opus (960) came one decoded frame per block,
+        // ~40 blocks a second through the decoder and output threads (Y2Reborn #176 follow-up).
+        for n in ["tone.mp3", "tone.m4a", "tone.opus"] {
+            let mut d = Decoder::open(&fixture(n), 48_000, Cancel::new().unwrap()).unwrap();
+            let mut blocks = Vec::new();
+            while let Some(p) = d.read().unwrap() {
+                blocks.push((p.frames, p.position_ms));
+            }
+            let (last, full) = blocks.split_last().unwrap();
+            assert!(
+                full.iter().all(|(frames, _)| *frames == 4096),
+                "{n}: {blocks:?}"
+            );
+            assert!(last.0 > 0 && last.0 <= 4096, "{n}");
+            let total: u64 = blocks.iter().map(|(frames, _)| frames).sum();
+            assert!((45_000..55_000).contains(&total), "{n}: {total}");
+            // Each block starts where the one before it ended (within one codec frame).
+            for pair in blocks.windows(2) {
+                let step = pair[1].1.saturating_sub(pair[0].1);
+                assert!((60..=110).contains(&step), "{n}: {blocks:?}");
+            }
+        }
+    }
+    #[test]
     fn every_fixture_format_reports_an_average_bitrate() {
         // Y2Linux #87: FLAC and Opus showed no bitrate. Their streams and containers carry none,
         // so it is the file's size over its length, as for any format that names none.

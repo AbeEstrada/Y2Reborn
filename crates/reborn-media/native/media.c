@@ -175,6 +175,8 @@ typedef struct {
   int stream, output_rate, output_bytes, output_format;
   enum AVSampleFormat output_fmt;
   int decoder_eof, source_eof, source_null_sent, filter_eof, output_drained;
+  /* An error met after part of a read was filled: returned by the next read. */
+  int deferred_error;
   int first_frame;
   int seek_pending;
   uint64_t skip_start, skip_end, packets, frames, corrupt_packets;
@@ -1465,23 +1467,47 @@ int rb_media_read(RbMedia *m, uint8_t *out, int capacity_frames,
   if (!m || !out || capacity_frames <= 0)
     return AVERROR(EINVAL);
   deadline(m->cancel);
-  int r = fill(m);
-  if (r < 0)
-    return r;
-  if (m->pending_frames == m->pending_offset)
+  if (m->deferred_error) {
+    int e = m->deferred_error;
+    m->deferred_error = 0;
+    return e;
+  }
+  /* Fill the caller's whole block, not one decoded frame: an MP3 frame is
+   * 1152 samples and an AAC frame 1024, so one block per frame woke the
+   * decoder and output threads ~40 times a second for nothing (Y2Reborn #176
+   * follow-up). The samples and their order are unchanged; the block's
+   * position is that of its first sample. */
+  size_t total = 0;
+  int64_t first = 0;
+  while (total < (size_t)capacity_frames) {
+    int r = fill(m);
+    if (r < 0) {
+      if (total == 0)
+        return r;
+      m->deferred_error = r;
+      break;
+    }
+    if (m->pending_frames == m->pending_offset)
+      break;
+    if (total == 0)
+      first = av_rescale(m->position, 1000, m->c->sample_rate);
+    size_t n = m->pending_frames - m->pending_offset;
+    if (n > (size_t)capacity_frames - total)
+      n = (size_t)capacity_frames - total;
+    memcpy(out + total * (size_t)m->output_bytes,
+           m->pending + m->pending_offset * m->output_bytes,
+           n * (size_t)m->output_bytes);
+    m->pending_offset += n;
+    if (m->pending_offset == m->pending_frames)
+      m->pending_offset = m->pending_frames = 0;
+    total += n;
+  }
+  if (total == 0)
     return 0;
-  size_t n = m->pending_frames - m->pending_offset;
-  if (n > (size_t)capacity_frames)
-    n = (size_t)capacity_frames;
-  memcpy(out, m->pending + m->pending_offset * m->output_bytes,
-         n * (size_t)m->output_bytes);
-  *position = av_rescale(m->position, 1000, m->c->sample_rate);
-  m->pending_offset += n;
-  if (m->pending_offset == m->pending_frames)
-    m->pending_offset = m->pending_frames = 0;
+  *position = first;
   *packets = m->packets;
-  *frames = n;
-  return (int)n;
+  *frames = total;
+  return (int)total;
 }
 
 int rb_media_seek(RbMedia *m, int64_t ms) {
@@ -1510,6 +1536,7 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
   m->seek_trim_remaining = 0;
   m->skip_start = m->skip_end = 0;
   m->pending_frames = m->pending_offset = 0;
+  m->deferred_error = 0;
   m->position = av_rescale(ms, m->c->sample_rate, 1000);
   m->seek_target = m->position;
   return 0;
