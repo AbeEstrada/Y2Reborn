@@ -660,10 +660,15 @@ fn full_queue_is_polled_about_once_per_block_of_audio() {
             block,
         }
     };
-    // An MP3 block (1152 frames at 44.1 kHz) is 26 ms: capped so a cancel is seen within 25 ms.
+    // An MP3 frame's block (1152 frames at 44.1 kHz) is 26 ms.
     assert_eq!(
         queue_poll_interval(&item(1152, 44_100), 1152),
-        Duration::from_millis(25)
+        Duration::from_millis(26)
+    );
+    // A whole decoder block (4096 frames at 44.1 kHz, 92 ms) is polled once per block.
+    assert_eq!(
+        queue_poll_interval(&item(4096, 44_100), 4096),
+        Duration::from_millis(92)
     );
     // A short AAC block (1024 frames at 48 kHz, 21 ms) is polled once per block.
     assert_eq!(
@@ -681,6 +686,38 @@ fn full_queue_is_polled_about_once_per_block_of_audio() {
     );
     let end = Stream::End { generation: 1 };
     assert_eq!(queue_poll_interval(&end, 0), Duration::from_millis(5));
+}
+
+#[test]
+fn a_full_queue_wait_of_a_whole_block_ends_when_the_decoder_is_woken() {
+    let (tx, _rx) = sync_channel::<Stream>(1);
+    let buffered = AtomicU64::new(0);
+    let epoch = Arc::new(AtomicU64::new(3));
+    let root = std::env::temp_dir().join(format!("reborn-poll-wake-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let pcm = || Stream::Pcm {
+        generation: 3,
+        block: indexed_pcm(0, 4096, 44_100),
+    };
+    send_stream_item(&tx, &buffered, &epoch, 3, pcm(), 4096, &log).unwrap();
+    let me = thread::current();
+    let canceller = {
+        let epoch = epoch.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            epoch.store(4, Ordering::Release);
+            me.unpark();
+        })
+    };
+    let started = Instant::now();
+    send_stream_item(&tx, &buffered, &epoch, 3, pcm(), 4096, &log).unwrap();
+    let waited = started.elapsed();
+    canceller.join().unwrap();
+    // The 92 ms wait ends with the wake, not at its end.
+    assert!(
+        waited < Duration::from_millis(30 + 40),
+        "woken late: {waited:?}"
+    );
 }
 
 #[test]
@@ -787,6 +824,7 @@ fn stop_send_deadline_covers_a_full_command_queue() {
     let (event_sender, events) = sync_channel(64);
     let mut playback = Playback {
         decode,
+        decoder: thread::current(),
         sink,
         events,
         #[cfg(test)]
@@ -825,6 +863,7 @@ fn stop_with_unavailable_worker_fails_without_blocking() {
     let (event_sender, events) = sync_channel(64);
     let mut playback = Playback {
         decode,
+        decoder: thread::current(),
         sink,
         events,
         #[cfg(test)]

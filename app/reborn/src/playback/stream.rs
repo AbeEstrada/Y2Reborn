@@ -47,11 +47,14 @@ pub(crate) fn send_before_deadline<T>(
 }
 
 const QUEUE_POLL_MIN: Duration = Duration::from_millis(5);
-const QUEUE_POLL_MAX: Duration = Duration::from_millis(25);
+/// One whole 4096-frame block at 44.1 kHz is 93 ms. A stop, track change or seek does not wait for
+/// it: `Playback` unparks the decoder thread with every epoch change and command.
+const QUEUE_POLL_MAX: Duration = Duration::from_millis(100);
 
 /// How long to wait before looking at a full queue again: about one block of audio. The queue holds
 /// eight blocks and the decoder runs far faster than real time, so a freed slot is refilled long
-/// before the queue runs dry, and a fixed 5 ms poll only costs about 200 wakeups a second.
+/// before the queue runs dry, and a fixed 5 ms poll only costs about 200 wakeups a second. The wait
+/// is a park, ended early by `Playback::wake_decoder`.
 pub(crate) fn queue_poll_interval(item: &Stream, frames: u64) -> Duration {
     let Stream::Pcm { block, .. } = item else {
         return QUEUE_POLL_MIN;
@@ -95,7 +98,7 @@ pub(crate) fn send_stream_item(
                     log.heartbeat("playback", 30);
                     beat = Instant::now();
                 }
-                thread::sleep(poll);
+                thread::park_timeout(poll);
             }
             Err(_) => return Err("audio queue closed".into()),
         }

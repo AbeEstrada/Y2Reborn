@@ -233,6 +233,9 @@ enum Stream {
 }
 pub struct Playback {
     decode: SyncSender<DecodeCommand>,
+    /// The decoder thread: woken after every epoch change and command, so its wait on a full
+    /// queue (up to one block) never delays a stop, a track change or a seek.
+    decoder: thread::Thread,
     sink: SyncSender<SinkCommand>,
     pub events: Receiver<PlaybackEvent>,
     #[cfg(test)]
@@ -358,10 +361,12 @@ impl Playback {
             media_state,
             cache,
         };
-        thread::Builder::new()
+        let decoder = thread::Builder::new()
             .name("playback".into())
             .spawn(move || decode_worker.run())
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .thread()
+            .clone();
         let output_worker = SinkWorker {
             al,
             sr,
@@ -385,6 +390,7 @@ impl Playback {
             .map_err(|e| e.to_string())?;
         Ok(Self {
             decode: dt,
+            decoder,
             sink: st,
             events: er,
             #[cfg(test)]
@@ -596,7 +602,9 @@ impl Playback {
         }
         let cancel = job.cancel.clone();
         let generation = job.generation;
-        match self.decode.try_send(DecodeCommand::Load(job)) {
+        let sent = self.decode.try_send(DecodeCommand::Load(job));
+        self.wake_decoder();
+        match sent {
             Ok(()) => {
                 self.cancel = Some(cancel);
                 Some(Ok(()))
@@ -609,22 +617,30 @@ impl Playback {
             }
         }
     }
+    /// End the decoder thread's wait on a full queue now (see `decoder`).
+    fn wake_decoder(&self) {
+        self.decoder.unpark();
+    }
     fn invalidate_start(&mut self, generation: u64) {
         self.hold.store(false, Ordering::Release);
         let invalidated = generation.wrapping_add(1);
         self.epoch.store(invalidated, Ordering::Release);
+        self.wake_decoder();
         let _ = self.sink.try_send(SinkCommand::Stop(None));
         let _ = self.decode.try_send(DecodeCommand::Stop);
+        self.wake_decoder();
     }
     pub fn stop(&mut self, generation: u64) {
         self.hold.store(false, Ordering::Release);
         self.epoch.store(generation, Ordering::Release);
+        self.wake_decoder();
         self.pending_start.take();
         if let Some(c) = self.cancel.take() {
             c.cancel()
         }
         let _ = self.sink.try_send(SinkCommand::Stop(None));
         let _ = self.decode.try_send(DecodeCommand::Stop);
+        self.wake_decoder();
     }
     pub fn stop_and_wait(&mut self, generation: u64) -> Result<(), String> {
         self.stop_and_wait_with_timeout(generation, Duration::from_secs(2))
@@ -653,6 +669,7 @@ impl Playback {
         let deadline = Instant::now() + timeout;
         self.hold.store(false, Ordering::Release);
         self.epoch.store(generation, Ordering::Release);
+        self.wake_decoder();
         self.pending_start.take();
         if let Some(c) = self.cancel.take() {
             c.cancel();
@@ -673,6 +690,7 @@ impl Playback {
             self.sink_released = true;
         }
         let _ = self.decode.try_send(DecodeCommand::Stop);
+        self.wake_decoder();
         result
     }
     pub fn shutdown(&mut self, generation: u64) -> Result<(), String> {
