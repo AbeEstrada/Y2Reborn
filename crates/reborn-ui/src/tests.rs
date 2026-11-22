@@ -3304,6 +3304,50 @@ fn covers_are_requested_while_missing_and_drawn_once_resident() {
 }
 
 #[test]
+fn the_artist_page_asks_for_the_covers_beside_the_three_it_shows() {
+    let tracks: Vec<Track> = (0..12)
+        .map(|n| Track {
+            id: n,
+            source_id: "internal".into(),
+            path: format!("/data/music/Album {n}/1.flac").into(),
+            title: format!("Song {n}"),
+            artist: "Band".into(),
+            album: format!("Album {n}"),
+            album_artist: "Band".into(),
+            duration_ms: 180_000,
+            online: true,
+            artwork: true,
+            year: 2000 + n as u16,
+            ..Default::default()
+        })
+        .collect();
+    let key = |album: usize| art_key(&tracks[album]);
+    let wanted = |ui: &Ui, m: &AppModel| {
+        ui.draw(m, &tracks, false);
+        ui.take_wanted_thumbs()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>()
+    };
+    let mut ui = radios();
+    let mut m = app(Screen::Artist);
+    m.navigation.filter = "artist:Band".into();
+    // Focus on the first album: it and the two after it are shown, three more are asked for.
+    m.navigation.focus = 1;
+    assert_eq!(
+        wanted(&ui, &m),
+        (0..=5).map(key).collect::<Vec<_>>(),
+        "shown covers first, then the ones the wheel reaches next"
+    );
+    // Further along, what is resident is not asked for again; the ones ahead are.
+    ui.set_resident_thumbs((0..=5).map(key));
+    m.navigation.focus = 6;
+    assert_eq!(wanted(&ui, &m), (6..=10).map(key).collect::<Vec<_>>());
+    ui.set_resident_thumbs((0..12).map(key));
+    assert!(wanted(&ui, &m).is_empty());
+}
+
+#[test]
 fn album_page_plays_and_shuffles_and_artist_page_lists_albums() {
     let mut ui = radios();
     let mut m = app(Screen::Album);
