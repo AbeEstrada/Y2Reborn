@@ -120,6 +120,14 @@
       "bytes": 41212,
       "sha256": "ee1ab9330673250a1724eb2238235b6b1462284828eaabecd18283722c86213b"
     },
+    "film-h264.mp4": {
+      "bytes": 8290,
+      "sha256": "a12549e9c4c6381691c398b8873f5462c9e10d96124209d7fec747fd91f291d2"
+    },
+    "film-hevc.mp4": {
+      "bytes": 9531,
+      "sha256": "eee3d2bef0f829de6135cea48d98ddd170005a5ed1e1ad503056f58bb88c02ee"
+    },
     "flac-16-44100.flac": {
       "bytes": 11791,
       "sha256": "7f3848b1aef86a3223751263f99c0ae8a41c5b67f5e6440f000c4fd5c44a5a3e"
@@ -244,6 +252,13 @@
       "bytes": 4096,
       "sha256": "4bd868cf5801211e911c21ad715880d21a26efd97a6ed56cea79cafcf55a0282"
     }
+  },
+  "film_cases": {
+    "files": [
+      "film-hevc.mp4",
+      "film-h264.mp4"
+    ],
+    "generator_ffmpeg_version": "9.1"
   },
   "gapless": {
     "boundary_sample": -7905,

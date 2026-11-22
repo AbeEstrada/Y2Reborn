@@ -52,6 +52,7 @@
 #include "seek_index.h"
 /* video.c */
 int rb_video_codec(enum AVCodecID id);
+int rb_video_unplayable_codec(enum AVCodecID id);
 int rb_video_thumbnail(const char *path, uint8_t *rgba, int side);
 
 typedef struct {
@@ -1109,7 +1110,8 @@ static int admit_streams(RbMedia *m, const char *path) {
     if (!audio) return AVERROR_INVALIDDATA;
     s->discard = AVDISCARD_ALL;
     /* More than a cover: a picture track with many pictures or a real frame rate. */
-    film |= s->nb_frames != 1 && rb_video_codec(s->codecpar->codec_id);
+    film |= s->nb_frames != 1 && (rb_video_codec(s->codecpar->codec_id) ||
+                                  rb_video_unplayable_codec(s->codecpar->codec_id));
   }
   if (film && path && !(m->video_path = strdup(path))) return AVERROR(ENOMEM);
   return 0;
@@ -1252,10 +1254,14 @@ static void extract_metadata(RbMedia *m, RbMetadata *meta) {
   if (m->video_path)
     for (unsigned i = 0; i < m->f->nb_streams; i++) {
       AVCodecParameters *v = m->f->streams[i]->codecpar;
-      if (v->codec_type != AVMEDIA_TYPE_VIDEO || !rb_video_codec(v->codec_id)) continue;
+      int playable = rb_video_codec(v->codec_id);
+      if (v->codec_type != AVMEDIA_TYPE_VIDEO ||
+          !(playable || rb_video_unplayable_codec(v->codec_id)))
+        continue;
       snprintf(meta->codec, sizeof(meta->codec), "%s/%s", avcodec_get_name(v->codec_id),
                avcodec_get_name(p->codec_id));
-      meta->artwork = 1;
+      /* A picture only where the player can decode one (a film it cannot play has none). */
+      meta->artwork = playable;
       break;
     }
   meta->track = ordinal(alias(m, "track", "tracknumber"));

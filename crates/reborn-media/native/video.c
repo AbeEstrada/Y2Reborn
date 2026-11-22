@@ -70,6 +70,24 @@ int rb_video_codec(enum AVCodecID id) {
          id == AV_CODEC_ID_MSMPEG4V3 || id == AV_CODEC_ID_VP8 || id == AV_CODEC_ID_VP9;
 }
 
+/* A real moving picture this player cannot show (docs VIDEO.md, "Not played"): the file is a
+ * film all the same, listed in Videos as one that does not play, never as a song (HEVC anime
+ * episodes showed up as music, Reddit 2026-11-22). Still-picture codecs a cover track uses
+ * (MJPEG, PNG) are not here. */
+int rb_video_unplayable_codec(enum AVCodecID id) {
+  switch (id) {
+  case AV_CODEC_ID_HEVC: case AV_CODEC_ID_AV1: case AV_CODEC_ID_VVC:
+  case AV_CODEC_ID_MPEG1VIDEO: case AV_CODEC_ID_MPEG2VIDEO: case AV_CODEC_ID_VC1:
+  case AV_CODEC_ID_WMV1: case AV_CODEC_ID_WMV2: case AV_CODEC_ID_WMV3:
+  case AV_CODEC_ID_MSMPEG4V1: case AV_CODEC_ID_MSMPEG4V2: case AV_CODEC_ID_THEORA:
+  case AV_CODEC_ID_FLV1: case AV_CODEC_ID_VP6: case AV_CODEC_ID_VP6F: case AV_CODEC_ID_PRORES:
+  case AV_CODEC_ID_RV30: case AV_CODEC_ID_RV40:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
 static enum AVPixelFormat pick_format(AVCodecContext *c, const enum AVPixelFormat *formats) {
   RbVideo *v = c->opaque;
   const enum AVPixelFormat *f;

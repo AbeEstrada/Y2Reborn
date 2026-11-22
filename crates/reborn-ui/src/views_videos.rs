@@ -33,14 +33,38 @@ pub(crate) fn films(tracks: &[Track]) -> Vec<usize> {
     films.into_iter().map(|(i, _)| i).collect()
 }
 
+/// A film whose picture the player cannot show, named by its format.
+pub(crate) fn unplayable_note(t: &Track) -> String {
+    let codec = match t.video_codec().unwrap_or("") {
+        "hevc" => "HEVC (H.265)".to_owned(),
+        "av1" => "AV1".to_owned(),
+        "mpeg2video" => "MPEG-2".to_owned(),
+        other => other.to_uppercase(),
+    };
+    format!("Can't play · {codec}")
+}
+
+/// What Select on a film the player cannot show says instead of playing it.
+pub(crate) fn unplayable_message(t: &Track) -> String {
+    format!(
+        "{}. Convert it to H.264 MP4 to watch it here.",
+        unplayable_note(t).replace("Can't play · ", "This film is ")
+    )
+}
+
 /// Every film of the library by title, each with its length; Select plays it.
 pub(crate) fn rows(tracks: &[Track]) -> Vec<Item> {
     films(tracks)
         .into_iter()
         .map(|i| {
             let t = &tracks[i];
-            let mut item = Item::new(crate::track_title(t), format!("track:{i}"))
-                .with_secondary(crate::views_books::length(t.duration_ms));
+            let secondary = if t.video_playable() {
+                crate::views_books::length(t.duration_ms)
+            } else {
+                unplayable_note(t)
+            };
+            let mut item =
+                Item::new(crate::track_title(t), format!("track:{i}")).with_secondary(secondary);
             item.art = Some(i);
             item
         })
@@ -145,6 +169,19 @@ pub fn now_playing(c: &mut Canvas, ui: &Ui, m: &AppModel, t: &Track) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_film_in_an_unplayable_format_says_so_in_the_list_and_on_select() {
+        let film = Track {
+            codec: "hevc/aac".into(),
+            ..Default::default()
+        };
+        assert_eq!(unplayable_note(&film), "Can't play · HEVC (H.265)");
+        assert_eq!(
+            unplayable_message(&film),
+            "This film is HEVC (H.265). Convert it to H.264 MP4 to watch it here."
+        );
+    }
 
     #[test]
     fn a_picture_fills_the_screen_in_its_own_shape() {

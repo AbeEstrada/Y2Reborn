@@ -494,6 +494,16 @@ impl Track {
     pub fn is_video(&self) -> bool {
         self.codec.contains('/')
     }
+    /// A film's picture codec as FFmpeg names it ("h264", "hevc"); none for a song.
+    pub fn video_codec(&self) -> Option<&str> {
+        self.codec.split_once('/').map(|(picture, _)| picture)
+    }
+    /// A film whose picture this player shows (`rb_video_codec`: H.264, MPEG-4 Part 2, H.263,
+    /// DivX 3, VP8, VP9). Other films (HEVC, AV1, MPEG-2, …) are listed in Videos, not played.
+    pub fn video_playable(&self) -> bool {
+        self.video_codec()
+            .is_some_and(|c| ["h264", "mpeg4", "h263", "msmpeg4v3", "vp8", "vp9"].contains(&c))
+    }
     /// The Album Artist tag the file carries (Last.fm gets this), not the
     /// album's the lists group it under (#45).
     pub fn tagged_album_artist(&self) -> &str {
@@ -2091,6 +2101,20 @@ mod radio_station_tests {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn films_in_formats_the_player_cannot_show_are_films_that_do_not_play() {
+        let film = |codec: &str| Track {
+            codec: codec.into(),
+            ..Default::default()
+        };
+        assert!(film("h264/aac").video_playable());
+        assert!(film("mpeg4/mp3").video_playable());
+        assert!(film("hevc/aac").is_video());
+        assert!(!film("hevc/aac").video_playable());
+        assert!(!film("hevc/aac").is_music());
+        assert_eq!(film("av1/opus").video_codec(), Some("av1"));
+        assert!(!film("aac").is_video() && film("aac").video_codec().is_none());
+    }
     /// #77: 9.2.4's three wheel-click choices read as Off and On, and On is written under 9.2.4's
     /// `when_paused`, so 9.2.4 still reads it after Restore Previous System.
     #[test]

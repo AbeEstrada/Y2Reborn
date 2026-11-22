@@ -220,6 +220,37 @@ def update_covers() -> None:
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+FILM_FILES = {
+    # A real moving picture the player cannot show (HEVC): listed in Videos as unplayable, never
+    # as a song (Reddit 2026-11-22: HEVC anime episodes showed up as music).
+    "film-hevc.mp4": ["-c:v", "libx265", "-x265-params", "log-level=error", "-tag:v", "hvc1"],
+    "film-h264.mp4": ["-c:v", "libx264", "-profile:v", "baseline"],
+}
+
+
+def make_films() -> list[str]:
+    names = []
+    for name, codec in FILM_FILES.items():
+        run("-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=1",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1",
+            *codec, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "48k", "-ac", "2", "-shortest",
+            "-metadata", "title=Film fixture", "-fflags", "+bitexact", str(OUT / name))
+        names.append(name)
+    return names
+
+
+def update_films() -> None:
+    """Write only the film specimens and record them in the manifest."""
+    names = make_films()
+    path = OUT / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for name in names:
+        data = (OUT / name).read_bytes()
+        manifest["files"][name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+    manifest["film_cases"] = {"generator_ffmpeg_version": ffmpeg_version(), "files": names}
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
 def update_books() -> None:
     """Write only the audiobook specimens and record them in the manifest,
     leaving every other fixture (and its hash) as it is."""
@@ -370,5 +401,7 @@ if __name__ == "__main__":
         update_books()
     elif sys.argv[1:] == ["--covers"]:
         update_covers()
+    elif sys.argv[1:] == ["--films"]:
+        update_films()
     else:
         main()

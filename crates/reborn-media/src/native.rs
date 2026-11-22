@@ -2524,6 +2524,18 @@ mod metadata_tests {
         assert!(song.chapters().unwrap().is_empty());
     }
     #[test]
+    fn a_film_the_player_cannot_show_is_a_film_not_a_song() {
+        // Reddit 2026-11-22: HEVC episodes were read as their sound alone and listed as songs.
+        let codec = |name: &str| {
+            let file = MediaFile::open(&path(name), Cancel::new().unwrap()).unwrap();
+            (file.metadata.codec.clone(), file.metadata.artwork)
+        };
+        assert_eq!(codec("film-hevc.mp4"), ("hevc/aac".into(), false));
+        assert_eq!(codec("film-h264.mp4"), ("h264/aac".into(), true));
+        // A song's embedded cover is a still picture, never a film.
+        assert_eq!(codec("cover-3s.m4a").0, "aac");
+    }
+    #[test]
     fn an_m4b_with_its_cover_as_a_video_track_plays_without_the_video() {
         let mut decoder = Decoder::open(
             &path("book-cover-track.m4b"),

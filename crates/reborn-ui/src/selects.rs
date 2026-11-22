@@ -309,7 +309,12 @@ impl Ui {
         else {
             return Effect::None;
         };
-        if tracks.get(index).is_none() {
+        let Some(track) = tracks.get::<usize>(index) else {
+            return Effect::None;
+        };
+        // A film in a format the player cannot show (HEVC, AV1, …): say so, play nothing.
+        if track.is_video() && !track.video_playable() {
+            self.flash(crate::views_videos::unplayable_message(track));
             return Effect::None;
         }
         // A film plays with the Videos list as its collection: Next and
@@ -347,7 +352,11 @@ impl Ui {
             return c.rows.iter().filter_map(catalog::Row::track).collect();
         }
         if m.screen == Screen::Videos {
-            return crate::views_videos::films(tracks);
+            // Next and Previous go to the films that play.
+            return crate::views_videos::films(tracks)
+                .into_iter()
+                .filter(|&i| tracks[i].video_playable())
+                .collect();
         }
         tracks
             .iter()

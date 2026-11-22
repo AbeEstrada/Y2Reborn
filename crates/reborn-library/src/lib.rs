@@ -27,9 +27,10 @@ use std::{
 const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 << 8);
 pub const SCHEMA_VERSION: i64 = 1;
 /// 3: genre is read and stored; 4: Vorbis/APE "ALBUM ARTIST" (with a space) is
-/// read as the album artist; 5: the year (Y2Reborn #66). Every older row re-reads
+/// read as the album artist; 5: the year (Y2Reborn #66); 6: a film the player cannot
+/// show (HEVC, AV1, …) is a film ("hevc/aac"), not a song. Every older row re-reads
 /// its tags once, in the background at the scanner's usual speed.
-const METADATA_REVISION: i64 = 5;
+const METADATA_REVISION: i64 = 6;
 /// Which files a walk takes (1: films too). A quick scan trusts a volume's folder records only
 /// when they were written under the same rules: `VOLUME_REVISION` is kept with them, so the
 /// first scan after this changes walks every folder once and finds the files left out before.
