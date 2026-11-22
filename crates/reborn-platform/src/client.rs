@@ -206,7 +206,14 @@ fn execute(task: PlatformTask) -> Reply {
                 Err(error) => Reply::Failed(task, friendly_error(&error)),
             }
         }
-        UpdateCheck => call(&["update", "check"], 100),
+        UpdateCheck => {
+            return Reply::Operation(
+                task,
+                call(&["update", "check"], 100)
+                    .map(|v| operation(&v))
+                    .map_err(|e| update_check_error(&e)),
+            )
+        }
         UpdateStage => {
             // A Cancel left over from an earlier download must not stop this one.
             ABORT_DOWNLOAD.store(false, Ordering::SeqCst);
@@ -451,6 +458,42 @@ fn clock_error(error: &str) -> String {
     } else {
         "The time couldn't be set. Please try again.".into()
     }
+}
+
+/// A failed `update check` in the owner's words. Every failure used to read "Couldn't reach the update
+/// server", also the ones that are not about the server: the clock still unset right after Wi-Fi came
+/// up (NTP has not answered yet), a check the daily one already holds, a Wi-Fi link without internet.
+/// The first match decides, so the specific codes come before the broad ones (`network_not_online`
+/// and `clock_or_entropy_not_ready_for_TLS` also contain "network" and "tls").
+pub fn update_check_error(error: &str) -> String {
+    let e = error.to_ascii_lowercase();
+    if e.contains("clock") || e.contains("entropy") {
+        "Waiting for the internet time. Try again in a minute."
+    } else if e.contains("network_not_online") {
+        "No internet connection yet. Try again in a moment."
+    } else if e.contains("update_in_progress") {
+        "An update check is already running. Try again in a moment."
+    } else if e.contains("update_already_pending") {
+        "An update is already waiting to be installed."
+    } else if e.contains("timeout") || e.contains("timed out") {
+        "The update server took too long. Try again in a moment."
+    } else if e.contains("name resolution") || e.contains("errno -3") || e.contains("dns") {
+        "Network connected, but internet name lookup isn't working."
+    } else if e.contains("[ssl]") || e.contains("tls") || e.contains("certificate") {
+        "Couldn't make a secure connection. Try again in a moment."
+    } else if e.contains("http error") {
+        "The update server didn't answer properly. Try again later."
+    } else if e.contains("signature")
+        || e.contains("hash")
+        || e.contains("manifest")
+        || e.contains("space")
+        || e.contains("reserve")
+    {
+        return friendly_error(error);
+    } else {
+        "Couldn't reach the update server. Try again in a moment."
+    }
+    .into()
 }
 
 pub fn friendly_error(error: &str) -> String {
@@ -2052,6 +2095,42 @@ mod tests {
         assert!(friendly_error("update_in_progress").contains("already running"));
         let raw = friendly_error("org.bluez.Error.Failed private details");
         assert!(!raw.contains("org.bluez") && !raw.contains("private"));
+    }
+
+    #[test]
+    fn a_failed_update_check_names_its_cause() {
+        // The failure texts `y2-platform update check` prints (Y2Linux `download.rs`).
+        // The clock case was seen on the player: Wi-Fi joined, the first NTP sync 30 s later.
+        let words = |raw| update_check_error(raw);
+        assert!(words("clock_or_entropy_not_ready_for_TLS").contains("internet time"));
+        assert!(words("network_not_online").contains("No internet connection"));
+        assert!(words("update_in_progress").contains("already running"));
+        assert!(words("update_already_pending").contains("waiting to be installed"));
+        assert!(words("timed out").contains("took too long"));
+        assert!(words("timeout").contains("took too long"));
+        assert!(
+            words("<urlopen error [Errno -3] Temporary failure in name resolution>")
+                .contains("name lookup")
+        );
+        assert!(
+            words("[SSL] TLS handshake or certificate check failed (curl 60)")
+                .contains("secure connection")
+        );
+        assert!(words("HTTP Error 503: Service Unavailable").contains("didn't answer"));
+        assert!(words("manifest_signature_invalid").contains("couldn't be verified"));
+        // What stays unknown still says where it failed, and never echoes service text.
+        for raw in [
+            "[Errno 111] Connection refused",
+            "curl exit 7",
+            "weird private detail",
+        ] {
+            let text = words(raw);
+            assert!(
+                text.starts_with("Couldn't reach the update server"),
+                "{raw}"
+            );
+            assert!(!text.contains("private") && !text.contains("curl"));
+        }
     }
 
     #[test]

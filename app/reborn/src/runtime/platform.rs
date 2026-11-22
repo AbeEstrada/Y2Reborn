@@ -253,7 +253,9 @@ impl Runtime {
             client::Reply::Operation(task, result) => {
                 if matches!(
                     task,
-                    reborn_core::PlatformTask::UpdateStage | reborn_core::PlatformTask::UpdateApply
+                    reborn_core::PlatformTask::UpdateCheck
+                        | reborn_core::PlatformTask::UpdateStage
+                        | reborn_core::PlatformTask::UpdateApply
                 ) {
                     self.log.emit(
                         if result.is_ok() {
@@ -387,9 +389,9 @@ impl Runtime {
                             self.ui
                                 .flash("The download didn't finish. Nothing was changed.");
                         } else if task == UpdateCheck {
-                            // The page keeps a release it already offered.
-                            self.ui
-                                .flash("Couldn't reach the update server. Try again in a moment.");
+                            // The page keeps a release it already offered; the
+                            // toast names what went wrong (`update_check_error`).
+                            self.ui.flash(error.clone());
                         } else {
                             self.ui.flash(error.clone());
                         }
