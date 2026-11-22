@@ -57,7 +57,9 @@ impl Ui {
             m.navigation.focus = 0;
             m.navigation.scroll = 0;
             m.navigation.filter.clear();
-        } else if m.screen != Screen::Home {
+        } else {
+            // Nowhere further back: Home itself returns to its top (its first
+            // place), so Back always leads somewhere in a long menu.
             Self::home(m);
         }
     }

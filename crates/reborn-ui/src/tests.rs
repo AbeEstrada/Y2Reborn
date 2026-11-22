@@ -3730,6 +3730,28 @@ fn home_with_many_places_scrolls_and_its_marker_fits_its_row() {
 }
 
 #[test]
+fn back_on_home_returns_to_its_top_and_stays_there() {
+    let mut ui = radios();
+    let mut m = full_home();
+    // Far down a scrolled menu: Back goes to the first place, window and all.
+    m.navigation.focus = 9;
+    m.navigation.scroll = 4;
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!((m.navigation.focus, m.navigation.scroll), (0, 0));
+    // At the top already, Back changes nothing.
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!((m.navigation.focus, m.navigation.scroll), (0, 0));
+    // Coming back from a place still returns to where it was (not the top).
+    m.navigation.focus = 3;
+    ui.model_action(&mut m, Action::Select);
+    assert_ne!(m.screen, Screen::Home);
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!((m.screen, m.navigation.focus), (Screen::Home, 3));
+}
+
+#[test]
 fn home_glides_the_marker_and_grows_the_label_in_place() {
     let mut ui = Ui {
         ui_motion: true,
