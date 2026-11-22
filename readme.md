@@ -74,8 +74,8 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
 </p>
 
 <p align="center">
-  <img src="docs/images/reborn-skins.png" alt="Now Playing in eight of the seventeen skins" width="100%">
-  <br><em>Now Playing in eight of the seventeen skins</em>
+  <img src="docs/images/reborn-skins.png" alt="Now Playing in eight of the nineteen skins" width="100%">
+  <br><em>Now Playing in eight of the nineteen skins</em>
 </p>
 
 *The pictures come from Reborn's own drawing code with sample music (`reborn-preview`, 1.0 Beta 9.2.13).*

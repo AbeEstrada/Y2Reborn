@@ -576,6 +576,8 @@ STATUS = {
     "winamp": {"bar": [status(404, 5, 14, 3, "bar_text", "bar_text/45")],
                "clock": {"w": 58}, "title": {None: {"x": 140, "w": 200}}},
     "zune": {"bar": [status(336, 6, 13, 4, "text", "muted")]},
+    "pixel-quest": {"bar": [status(434, 9, 16, 4, "text", "dim")]},
+    "gilded-grove": {"bar": [status(434, 9, 16, 4, "gold", "golddark")]},
 }
 
 
@@ -1472,10 +1474,278 @@ def bunny_bow():
 
 
 
+# ------------------------------------------------------------------ Pixel Quest
+# A retro role-playing game: white pixel window frames on black, a pixel font, a yellow
+# arrow cursor and Now Playing as a dialogue box. All of it is drawn here; no game's art.
+
+PQ = {"w": "#FFFFFF", "g": "#9A9A9A", "k": "#000000", "y": "#FFD93D", "Y": "#C9A400",
+      "t": "#6CE38A", "T": "#2E9E4E", "s": "#5A5A5A"}
+
+
+def pq_window():
+    """An 8 x 8 window, doubled: a white border two art pixels wide around black."""
+    return doubled(sprite(["wwwwwwww", "wwwwwwww", "wwkkkkww", "wwkkkkww",
+                           "wwkkkkww", "wwkkkkww", "wwwwwwww", "wwwwwwww"], PQ))
+
+
+def pixel_quest():
+    s = Skin("pixel-quest", "Pixel Quest",
+             "A retro role-playing game: pixel windows on black, an arrow cursor and a dialogue box.")
+    s.palette = {"bg": "#000000", "text": "#FFFFFF", "muted": "#C8C8C8", "dim": "#8C8C8C", "accent": "#FFD93D",
+                 "glass": "#FFFFFF", "scrim": "#000000", "sheet": "#000000", "track": "#3A3A3A",
+                 "danger": "#FF5A5A", "success": "#6CE38A", "warning": "#FFD93D"}
+    s.colors = {"bar_text": "#FFFFFF", "panel": "#000000", "accent_text": "#000000", "ink": "#000000"}
+    s.fonts = {"menu": ("PixelifySans-Medium", 19, None), "title2": ("PixelifySans-SemiBold", 17, None),
+               "bartitle": ("PixelifySans-SemiBold", 18, None), "big": ("PixelifySans-Bold", 22, None),
+               "detail": ("PixelifySans-Regular", 17, None), "body": ("PixelifySans-Regular", 16, None),
+               "small": ("PixelifySans-Medium", 14, None), "clock": ("PixelifySans-Bold", 30, "ascii")}
+    s.images = {
+        "window": pq_window(),
+        "cursor": doubled(sprite(["y....", "yy...", "yYy..", "yYYy.", "yYy..", "yy...", "y...."], PQ)),
+        "prompt": doubled(sprite(["wwwwwww", ".wwwww.", "..www..", "...w..."], PQ)),
+        "track": doubled(sprite(["wwwwww", "wkkkkw", "wkkkkw", "wkkkkw", "wwwwww"], PQ)),
+        "fill": doubled(sprite(["tttttt", "tTTTTt", "tTTTTt", "tTTTTt", "tttttt"], PQ)),
+        "battery": doubled(sprite([
+            "wwwwwwwwwwww..", "w..........w..", "w..........ww.", "w..........ww.",
+            "w..........ww.", "w..........w..", "wwwwwwwwwwww.."], PQ)),
+        "battery_fill": vgrad(4, 10, [(0, "#FFFFFF"), (1, "#C8C8C8")]),
+        "battery_low": vgrad(4, 10, [(0, "#FF8A8A"), (1, "#D72626")]),
+    }
+    win = {"slice": [6, 6, 6, 6]}
+    st = Style(row_h=34, top=40, pad=30, ffg="accent", fmuted="accent", icon_ffg="accent", icon_fg="dim",
+               highlight=lambda w, h: [I(10, (h - 14) // 2, 10, 14, "cursor", **{"if": "!row_art & !numbered"})],
+               scroll={"x": -8, "w": 4, "track": "#3A3A3A", "thumb": "text"}, bar_radius=0,
+               bar_track_image="track", bar_fill_image="fill", bar_slice=[4, 4, 4, 4],
+               sheet_bg="#000000", sheet_frame="text", sheet_radius=0, scrim="#000000C0",
+               toast_bg="#000000F0", toast_fg="#FFFFFF", toast_error="#5A0000F0")
+    s.parts["titlebar"] = [
+        R(0, 0, 480, 34, "#000000"), R(0, 34, 480, 2, "text"),
+        T(12, 0, 80, 34, "{clock}", "bartitle", "text", **{"if": "has_clock"}),
+        *battery_part(442, 10),
+    ]
+    s.parts["title"] = [T(130, 0, 220, 34, "{screen}", "bartitle", "text", "center", case="upper")]
+    played = {"if": "playing"}
+    np = [P("titlebar"),
+          T(130, 0, 220, 34, "NOW PLAYING", "bartitle", "text", "center"),
+          I(12, 44, 176, 176, "window", **win),
+          {"type": "art", "x": 24, "y": 56, "size": 152},
+          {"type": "icon", "if": "!has_art", "x": 68, "y": 100, "size": 64, "icon": "note", "color": "dim"},
+          I(196, 44, 272, 176, "window", **win),
+          T(212, 54, 240, 52, "{title}", "big", lines=2, line_height=26),
+          T(212, 108, 240, 22, "{artist}", "detail", "muted"),
+          T(212, 130, 240, 22, "{album}", "detail", "dim"),
+          T(212, 156, 240, 20, "TRACK {queue_index}/{queue_length}", "small", "accent", **{"if": "!live"}),
+          T(212, 156, 240, 20, "ON AIR · {station}", "small", "accent", **{"if": "live"}),
+          T(212, 178, 214, 20, "{quality}", "small", "dim"),
+          {"type": "icon", "if": "favorite", "x": 432, "y": 180, "size": 16, "icon": "heart", "color": "danger"},
+          {"type": "icon", "if": "shuffle", "x": 212, "y": 198, "size": 14, "icon": "shuffle", "color": "muted"},
+          {"type": "icon", "if": "repeat", "x": 232, "y": 198, "size": 14, "icon": "repeat_mode", "color": "muted"},
+          I(12, 228, 456, 120, "window", **win),
+          T(30, 240, 420, 24, "Now playing: {title}", "detail", **played),
+          T(30, 240, 420, 24, "The music rests. Press Play to go on.", "detail", **{"if": "paused"}),
+          T(30, 240, 420, 24, "No song yet. Choose one from the menu.", "detail", **{"if": "!has_track"}),
+          T(30, 270, 56, 18, "TIME", "small", "accent"),
+          bar(st, 88, 272, 266, 14, "progress"),
+          T(362, 268, 92, 22, "{elapsed}/{duration}", "small", "text", "right"),
+          T(30, 300, 420, 22, "{output}", "small", "muted"),
+          I(442, 330, 14, 8, "prompt", **played)]
+    home = [I(8, 42, 280, 310, "window", **win),
+            rows_list(st, 52, 8, w=264, x=16),
+            I(296, 42, 176, 204, "window", **win),
+            {"type": "art", "if": "has_art", "x": 324, "y": 56, "size": 120},
+            {"type": "icon", "if": "!has_art", "x": 352, "y": 84, "size": 64, "icon": "note", "color": "dim"},
+            T(306, 184, 156, 22, "{title}", "small", "text", "center", **{"if": "has_track"}),
+            T(306, 206, 156, 22, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
+            T(306, 194, 156, 22, "NO SONG YET", "small", "dim", "center", **{"if": "!has_track"}),
+            I(296, 252, 176, 100, "window", **win),
+            T(306, 262, 156, 36, "{clock}", "clock", "text", "center", **{"if": "has_clock"}),
+            T(306, 300, 156, 20, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
+            T(306, 324, 156, 20, "BATTERY {battery}%", "small", "accent", "center"),
+            P("titlebar"), T(130, 0, 220, 34, "PIXEL QUEST", "bartitle", "text", "center")]
+    s.parts["row264"] = row_elements(st, 264, False)
+    s.parts["row264_focused"] = row_elements(st, 264, True)
+    standard(s, st, np, home)
+    # Menus, questions, messages and the volume in the same windows.
+    s.screens["sheet"][1:3] = [I(60, 40, 360, 280, "window", **win)]
+    s.screens["toast"][0:2] = [I(70, 286, 340, 58, "window", **win)]
+    s.screens["toast"][-1].update(x=86, y=292, w=308, h=46)
+    s.screens["volume"] = [I(40, 288, 400, 56, "window", **win),
+                           T(58, 288, 70, 56, "VOLUME", "small", "accent"),
+                           bar(st, 132, 309, 244, 14, "volume"),
+                           T(380, 288, 44, 56, "{volume}", "small", "text", "right")]
+    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False},
+                             P("titlebar"), T(130, 0, 220, 34, "{sheet_title}", "bartitle", "text", "center")]
+    prune(s)
+    return s
+
+
+# ------------------------------------------------------------------ Gilded Grove
+# A storybook fantasy adventure: deep forest green, panels with double gold borders and diamond
+# corners, parchment text in a serif face and a green meter. Drawn here; no game's symbols.
+
+GOLD, GOLD_DARK, PARCHMENT, FOREST = "#E3B54A", "#8A6A22", "#F4E9C8", "#0E1F1A"
+
+
+def gg_background():
+    """A vignette from a lighter glade to dark edges, with a faint diamond lattice; half size,
+    drawn stretched to the screen (a full-size picture does not fit the atlas with the fonts)."""
+    w, h = 240, 180
+    im = Image.new("RGBA", (w, h))
+    px = im.load()
+    centre, edge = rgba("#1C3B31"), rgba("#06110D")
+    for y in range(h):
+        for x in range(w):
+            d = min(1.0, math.hypot((x - w / 2) / (w * 0.62), (y - h * 0.42) / (h * 0.7)))
+            c = mix(centre, edge, d ** 1.6)
+            if (x + y) % 24 == 0 or (x - y) % 24 == 0:
+                c = mix(c, rgba(GOLD), 0.06)
+            px[x, y] = c
+    return im
+
+
+def gg_panel(fill="#0A1813E6"):
+    """A 24 x 24 panel for nine-slicing: dark glass (solid for menus, questions and messages
+    over a screen), an outer gold line, an inner dark gold line and a small diamond in each
+    corner."""
+    im = Image.new("RGBA", (24, 24), rgba(fill))
+    d = ImageDraw.Draw(im)
+    d.rectangle([0, 0, 23, 23], outline=rgba(GOLD))
+    d.rectangle([2, 2, 21, 21], outline=rgba(GOLD_DARK))
+    for cx, cy in ((3, 3), (20, 3), (3, 20), (20, 20)):
+        d.polygon([(cx, cy - 2), (cx + 2, cy), (cx, cy + 2), (cx - 2, cy)], fill=rgba(GOLD))
+    return im
+
+
+def gg_highlight():
+    im = vgrad(24, 24, [(0, "#E3B54A55"), (1, "#E3B54A22")])
+    ImageDraw.Draw(im).rectangle([0, 0, 23, 23], outline=rgba(GOLD))
+    return rounded(im, 4)
+
+
+def gg_diamond(size=12, colour=GOLD):
+    s4 = size * 4
+    big = Image.new("RGBA", (s4, s4), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    m = s4 // 2
+    d.polygon([(m, 0), (s4 - 1, m), (m, s4 - 1), (0, m)], fill=rgba(colour))
+    d.polygon([(m, s4 // 4), (s4 * 3 // 4, m), (m, s4 * 3 // 4), (s4 // 4, m)], fill=rgba(GOLD_DARK))
+    return big.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def gg_divider(w=200):
+    """A thin gold rule fading out to both ends, with a diamond in the middle."""
+    im = Image.new("RGBA", (w, 12), (0, 0, 0, 0))
+    g = rgba(GOLD)
+    for x in range(w):
+        a = round(255 * (1 - abs(x - w / 2) / (w / 2)) ** 0.7)
+        im.putpixel((x, 6), (g[0], g[1], g[2], a))
+    im.alpha_composite(gg_diamond(12), (w // 2 - 6, 0))
+    return im
+
+
+def gg_pill(fill_top, fill_bottom, border):
+    im = vgrad(16, 12, [(0, fill_top), (1, fill_bottom)])
+    ImageDraw.Draw(im).rectangle([0, 0, 15, 11], outline=rgba(border))
+    return rounded(im, 5)
+
+
+def gilded_grove():
+    s = Skin("gilded-grove", "Gilded Grove",
+             "A fantasy adventure: forest green, gold-framed panels, parchment text and a green meter.")
+    s.palette = {"bg": FOREST, "text": PARCHMENT, "muted": "#CDBF95", "dim": "#A39670", "accent": GOLD,
+                 "glass": PARCHMENT, "scrim": "#000000", "sheet": "#0A1813", "track": "#23382F",
+                 "danger": "#FF7A6B", "success": "#7BD88F", "warning": "#F2C14E"}
+    s.colors = {"bar_text": PARCHMENT, "panel": "#0A1813", "accent_text": "#1A1206", "ink": "#06110D",
+                "gold": GOLD, "golddark": GOLD_DARK, "focus": "#FFF6DA"}
+    s.fonts = {"menu": ("NotoSerif-Regular", 17, None), "title2": ("NotoSerif-Bold", 16, None),
+               "bartitle": ("NotoSerif-Bold", 15, None), "big": ("NotoSerif-Bold", 21, None),
+               "detail": ("NotoSerif-Regular", 15, None), "body": ("NotoSerif-Regular", 14, None),
+               "small": ("NotoSerif-Regular", 13, None), "clock": ("NotoSerif-Bold", 28, "ascii")}
+    s.images = {
+        "glade": gg_background(),
+        "panel": gg_panel(),
+        "panel_solid": gg_panel("#0A1813"),
+        "highlight": gg_highlight(),
+        "diamond": gg_diamond(12),
+        "divider": gg_divider(200),
+        "track": gg_pill("#0A1813", "#16291F", GOLD_DARK),
+        "fill": gg_pill("#8FF0A0", "#2FA84F", GOLD),
+        "battery": battery_pictures(GOLD),
+        "battery_fill": vgrad(4, 10, [(0, PARCHMENT), (1, "#CDBF95")]),
+        "battery_low": vgrad(4, 10, [(0, "#FF9A8A"), (1, "#C8382A")]),
+    }
+    pan = {"slice": [8, 8, 8, 8]}
+    st = Style(row_h=34, top=42, pad=16, ffg="focus", fmuted="text", icon_ffg="gold", icon_fg="dim",
+               highlight=lambda w, h: [I(4, 1, w - 8, h - 2, "highlight", slice=[6, 6, 6, 6])],
+               scroll={"x": -8, "w": 3, "track": "#23382F", "thumb": "gold"},
+               bar_track_image="track", bar_fill_image="fill", bar_slice=[6, 5, 6, 5],
+               sheet_bg="#0A1813", sheet_frame="gold", sheet_radius=4, scrim="#000000A0",
+               toast_bg="#0A1813F0", toast_fg=PARCHMENT, toast_error="#5A1610F0")
+    s.parts["titlebar"] = [
+        R(0, 0, 480, 34, "panel"), R(0, 34, 480, 1, "gold"), R(0, 36, 480, 1, "golddark"),
+        T(14, 0, 80, 34, "{clock}", "bartitle", "gold", **{"if": "has_clock"}),
+        *battery_part(442, 10),
+    ]
+    s.parts["title"] = [T(130, 0, 220, 34, "{screen}", "bartitle", "text", "center", case="upper", tracking=2)]
+    np = [I(0, 0, 480, 360, "glade"), P("titlebar"),
+          T(130, 0, 220, 34, "NOW PLAYING", "bartitle", "text", "center", tracking=2),
+          I(12, 46, 204, 204, "panel", **pan),
+          {"type": "art", "x": 26, "y": 60, "size": 176, "radius": 6},
+          R(24, 58, 180, 180, "gold", radius=8, stroke=2),
+          {"type": "icon", "if": "!has_art", "x": 82, "y": 116, "size": 64, "icon": "note", "color": "dim"},
+          T(228, 50, 240, 56, "{title}", "big", lines=2, line_height=27),
+          I(228, 110, 200, 12, "divider"),
+          T(228, 126, 240, 22, "{artist}", "detail", "muted"),
+          T(228, 148, 240, 22, "{album}", "detail", "dim"),
+          T(228, 172, 210, 20, "{quality}", "small", "dim"),
+          {"type": "icon", "if": "favorite", "x": 446, "y": 174, "size": 16, "icon": "heart", "color": "danger"},
+          T(228, 196, 240, 20, "Song {queue_index} of {queue_length}", "small", "gold", **{"if": "!live"}),
+          T(228, 196, 240, 20, "On Air · {station}", "small", "gold", **{"if": "live"}),
+          {"type": "icon", "if": "shuffle", "x": 228, "y": 222, "size": 16, "icon": "shuffle", "color": "gold"},
+          {"type": "icon", "if": "repeat", "x": 252, "y": 222, "size": 16, "icon": "repeat_mode", "color": "gold"},
+          {"type": "icon", "x": 444, "y": 220, "size": 20, "icon": "play_pause", "color": "gold"},
+          I(12, 258, 456, 92, "panel", **pan),
+          bar(st, 30, 274, 420, 14, "progress"),
+          T(30, 292, 120, 20, "{elapsed}", "small", "text"),
+          T(330, 292, 120, 20, "{remaining}", "small", "text", "right"),
+          I(190, 296, 100, 12, "divider"),
+          T(30, 318, 420, 22, "{output}", "small", "muted", "center")]
+    home = [I(0, 0, 480, 360, "glade"),
+            I(8, 44, 284, 308, "panel", **pan),
+            rows_list(st, 54, 8, w=268, x=16),
+            I(300, 44, 172, 196, "panel", **pan),
+            {"type": "art", "if": "has_art", "x": 326, "y": 58, "size": 120, "radius": 6},
+            R(324, 56, 124, 124, "gold", radius=8, stroke=1, **{"if": "has_art"}),
+            {"type": "icon", "if": "!has_art", "x": 354, "y": 86, "size": 64, "icon": "note", "color": "dim"},
+            T(308, 186, 156, 22, "{title}", "small", "text", "center", **{"if": "has_track"}),
+            T(308, 208, 156, 22, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
+            T(308, 196, 156, 22, "Nothing playing", "small", "dim", "center", **{"if": "!has_track"}),
+            I(300, 248, 172, 104, "panel", **pan),
+            T(308, 258, 156, 36, "{clock}", "clock", "gold", "center", **{"if": "has_clock"}),
+            I(336, 296, 100, 12, "divider"),
+            T(308, 312, 156, 22, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
+            P("titlebar"), T(130, 0, 220, 34, "GILDED GROVE", "bartitle", "text", "center", tracking=2)]
+    s.parts["row268"] = row_elements(st, 268, False)
+    s.parts["row268_focused"] = row_elements(st, 268, True)
+    standard(s, st, np, home)
+    s.screens["sheet"][1:3] = [I(60, 40, 360, 280, "panel_solid", **pan)]
+    s.screens["toast"][0:2] = [I(70, 286, 340, 58, "panel_solid", **pan)]
+    s.screens["toast"][-1].update(x=86, y=292, w=308, h=46)
+    s.screens["volume"] = [I(40, 288, 400, 56, "panel_solid", **pan),
+                           {"type": "icon", "x": 58, "y": 305, "size": 22, "icon": "speaker", "color": "gold"},
+                           bar(st, 92, 309, 290, 14, "volume"),
+                           T(384, 288, 40, 56, "{volume}", "small", "text", "right")]
+    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False},
+                             P("titlebar"), T(130, 0, 220, 34, "{sheet_title}", "bartitle", "text", "center")]
+    prune(s)
+    return s
+
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     skins = [nano_glass(), walkman(), terminal(), winamp(), paper(), big_type(), cassette(), neon(), zune(),
-             bunny_bow()]
+             bunny_bow(), pixel_quest(), gilded_grove()]
     for colour_id, name, bt, bb, ht, hb, acc in [
         ("silver", "Silver", "#D5D9DF", "#9AA0A8", "#B9C0C9", "#7D858F", "#5E6670"),
         ("pink", "Pink", "#F7C6D9", "#D9799E", "#F29BBE", "#D9558A", "#C2386F"),
