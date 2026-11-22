@@ -58,6 +58,17 @@ fn play_waits_briefly_for_bluetooth_headphones_just_lost() {
     assert!(!lost.applies(&wired, Some(false), after));
 }
 #[test]
+fn switching_bluetooth_off_leaves_no_headphones_to_wait_for() {
+    // #136: Bluetooth switched off by the listener disconnects the headphones; Play then said
+    // "Waiting for …" for minutes (the wait restarts after each wake).
+    let t0 = Instant::now();
+    let bt = AudioOutput::Bluetooth("AA:BB".into());
+    assert!(LostPeer::after_loss(&bt, true, t0).is_none());
+    let lost = LostPeer::after_loss(&bt, false, t0).unwrap();
+    assert!(lost.is(&bt));
+    assert!(LostPeer::after_loss(&AudioOutput::Wired, false, t0).is_none());
+}
+#[test]
 fn bluetooth_headphones_win_over_the_jack_once_per_connection() {
     let mut auto = AutoOutput::default();
     let mut s = status("AA", "/a");

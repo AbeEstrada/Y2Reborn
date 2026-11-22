@@ -284,6 +284,7 @@ pub(crate) fn run() -> Result<(), String> {
         click_spec: None,
         jack_pending: None,
         lost_peer: None,
+        bluetooth_off_by_user: false,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -1820,18 +1821,23 @@ impl MainLoop {
                                     )))
                                     .map_err(|_| "Wi-Fi busy".into())
                             }),
-                        (Radio::Bluetooth, RadioAction::On | RadioAction::Off) => rt
-                            .bluetooth
-                            .as_ref()
-                            .ok_or("Bluetooth service unavailable".to_string())
-                            .and_then(|w| {
-                                w.commands
-                                    .try_send(bluetooth::Command::Power(matches!(
-                                        action,
-                                        RadioAction::On
-                                    )))
-                                    .map_err(|_| "Bluetooth busy".into())
-                            }),
+                        (Radio::Bluetooth, RadioAction::On | RadioAction::Off) => {
+                            rt.bluetooth_off_by_user = matches!(action, RadioAction::Off);
+                            if rt.bluetooth_off_by_user {
+                                rt.lost_peer = None;
+                            }
+                            rt.bluetooth
+                                .as_ref()
+                                .ok_or("Bluetooth service unavailable".to_string())
+                                .and_then(|w| {
+                                    w.commands
+                                        .try_send(bluetooth::Command::Power(matches!(
+                                            action,
+                                            RadioAction::On
+                                        )))
+                                        .map_err(|_| "Bluetooth busy".into())
+                                })
+                        }
                     };
                     r.map(|_| json!({"accepted":true,"radio":radio,"action":action}))
                 }

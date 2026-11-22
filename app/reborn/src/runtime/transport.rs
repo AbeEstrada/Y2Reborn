@@ -418,9 +418,10 @@ impl Runtime {
     /// #28 out loud on the speaker). With nothing in the jack, Play waits for
     /// them instead; the output follows them when they are back.
     pub(crate) fn awaits_lost_peer(&self) -> bool {
-        self.lost_peer
-            .as_ref()
-            .is_some_and(|lost| lost.applies(&self.model.output, self.headphones, Instant::now()))
+        !self.bluetooth_off_by_user
+            && self.lost_peer.as_ref().is_some_and(|lost| {
+                lost.applies(&self.model.output, self.headphones, Instant::now())
+            })
     }
     pub(crate) fn wait_for_lost_peer(&mut self) -> bool {
         if !self.awaits_lost_peer() {

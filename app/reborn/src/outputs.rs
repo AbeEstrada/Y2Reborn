@@ -103,6 +103,21 @@ impl LostPeer {
             play: None,
         }
     }
+    /// What a loss of the selected output leaves to wait for: nothing when it was not Bluetooth, and
+    /// nothing when the listener switched Bluetooth off (the loss is that choice; Y2Linux #136: Play
+    /// said "Waiting for …" for minutes with Bluetooth off).
+    pub(crate) fn after_loss(
+        output: &AudioOutput,
+        switched_off: bool,
+        now: Instant,
+    ) -> Option<Self> {
+        match output {
+            AudioOutput::Bluetooth(address) if !switched_off => {
+                Some(Self::new(address.clone(), now))
+            }
+            _ => None,
+        }
+    }
     pub(crate) fn is(&self, output: &AudioOutput) -> bool {
         matches!(output, AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&self.address))
     }

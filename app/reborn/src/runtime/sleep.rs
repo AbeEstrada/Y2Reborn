@@ -5,8 +5,12 @@ impl Runtime {
     /// The selected Bluetooth peer is gone: back to the jack, paused.
     pub(crate) fn bluetooth_peer_lost(&mut self, recovery: &str) {
         self.abandon_pending_reconfiguration();
+        self.lost_peer = LostPeer::after_loss(
+            &self.model.output,
+            self.bluetooth_off_by_user,
+            Instant::now(),
+        );
         if let AudioOutput::Bluetooth(address) = self.model.output.clone() {
-            self.lost_peer = Some(LostPeer::new(address.clone(), Instant::now()));
             self.model.apply(Event::BluetoothDisconnected(address));
         }
         self.pause();

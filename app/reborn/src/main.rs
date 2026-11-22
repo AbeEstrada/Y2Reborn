@@ -296,6 +296,9 @@ struct Runtime {
     jack_pending: Option<bool>,
     /// The Bluetooth headphones just lost; they usually return (F51).
     lost_peer: Option<LostPeer>,
+    /// The listener switched Bluetooth off (Settings, the Quick Menu, a button or rebornctl), until
+    /// they switch it on: headphones dropping then are no loss to wait for (#136).
+    bluetooth_off_by_user: bool,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,

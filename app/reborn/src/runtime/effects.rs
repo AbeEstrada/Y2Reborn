@@ -205,13 +205,16 @@ impl Runtime {
             })?,
             Effect::WifiSaved(id) => self.send_wifi(wifi::Command::Saved(id))?,
             Effect::WifiForget(id) => self.send_wifi(wifi::Command::Forget(id))?,
-            Effect::BluetoothPower => self
-                .bluetooth
-                .as_ref()
-                .ok_or("Bluetooth unavailable")?
-                .commands
-                .try_send(bluetooth::Command::Power(!self.bt_state.powered))
-                .map_err(|_| "Bluetooth busy")?,
+            Effect::BluetoothPower => {
+                let on = !self.bt_state.powered;
+                self.bluetooth
+                    .as_ref()
+                    .ok_or("Bluetooth unavailable")?
+                    .commands
+                    .try_send(bluetooth::Command::Power(on))
+                    .map_err(|_| "Bluetooth busy")?;
+                self.bluetooth_off_by_user = !on;
+            }
             Effect::BluetoothScan => self.on_bluetooth_scan()?,
             Effect::BluetoothDevice { path, operation } => {
                 self.on_bluetooth_device(path, operation)?
