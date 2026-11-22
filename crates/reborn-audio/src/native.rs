@@ -219,6 +219,17 @@ fn bluetooth_pcm_lease(
     };
     reborn_platform::bluetooth::playback_pcm_lease(address)
 }
+/// The longest wait for room in the ring: one period and a little. A shorter wait (it was 20 ms,
+/// a 1024-frame period is 21-23 ms) times out before every period and wakes the audio thread
+/// twice per period; the controls are still looked at within about 30 ms (Y2Reborn #176
+/// follow-up).
+fn ready_wait_ms(period: u32, rate: u32) -> c_int {
+    if rate == 0 {
+        return 20;
+    }
+    (u64::from(period) * 1000 / u64::from(rate) + 5).clamp(20, 40) as c_int
+}
+
 struct WritePacing {
     partial: bool,
     waiting: bool,
@@ -248,7 +259,7 @@ impl WritePacing {
         }
         if n == -11 {
             // A ready notification can race the write. Keep one bounded wait
-            // per call so the audio loop polls controls at least every 20 ms.
+            // per call so the audio loop polls controls about once a period.
             if waited {
                 self.waiting = true;
                 return Ok(0);
@@ -622,10 +633,11 @@ impl AudioSink for AlsaSink {
         // after the audio loop polls controls. Bluetooth keeps its old pacing.
         let requested = pcm.len() / frame_bytes;
         let raw = self.raw.as_ptr();
+        let wait_ms = ready_wait_ms(self.params.period, self.params.rate);
         match self.pacing.write(
             requested,
             // SAFETY: bounded wait on the handle uniquely owned by this sink.
-            || unsafe { rb_sink_wait(raw, 20) },
+            || unsafe { rb_sink_wait(raw, wait_ms) },
             // SAFETY: live bytes and handle; requested count uses their frame stride.
             || unsafe { rb_sink_write(raw, pcm.as_ptr(), requested as c_int) },
         ) {
@@ -772,6 +784,14 @@ mod wired_level_tests {
 mod format_tests {
     use super::*;
 
+    #[test]
+    fn the_ready_wait_covers_one_period() {
+        assert_eq!(ready_wait_ms(1024, 44_100), 28);
+        assert_eq!(ready_wait_ms(1024, 48_000), 26);
+        assert_eq!(ready_wait_ms(512, 44_100), 20);
+        assert_eq!(ready_wait_ms(4096, 44_100), 40);
+        assert_eq!(ready_wait_ms(1024, 0), 20);
+    }
     #[test]
     fn partial_write_pacing_bounds_waits_and_never_consumes_unwritten_frames() {
         use std::{cell::RefCell, collections::VecDeque};
