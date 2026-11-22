@@ -51,3 +51,20 @@ fn a_film_between_two_pictures_is_looked_at_again_shortly_without_spinning() {
         Duration::ZERO
     );
 }
+
+#[test]
+fn dark_playback_wakes_twice_a_second_and_lit_playback_stays_quick() {
+    assert_eq!(
+        main_loop_interval(true, false, false, true, Duration::ZERO),
+        Duration::from_millis(500)
+    );
+    // A dirty model or a glide changes nothing while dark.
+    assert_eq!(
+        main_loop_interval(true, true, true, true, Duration::ZERO),
+        Duration::from_millis(500)
+    );
+    assert_eq!(
+        main_loop_interval(false, false, false, true, Duration::ZERO),
+        Duration::from_millis(50)
+    );
+}

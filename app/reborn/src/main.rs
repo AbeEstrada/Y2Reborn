@@ -650,6 +650,9 @@ fn frame_gap(gliding: bool) -> Duration {
 /// Input readiness wakes immediately; the bounded timeout services asynchronous
 /// workers. Dirty frames use a start-to-start budget rather than adding the
 /// entire GPU/presentation cost to a fresh delay.
+/// The main loop's wait while music plays with the screen off.
+const DARK_PLAYBACK_INTERVAL: Duration = Duration::from_millis(500);
+
 fn main_loop_interval(
     screen_off: bool,
     dirty: bool,
@@ -665,6 +668,11 @@ fn main_loop_interval(
         } else {
             wait
         }
+    } else if playing && screen_off {
+        // Dark playback: nothing to draw, and the decoder keeps the queue and gapless itself; input,
+        // Bluetooth and AVRCP wake the loop at once. Position and track events wait at most this
+        // long (Y2Reborn #176 follow-up: 20 wakeups a second down to 2).
+        DARK_PLAYBACK_INTERVAL
     } else if playing {
         Duration::from_millis(50)
     } else if screen_off {

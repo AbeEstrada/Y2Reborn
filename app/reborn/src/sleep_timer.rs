@@ -59,6 +59,17 @@ impl Runtime {
         }
     }
 
+    /// Whether a timed sleep fades now or within a second: the fade steps with every pass of the
+    /// main loop, so dark playback keeps its quick passes then.
+    pub(crate) fn sleep_fade_near(&self) -> bool {
+        self.model
+            .sleep_timer
+            .and_then(|timer| timer.until)
+            .is_some_and(|until| {
+                until.saturating_duration_since(Instant::now()) < FADE + Duration::from_secs(1)
+            })
+    }
+
     /// Every pass of the main loop: fade, pause when due.
     pub(crate) fn sleep_timer_tick(&mut self) {
         let Some(timer) = self.model.sleep_timer else {

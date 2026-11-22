@@ -2182,6 +2182,11 @@ impl MainLoop {
                 self.render_time.elapsed(),
             )
         };
+        let interval = if rt.sleep_fade_near() {
+            interval.min(Duration::from_millis(50))
+        } else {
+            interval
+        };
         let quiet = !prewarming
             && self.monitor.is_none()
             && self.inputs.as_ref().is_some_and(|input| !input.held())

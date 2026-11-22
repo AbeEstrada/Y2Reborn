@@ -358,7 +358,7 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   params->rate = requested_rate;
   params->format = selected;
   params->channels = 2;
-  params->period = 512;
+  params->period = 1024;
   params->buffer = 4096;
   params->hardware_mixer_gain_cdb = wired ? wired_master_cdb() : INT32_MIN;
   params->hp_level_live = -1;
@@ -449,8 +449,11 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
   /* Bluetooth gets a deeper ring (8 x 1024 frames, ~170-186 ms): an underrun
    * there stops and restarts the A2DP stream, a gap after which some
    * headphones stay silent (F69). The sink thread keeps it fed with music or
-   * silence; the depth only has to cover that thread running late. */
-  snd_pcm_uframes_t period = wired ? 512 : 1024, buffer = wired ? 4096 : 8192;
+   * silence; the depth only has to cover that thread running late. Wired
+   * keeps its ~93 ms ring in 4 periods of 1024 (was 8 of 512): half the
+   * audio interrupts and sink-thread wakeups, the same delay for volume and
+   * pause (Y2Reborn #176 follow-up). */
+  snd_pcm_uframes_t period = 1024, buffer = wired ? 4096 : 8192;
   if ((r = snd_pcm_hw_params_any(s->pcm, p)) < 0)
     goto fail;
   if ((r = snd_pcm_hw_params_set_access(s->pcm, p,
