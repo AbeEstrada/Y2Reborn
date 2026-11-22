@@ -34,6 +34,8 @@ FONTS = {
     "NotoSerif-Regular": "/usr/share/fonts/noto/NotoSerif-Regular.ttf",
     "NotoSerif-Bold": "/usr/share/fonts/noto/NotoSerif-Bold.ttf",
     "NotoSerif-Italic": "/usr/share/fonts/noto/NotoSerif-Italic.ttf",
+    "NotoSerifDisplay-Regular": "/usr/share/fonts/noto/NotoSerifDisplay-Regular.ttf",
+    "NotoSerifDisplay-Medium": "/usr/share/fonts/noto/NotoSerifDisplay-Medium.ttf",
     **{f"PixelifySans-{w}": str(ROOT / f"assets/fonts/pixelify/PixelifySans-{w}.ttf")
        for w in ("Regular", "Medium", "SemiBold", "Bold")},
 }
@@ -1475,271 +1477,799 @@ def bunny_bow():
 
 
 # ------------------------------------------------------------------ Pixel Quest
-# A retro role-playing game: white pixel window frames on black, a pixel font, a yellow
-# arrow cursor and Now Playing as a dialogue box. All of it is drawn here; no game's art.
+# A premium pixel-art role-playing game: a dusk scene (dithered sky, stars, a moon, two mountain
+# ranges with pines) behind bevelled windows with gold corner gems, gold name plates, a gem
+# cursor, pixel icons and shadowed text. Every picture is drawn here and shown at its stored size
+# (the skin atlas is filtered linearly, so scaled pixel art would blur).
 
-PQ = {"w": "#FFFFFF", "g": "#9A9A9A", "k": "#000000", "y": "#FFD93D", "Y": "#C9A400",
-      "t": "#6CE38A", "T": "#2E9E4E", "s": "#5A5A5A"}
+PQ_SHADOW = "#05040F"
+PQ_INK = "#2A1A05"
+PQC = {
+    "k": PQ_SHADOW, "w": "#FFFFFF", "l": "#E8E4FF", "m": "#8C84D8", "d": "#2B2766",
+    "g": "#FFD45A", "G": "#FFF2B0", "o": "#C8901E", "O": "#8A5A10", "r": "#FF6E8A",
+    "s": "#C9C3E6", "t": "#6EE7A0", "T": "#2FA866",
+}
+PQ_SKY = [(34, "#0B0A1A"), (92, "#110E2A"), (140, "#18143C"), (184, "#21194F"),
+          (222, "#2D1F63"), (254, "#3B2574"), (282, "#4C2C82")]
 
 
-def pq_window():
-    """An 8 x 8 window, doubled: a white border two art pixels wide around black."""
-    return doubled(sprite(["wwwwwwww", "wwwwwwww", "wwkkkkww", "wwkkkkww",
-                           "wwkkkkww", "wwkkkkww", "wwwwwwww", "wwwwwwww"], PQ))
+def pq_art(rows, colours=PQC, k=2):
+    return doubled(sprite(rows, colours), k)
+
+
+def pq_window(fill="#1B1846", alpha="C8"):
+    """A 16 x 16 art-pixel window, doubled (slice 12): a shadow line, a light and a mid bevel, a
+    dark inner line, a translucent fill and a gold gem in each corner."""
+    n = 16
+    im = Image.new("RGBA", (n, n), rgba(fill + alpha))
+    d = ImageDraw.Draw(im)
+    for i, c in enumerate((PQ_SHADOW, "#E8E4FF", "#8C84D8", "#2B2766")):
+        d.rectangle([i, i, n - 1 - i, n - 1 - i], outline=rgba(c))
+    for cx, cy in ((1, 1), (n - 2, 1), (1, n - 2), (n - 2, n - 2)):
+        for dx, dy, c in ((0, -1, "g"), (-1, 0, "g"), (1, 0, "O"), (0, 1, "O"), (0, 0, "G")):
+            im.putpixel((cx + dx, cy + dy), rgba(PQC[c]))
+    return doubled(im)
+
+
+def pq_plate():
+    """A gold name plate, 12 x 10 art pixels doubled (slice 8): dark outline, a highlight row and
+    a gold gradient."""
+    w, h = 12, 10
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle([0, 0, w - 1, h - 1], fill=rgba(PQ_SHADOW))
+    shades = ["#FFF2B0", "#FFE08A", "#FFD45A", "#F2C04A", "#E3AC38", "#D49A2C", "#C8901E", "#A8741A"]
+    for y in range(1, h - 1):
+        d.line([(1, y), (w - 2, y)], fill=rgba(shades[y - 1]))
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        im.putpixel((x, y), (0, 0, 0, 0))
+    return doubled(im)
+
+
+def pq_dither(top, bottom, w=240):
+    """Two art rows between two sky bands: a checkerboard, doubled to 480 x 4."""
+    im = Image.new("RGBA", (w, 2), rgba(top))
+    for x in range(w):
+        im.putpixel((x, 0), rgba(bottom if x % 2 == 0 else top))
+        im.putpixel((x, 1), rgba(top if x % 2 == 0 else bottom))
+    return doubled(im)
+
+
+def pq_rand(seed):
+    while True:
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        yield seed
+
+
+def pq_stars():
+    """Stars on a clear 120 x 110 art grid (doubled to 240 x 220): dim dots, bright dots and a few
+    four-point twinkles."""
+    im = Image.new("RGBA", (120, 110), (0, 0, 0, 0))
+    r = pq_rand(4242)
+    for _ in range(46):
+        x, y, kind = next(r) % 120, next(r) % 110, next(r) % 9
+        if kind < 5:
+            im.putpixel((x, y), rgba("#6F68B8"))
+        elif kind < 8:
+            im.putpixel((x, y), rgba("#E8E4FF"))
+        elif 1 <= x < 119 and 1 <= y < 109:
+            im.putpixel((x, y), rgba("#FFFFFF"))
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                im.putpixel((x + dx, y + dy), rgba("#8C84D8"))
+    return doubled(im)
+
+
+def pq_moon():
+    """A 22 x 22 art moon with a shaded edge, craters and a one-pixel glow ring."""
+    n = 22
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    c = (n - 1) / 2
+    for y in range(n):
+        for x in range(n):
+            dist = math.hypot(x - c, y - c)
+            if dist <= 8.6:
+                shade = math.hypot(x - c + 2.5, y - c + 2.5)
+                im.putpixel((x, y), rgba("#FFF2C8" if shade < 8.2 else "#E3CF8E"))
+            elif dist <= 10.4 and (x + y) % 2 == 0:
+                im.putpixel((x, y), rgba("#FFF2C8" + "40"))
+    for cx, cy, rr in ((8, 9, 1.6), (13, 13, 1.2), (12, 7, 0.9)):
+        for y in range(n):
+            for x in range(n):
+                if math.hypot(x - cx, y - cy) <= rr:
+                    im.putpixel((x, y), rgba("#E3CF8E"))
+    return doubled(im)
+
+
+def pq_mountains():
+    """Two ranges on a 240 x 48 art strip (doubled to 480 x 96): a far violet range with snowy
+    peaks and a near dark range with a row of pines."""
+    w, h = 240, 48
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    far = [16, 10, 18, 6, 14, 20, 9, 15, 4, 12, 19, 8, 16]
+    near = [30, 24, 33, 27, 22, 31, 26, 34, 25, 29, 23, 32, 28]
+
+    def ridge(points, x):
+        seg = w / (len(points) - 1)
+        i = min(int(x / seg), len(points) - 2)
+        t = (x - i * seg) / seg
+        return points[i] + (points[i + 1] - points[i]) * t
+
+    for x in range(w):
+        top = round(ridge(far, x))
+        for y in range(top, h):
+            colour = "#3A2C78" if y > top + 1 else "#5A4AA0"
+            if y < top + 3 and min(far) + 3 > top:
+                colour = "#C9C3E6"
+            im.putpixel((x, y), rgba(colour))
+    for x in range(w):
+        top = round(ridge(near, x))
+        for y in range(top, h):
+            im.putpixel((x, y), rgba("#16123A" if y > top else "#241E52"))
+    r = pq_rand(77)
+    x = 2
+    while x < w - 4:
+        base = round(ridge(near, x)) + 1
+        tall = 6 + next(r) % 6
+        for i in range(tall):
+            half = (i + 2) // 3
+            for dx in range(-half, half + 1):
+                px, py = x + dx, base - tall + i
+                if 0 <= px < w and 0 <= py < h:
+                    im.putpixel((px, py), rgba("#0D0A24"))
+        x += 5 + next(r) % 7
+    for y in range(h - 6, h):
+        for x in range(w):
+            im.putpixel((x, y), rgba("#0A0818"))
+    return doubled(im)
+
+
+PQ_ICONS = {
+    "note": ["...wwww", "...w..w", "...w..w", "...w..w", ".www.ww", "wwww.ww", ".ww...."],
+    "person": ["..www..", ".wwwww.", ".wwwww.", "..www..", ".......", ".wwwww.", "wwwwwww"],
+    "disc": ["..www..", ".wwwww.", "www.www", "ww...ww", "www.www", ".wwwww.", "..www.."],
+    "star": ["...w...", "...w...", "wwwwwww", ".wwwww.", "..www..", ".ww.ww.", ".w...w."],
+    "chev": ["k..", "wk.", "wwk", "wk.", "k.."],
+    "check": ["....wk", "...wk.", "wk.wk.", ".wwk..", "..k..."],
+    "heart": [".kk.kk.", "kwwkwwk", "kwwwwwk", ".kwwwk.", "..kwk..", "...k..."],
+    "speaker": ["...k", "..kk", "kkwk", "kwwk", "kkwk", "..kk", "...k"],
+}
+
+
+def pq_icon(name):
+    """A white pixel icon with a dark outline, tinted where it is drawn."""
+    colours = {"k": PQ_SHADOW + "00", "w": "#FFFFFF"}
+    return pq_art(PQ_ICONS[name], colours)
+
+
+def pq_cursor():
+    return pq_art(["kk....", "kGk...", "kgGk..", "kggGk.", "kgggok", "kggok.", "kgok..", "kok...", "kk...."])
+
+
+def pq_focus():
+    """The focused row: gold fading to the right with gold edge rows, 40 x 17 art doubled."""
+    w, h = 40, 17
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    gold = rgba("#FFD45A")
+    for x in range(w):
+        a = round(150 * (1 - x / w) ** 1.3) + 20
+        for y in range(h):
+            edge = y in (0, h - 1)
+            alpha = min(255, a + (90 if edge else 0)) if edge else a // 2
+            if not edge and (x + y) % 2 and x > w * 0.6:
+                continue
+            im.putpixel((x, y), (gold[0], gold[1], gold[2], alpha))
+    return doubled(im)
+
+
+def pq_bar(fill):
+    """A recessed bar (slice 6) or its gold-to-amber gem fill with a highlight row."""
+    w, h = 12, 7
+    im = Image.new("RGBA", (w, h), rgba(PQ_SHADOW))
+    d = ImageDraw.Draw(im)
+    if fill:
+        rows = ["#FFF2B0", "#FFD45A", "#FFC23A", "#F2A72C", "#D4861E"]
+        for y, c in enumerate(rows, start=1):
+            d.line([(1, y), (w - 2, y)], fill=rgba(c))
+    else:
+        d.rectangle([1, 1, w - 2, h - 2], fill=rgba("#141133"))
+        d.line([(1, h - 2), (w - 2, h - 2)], fill=rgba("#2B2766"))
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        im.putpixel((x, y), (0, 0, 0, 0))
+    return doubled(im)
+
+
+def pq_battery():
+    return pq_art(["kkkkkkkkkkkk..", "kssssssssssk..", "ks........skk.", "ks........sksk",
+                   "ks........skk.", "kssssssssssk..", "kkkkkkkkkkkk.."])
+
+
+def TS(x, y, w, h, text, font, color="text", align="left", shadow=PQ_SHADOW, off=2, **kw):
+    """Text with a hard drop shadow `off` pixels down and right."""
+    return [T(x + off, y + off, w, h, text, font, shadow, align, **kw), T(x, y, w, h, text, font, color, align, **kw)]
+
+
+def pq_backdrop():
+    out = []
+    for (y0, c), (y1, _) in zip(PQ_SKY, PQ_SKY[1:] + [(360, "")]):
+        out.append(R(0, y0, 480, y1 - y0, c))
+    for i in range(1, len(PQ_SKY)):
+        out.append(I(0, PQ_SKY[i][0] - 2, 480, 4, f"dither{i}"))
+    out += [I(0, 40, 240, 220, "stars"), I(240, 48, 240, 220, "stars"),
+            I(352, 58, 44, 44, "moon"), I(0, 264, 480, 96, "mountains")]
+    return out
+
+
+def pq_window_at(x, y, w, h, image="window"):
+    return [R(x + 4, y + 4, w, h, PQ_SHADOW + "B0"), I(x, y, w, h, image, slice=[12, 12, 12, 12]),
+            {"type": "gradient", "x": x + 8, "y": y + 8, "w": w - 16, "h": min(40, h - 16),
+             "top": "#FFFFFF14", "bottom": "#FFFFFF00"}]
+
+
+def pq_plate_at(x, y, w, text, font="plate", h=24):
+    return [I(x, y, w, h, "plate", slice=[8, 8, 8, 8]),
+            T(x + 10, y, w - 20, h, text, font, "plate_text", "center")]
+
+
+def pq_row(w, focused, h=34):
+    """One list row: shadowed label, detail, pixel marks; focused rows get the gold bar and cursor."""
+    out = []
+    if focused:
+        out += [I(4, 0, w - 8, h, "focus", slice=[6, 4, 6, 4]),
+                I(8, (h - 18) // 2, 12, 18, "cursor", **{"if": "!row_art & !numbered"})]
+    fg = "accent" if focused else "text"
+    a = h - 8
+    out.append({"type": "group", "if": "row_art", "elements": [
+        R(5, 3, a + 2, a + 2, PQ_SHADOW, **{"if": "!numbered"}),
+        {"type": "art", "x": 6, "y": 4, "size": a, "source": "row"},
+        when("!has_detail", T(a + 16, 0, w - a - 56, h, "{label}", "menu", fg)),
+        when("has_detail", T(a + 16, 1, w - a - 56, 18, "{label}", "title2", fg)),
+        when("has_detail", T(a + 16, 17, w - a - 56, 16, "{detail}", "small", "muted")),
+    ]})
+    plain = []
+    for cond, lw in (("has_detail", w - 230), ("!has_detail", w - 70)):
+        plain.append(when(f"{cond} & !disabled", T(28, 0, lw, h, "{label}", "menu", fg)))
+        plain.append(when(f"{cond} & disabled", T(28, 0, lw, h, "{label}", "menu", "dim")))
+    plain = [e for c in plain for e in ([dict(c, x=c["x"] + 2, y=2, color=PQ_SHADOW)] if c["color"] != "dim" else []) + [c]]
+    plain += [
+        T(w - 214, 0, 170, h, "{detail}", "body", "muted", "right"),
+        T(w - 134, 0, 90, h, "ON", "small", "success", "right", **{"if": "toggle & on & !has_detail"}),
+        T(w - 134, 0, 90, h, "OFF", "small", "dim", "right", **{"if": "toggle & !on & !has_detail"}),
+    ]
+    out.append({"type": "group", "if": "!row_art", "elements": plain})
+    out += [
+        I(w - 32, (h - 10) // 2, 12, 10, "i_check", tint="accent", **{"if": "checked"}),
+        I(w - 26, (h - 10) // 2, 6, 10, "i_chev", tint="accent" if focused else "dim", **{"if": "chevron & !checked"}),
+        I(w - 30, (h - 14) // 2, 8, 14, "i_speaker", tint="accent", **{"if": "current"}),
+    ]
+    return out
+
+
+def pq_list_screen(st, x=12, y=46, w=456, h=304):
+    rows = (h - 20) // st.row_h
+    status_rows = (h - 20 - 36) // st.row_h
+    lst = lambda r, cond: {"type": "list", "x": x + 8, "y": y + 10, "w": w - 16, "rows": r, "row_height": st.row_h,
+                           "row": [P("row440")], "focused": [P("row440_focused")], "if": cond,
+                           "scrollbar": {"x": w - 24, "w": 4, "track": "#2B2766", "thumb": "accent"}}
+    return [P("backdrop"), *pq_window_at(x, y, w, h), P("titlebar"), P("title"),
+            lst(rows, "!has_status & !empty"), lst(status_rows, "has_status & !empty"),
+            R(x + 12, y + h - 44, w - 24, 2, "#8C84D8", **{"if": "has_status"}),
+            T(x + 16, y + h - 40, w - 32, 34, "{status}", "small", "muted", lines=2, line_height=16, **{"if": "has_status"}),
+            *TS(x + 20, 120, w - 40, 32, "{empty_title}", "big", "text", "center", **{"if": "empty"}),
+            T(x + 30, 160, w - 60, 60, "{empty_body}", "body", "muted", "center", lines=3, line_height=20, **{"if": "empty"}),
+            *[dict(e, **{"if": "empty & has_action"}) for e in pq_plate_at(150, 250, 180, "{empty_action}", h=30)]]
+
+
+def pq_page_screen(st):
+    x, y, w, h = 12, 46, 456, 304
+    def rows_from(top):
+        return max(1, (y + h - 10 - top) // st.row_h)
+    lst = lambda top, cond: {"type": "list", "x": x + 8, "y": top, "w": w - 16, "rows": rows_from(top),
+                             "row_height": st.row_h, "row": [P("row440")], "focused": [P("row440_focused")], "if": cond}
+    return [P("backdrop"), *pq_window_at(x, y, w, h), P("titlebar"), P("title"),
+            *TS(x + 18, y + 12, w - 36, 28, "{page_title}", "big"),
+            T(x + 18, y + 44, w - 36, 0, "{page_body}", "body", "muted", lines=3, line_height=19, **{"if": "has_body"}),
+            {"type": "list", "x": x + 18, "y": y + 104, "w": w - 36, "rows": 4, "row_height": 24, "source": "facts",
+             "row": [R(0, 0, w - 36, 2, "#2B2766", **{"if": "!first"}),
+                     T(0, 0, 180, 24, "{label}", "small", "muted"),
+                     T(180, 0, w - 216, 24, "{detail}", "small", "text", "right")]},
+            lst(y + 206, "has_facts"), lst(y + 106, "!has_facts & has_body"), lst(y + 48, "!has_facts & !has_body"),
+            R(x + 12, y + h - 44, w - 24, 2, "#8C84D8", **{"if": "has_status"}),
+            T(x + 16, y + h - 40, w - 32, 34, "{status}", "small", "muted", lines=2, line_height=16, **{"if": "has_status"})]
 
 
 def pixel_quest():
     s = Skin("pixel-quest", "Pixel Quest",
-             "A retro role-playing game: pixel windows on black, an arrow cursor and a dialogue box.")
-    s.palette = {"bg": "#000000", "text": "#FFFFFF", "muted": "#C8C8C8", "dim": "#8C8C8C", "accent": "#FFD93D",
-                 "glass": "#FFFFFF", "scrim": "#000000", "sheet": "#000000", "track": "#3A3A3A",
-                 "danger": "#FF5A5A", "success": "#6CE38A", "warning": "#FFD93D"}
-    s.colors = {"bar_text": "#FFFFFF", "panel": "#000000", "accent_text": "#000000", "ink": "#000000"}
-    s.fonts = {"menu": ("PixelifySans-Medium", 19, None), "title2": ("PixelifySans-SemiBold", 17, None),
-               "bartitle": ("PixelifySans-SemiBold", 18, None), "big": ("PixelifySans-Bold", 22, None),
-               "detail": ("PixelifySans-Regular", 17, None), "body": ("PixelifySans-Regular", 16, None),
-               "small": ("PixelifySans-Medium", 14, None), "clock": ("PixelifySans-Bold", 30, "ascii")}
+             "A pixel-art adventure at dusk: bevelled windows with gold gems, name plates and a gem cursor.")
+    s.palette = {"bg": "#0B0A1A", "text": "#FFFFFF", "muted": "#C9C3E6", "dim": "#9089B8", "accent": "#FFD45A",
+                 "glass": "#FFFFFF", "scrim": "#05040F", "sheet": "#15133A", "track": "#2A2758",
+                 "danger": "#FF6E8A", "success": "#6EE7A0", "warning": "#FFD45A"}
+    s.colors = {"bar_text": "#FFFFFF", "panel": "#15133A", "accent_text": PQ_INK, "ink": PQ_SHADOW,
+                "plate_text": PQ_INK}
+    s.fonts = {"menu": ("PixelifySans-Medium", 19, None), "title2": ("PixelifySans-SemiBold", 16, None),
+               "plate": ("PixelifySans-SemiBold", 15, None), "big": ("PixelifySans-Bold", 22, None),
+               "body": ("PixelifySans-Regular", 16, None), "small": ("PixelifySans-Medium", 13, None),
+               "clock": ("PixelifySans-Bold", 34, "ascii")}
     s.images = {
-        "window": pq_window(),
-        "cursor": doubled(sprite(["y....", "yy...", "yYy..", "yYYy.", "yYy..", "yy...", "y...."], PQ)),
-        "prompt": doubled(sprite(["wwwwwww", ".wwwww.", "..www..", "...w..."], PQ)),
-        "track": doubled(sprite(["wwwwww", "wkkkkw", "wkkkkw", "wkkkkw", "wwwwww"], PQ)),
-        "fill": doubled(sprite(["tttttt", "tTTTTt", "tTTTTt", "tTTTTt", "tttttt"], PQ)),
-        "battery": doubled(sprite([
-            "wwwwwwwwwwww..", "w..........w..", "w..........ww.", "w..........ww.",
-            "w..........ww.", "w..........w..", "wwwwwwwwwwww.."], PQ)),
-        "battery_fill": vgrad(4, 10, [(0, "#FFFFFF"), (1, "#C8C8C8")]),
-        "battery_low": vgrad(4, 10, [(0, "#FF8A8A"), (1, "#D72626")]),
+        "window": pq_window(), "window_solid": pq_window(alpha="FF"), "plate": pq_plate(),
+        "stars": pq_stars(), "moon": pq_moon(), "mountains": pq_mountains(),
+        "cursor": pq_cursor(), "focus": pq_focus(), "track": pq_bar(False), "fill": pq_bar(True),
+        "battery": pq_battery(),
+        "battery_fill": vgrad(4, 10, [(0, "#FFF2B0"), (1, "#FFC23A")]),
+        "battery_low": vgrad(4, 10, [(0, "#FF9AAA"), (1, "#D7264B")]),
+        **{f"i_{k}": pq_icon(k) for k in ("note", "person", "disc", "star", "chev", "check", "heart", "speaker")},
     }
-    win = {"slice": [6, 6, 6, 6]}
-    st = Style(row_h=34, top=40, pad=30, ffg="accent", fmuted="accent", icon_ffg="accent", icon_fg="dim",
-               highlight=lambda w, h: [I(10, (h - 14) // 2, 10, 14, "cursor", **{"if": "!row_art & !numbered"})],
-               scroll={"x": -8, "w": 4, "track": "#3A3A3A", "thumb": "text"}, bar_radius=0,
-               bar_track_image="track", bar_fill_image="fill", bar_slice=[4, 4, 4, 4],
-               sheet_bg="#000000", sheet_frame="text", sheet_radius=0, scrim="#000000C0",
-               toast_bg="#000000F0", toast_fg="#FFFFFF", toast_error="#5A0000F0")
+    for i in range(1, len(PQ_SKY)):
+        s.images[f"dither{i}"] = pq_dither(PQ_SKY[i - 1][1], PQ_SKY[i][1])
+    st = Style(row_h=34, top=46)
+    bar = lambda x, y, w, h, value: {"type": "bar", "x": x, "y": y, "w": w, "h": h, "value": value,
+                                     "track_image": "track", "fill_image": "fill", "slice": [6, 6, 6, 6]}
+    s.parts["backdrop"] = pq_backdrop()
     s.parts["titlebar"] = [
-        R(0, 0, 480, 34, "#000000"), R(0, 34, 480, 2, "text"),
-        T(12, 0, 80, 34, "{clock}", "bartitle", "text", **{"if": "has_clock"}),
-        *battery_part(442, 10),
+        {"type": "gradient", "x": 0, "y": 0, "w": 480, "h": 36, "top": "#221E58", "bottom": "#0E0C26"},
+        R(0, 36, 480, 2, "#8C84D8"), R(0, 38, 480, 2, PQ_SHADOW),
+        *TS(12, 0, 84, 36, "{clock}", "title2", "text", **{"if": "has_clock"}),
+        *battery_part(442, 11),
     ]
-    s.parts["title"] = [T(130, 0, 220, 34, "{screen}", "bartitle", "text", "center", case="upper")]
-    played = {"if": "playing"}
-    np = [P("titlebar"),
-          T(130, 0, 220, 34, "NOW PLAYING", "bartitle", "text", "center"),
-          I(12, 44, 176, 176, "window", **win),
-          {"type": "art", "x": 24, "y": 56, "size": 152},
-          {"type": "icon", "if": "!has_art", "x": 68, "y": 100, "size": 64, "icon": "note", "color": "dim"},
-          I(196, 44, 272, 176, "window", **win),
-          T(212, 54, 240, 52, "{title}", "big", lines=2, line_height=26),
-          T(212, 108, 240, 22, "{artist}", "detail", "muted"),
-          T(212, 130, 240, 22, "{album}", "detail", "dim"),
-          T(212, 156, 240, 20, "TRACK {queue_index}/{queue_length}", "small", "accent", **{"if": "!live"}),
-          T(212, 156, 240, 20, "ON AIR · {station}", "small", "accent", **{"if": "live"}),
-          T(212, 178, 214, 20, "{quality}", "small", "dim"),
-          {"type": "icon", "if": "favorite", "x": 432, "y": 180, "size": 16, "icon": "heart", "color": "danger"},
-          {"type": "icon", "if": "shuffle", "x": 212, "y": 198, "size": 14, "icon": "shuffle", "color": "muted"},
-          {"type": "icon", "if": "repeat", "x": 232, "y": 198, "size": 14, "icon": "repeat_mode", "color": "muted"},
-          I(12, 228, 456, 120, "window", **win),
-          T(30, 240, 420, 24, "Now playing: {title}", "detail", **played),
-          T(30, 240, 420, 24, "The music rests. Press Play to go on.", "detail", **{"if": "paused"}),
-          T(30, 240, 420, 24, "No song yet. Choose one from the menu.", "detail", **{"if": "!has_track"}),
-          T(30, 270, 56, 18, "TIME", "small", "accent"),
-          bar(st, 88, 272, 266, 14, "progress"),
-          T(362, 268, 92, 22, "{elapsed}/{duration}", "small", "text", "right"),
-          T(30, 300, 420, 22, "{output}", "small", "muted"),
-          I(442, 330, 14, 8, "prompt", **played)]
-    home = [I(8, 42, 280, 310, "window", **win),
-            rows_list(st, 52, 8, w=264, x=16),
-            I(296, 42, 176, 204, "window", **win),
-            {"type": "art", "if": "has_art", "x": 324, "y": 56, "size": 120},
-            {"type": "icon", "if": "!has_art", "x": 352, "y": 84, "size": 64, "icon": "note", "color": "dim"},
-            T(306, 184, 156, 22, "{title}", "small", "text", "center", **{"if": "has_track"}),
-            T(306, 206, 156, 22, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
-            T(306, 194, 156, 22, "NO SONG YET", "small", "dim", "center", **{"if": "!has_track"}),
-            I(296, 252, 176, 100, "window", **win),
-            T(306, 262, 156, 36, "{clock}", "clock", "text", "center", **{"if": "has_clock"}),
-            T(306, 300, 156, 20, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
-            T(306, 324, 156, 20, "BATTERY {battery}%", "small", "accent", "center"),
-            P("titlebar"), T(130, 0, 220, 34, "PIXEL QUEST", "bartitle", "text", "center")]
-    s.parts["row264"] = row_elements(st, 264, False)
-    s.parts["row264_focused"] = row_elements(st, 264, True)
-    standard(s, st, np, home)
-    # Menus, questions, messages and the volume in the same windows.
-    s.screens["sheet"][1:3] = [I(60, 40, 360, 280, "window", **win)]
-    s.screens["toast"][0:2] = [I(70, 286, 340, 58, "window", **win)]
-    s.screens["toast"][-1].update(x=86, y=292, w=308, h=46)
-    s.screens["volume"] = [I(40, 288, 400, 56, "window", **win),
-                           T(58, 288, 70, 56, "VOLUME", "small", "accent"),
-                           bar(st, 132, 309, 244, 14, "volume"),
-                           T(380, 288, 44, 56, "{volume}", "small", "text", "right")]
-    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False},
-                             P("titlebar"), T(130, 0, 220, 34, "{sheet_title}", "bartitle", "text", "center")]
+    s.parts["title"] = pq_plate_at(140, 6, 200, "{screen}")
+    s.parts["title"][1]["case"] = "upper"
+    for w in (440, 340):
+        s.parts[f"row{w}"] = pq_row(w, False)
+        s.parts[f"row{w}_focused"] = pq_row(w, True)
+    s.parts["row248"] = pq_row(248, False)
+    s.parts["row248_focused"] = pq_row(248, True)
+    icon = lambda x, y, name, tint="muted": I(x, y, 14, 14, f"i_{name}", tint=tint)
+    np = [P("backdrop"), P("titlebar"), *pq_plate_at(140, 6, 200, "NOW PLAYING"),
+          *pq_window_at(12, 48, 184, 184),
+          R(23, 59, 162, 162, PQ_SHADOW),
+          {"type": "art", "x": 24, "y": 60, "size": 160},
+          I(83, 113, 28, 28, "i_note", tint="dim", **{"if": "!has_art"}),
+          *pq_window_at(206, 48, 262, 184),
+          *[dict(e, **{"if": "!live"}) for e in pq_plate_at(218, 38, 150, "TRACK {queue_index}/{queue_length}", h=22)],
+          *[dict(e, **{"if": "live"}) for e in pq_plate_at(218, 38, 150, "ON AIR", h=22)],
+          *TS(222, 66, 232, 52, "{title}", "big", lines=2, line_height=25),
+          icon(222, 126, "person"), T(244, 122, 210, 22, "{artist}", "body", "muted"),
+          icon(222, 150, "disc", "dim"), T(244, 146, 210, 22, "{album}", "body", "dim"),
+          icon(222, 174, "star", "accent"), T(244, 170, 186, 22, "{quality}", "small", "accent"),
+          I(434, 174, 14, 12, "i_heart", tint="danger", **{"if": "favorite"}),
+          {"type": "icon", "if": "shuffle", "x": 222, "y": 202, "size": 16, "icon": "shuffle", "color": "muted"},
+          {"type": "icon", "if": "repeat", "x": 244, "y": 202, "size": 16, "icon": "repeat_mode", "color": "muted"},
+          T(270, 200, 186, 20, "{station}", "small", "dim", "right", **{"if": "live"}),
+          *pq_window_at(12, 246, 456, 104),
+          *pq_plate_at(24, 236, 172, "{artist}", h=22),
+          I(26, 268, 14, 14, "i_note", tint="accent"),
+          *TS(46, 264, 404, 24, "{title}", "body", **{"if": "playing"}),
+          *TS(46, 264, 404, 24, "Paused · press Play to continue", "body", "muted", **{"if": "paused"}),
+          *TS(46, 264, 404, 24, "Choose a song from the menu", "body", "muted", **{"if": "!has_track"}),
+          T(28, 292, 50, 18, "TIME", "small", "accent"),
+          bar(76, 293, 278, 14, "progress"),
+          T(360, 290, 94, 20, "{elapsed}/{duration}", "small", "text", "right"),
+          T(28, 318, 404, 22, "{output}", "small", "muted"),
+          # A small gold prompt triangle: the dialogue goes on.
+          R(444, 332, 10, 2, "accent", **{"if": "playing"}), R(446, 334, 6, 2, "accent", **{"if": "playing"}),
+          R(448, 336, 2, 2, "accent", **{"if": "playing"})]
+    home = [P("backdrop"), *pq_window_at(12, 48, 264, 302),
+            {"type": "list", "x": 20, "y": 58, "w": 248, "rows": 8, "row_height": 34,
+             "row": [P("row248")], "focused": [P("row248_focused")]},
+            *pq_window_at(286, 48, 182, 190),
+            R(321, 61, 114, 114, PQ_SHADOW, **{"if": "has_art"}),
+            {"type": "art", "if": "has_art", "x": 322, "y": 62, "size": 112},
+            I(363, 104, 28, 28, "i_note", tint="dim", **{"if": "!has_art"}),
+            *TS(296, 184, 162, 20, "{title}", "small", "text", "center", **{"if": "has_track"}),
+            T(296, 206, 162, 20, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
+            T(296, 194, 162, 20, "NO SONG YET", "small", "dim", "center", **{"if": "!has_track"}),
+            *pq_window_at(286, 248, 182, 102),
+            *TS(296, 258, 162, 40, "{clock}", "clock", "accent", "center", **{"if": "has_clock"}),
+            T(296, 300, 162, 18, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
+            bar(304, 326, 108, 12, "battery"), T(414, 322, 46, 20, "{battery}%", "small", "text", "right"),
+            P("titlebar"), *pq_plate_at(140, 6, 200, "PIXEL QUEST")]
+    s.screens["now_playing"] = np
+    s.screens["home"] = home
+    s.screens["list"] = pq_list_screen(st)
+    s.screens["page"] = pq_page_screen(st)
+    s.screens["sheet"] = [R(0, 0, 480, 360, "#05040FB8"), *pq_window_at(60, 44, 360, 272, "window_solid"),
+                          *pq_plate_at(120, 34, 240, "{sheet_title}", h=26),
+                          T(80, 66, 320, 40, "{sheet_body}", "body", "muted", "center", lines=2, line_height=19),
+                          {"type": "list", "x": 70, "y": 110, "w": 340, "rows": 5, "row_height": 34, "source": "sheet",
+                           "row": [P("row340")], "focused": [P("row340_focused")]}]
+    s.screens["dialog"] = [dict(e) for e in s.screens["sheet"]]
+    s.screens["dialog"][4:6] = [I(120, 34, 240, 26, "plate", slice=[8, 8, 8, 8], **{"if": "!danger"}),
+                                I(120, 34, 240, 26, "plate", slice=[8, 8, 8, 8], tint="danger", **{"if": "danger"}),
+                                T(130, 34, 220, 26, "{sheet_title}", "plate", "plate_text", "center")]
+    s.screens["toast"] = [*pq_window_at(60, 282, 360, 64, "window_solid"),
+                          T(76, 288, 328, 52, "{message}", "title2", "text", "center", lines=2, line_height=20, **{"if": "!error"}),
+                          T(76, 288, 328, 52, "{message}", "title2", "danger", "center", lines=2, line_height=20, **{"if": "error"})]
+    s.screens["volume"] = [*pq_window_at(40, 286, 400, 58, "window_solid"),
+                           I(58, 306, 8, 14, "i_speaker", tint="accent"),
+                           T(74, 286, 70, 58, "VOLUME", "small", "accent"),
+                           bar(146, 307, 236, 16, "volume"),
+                           T(384, 286, 40, 58, "{volume}", "small", "text", "right")]
+    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False}, P("titlebar"),
+                             *pq_plate_at(140, 6, 200, "{sheet_title}")]
     prune(s)
     return s
 
 
 # ------------------------------------------------------------------ Gilded Grove
-# A storybook fantasy adventure: deep forest green, panels with double gold borders and diamond
-# corners, parchment text in a serif face and a green meter. Drawn here; no game's symbols.
+# A premium storybook fantasy adventure: a painted forest glade (vignette, light shafts,
+# fireflies) behind gold-framed panels with metallic gradients, corner flourishes and emerald
+# gems; a laurel crest in the title bar, a glowing medallion around the cover, an emerald meter
+# with a gloss and Noto Serif Display headings. Drawn here; no game's symbols.
 
-GOLD, GOLD_DARK, PARCHMENT, FOREST = "#E3B54A", "#8A6A22", "#F4E9C8", "#0E1F1A"
+GOLD, GOLD_LIGHT, GOLD_DARK, PARCHMENT, FOREST = "#E3B54A", "#FFE9A8", "#7A5A1C", "#F4E9C8", "#0E1F1A"
+EMERALD, EMERALD_LIGHT = "#1F9E6A", "#7CF0B8"
 
 
-def gg_background():
-    """A vignette from a lighter glade to dark edges, with a faint diamond lattice; half size,
-    drawn stretched to the screen (a full-size picture does not fit the atlas with the fonts)."""
+def ss(w, h, k=4):
+    """A supersampled canvas: draw at k x and `down` it for smooth edges."""
+    return Image.new("RGBA", (w * k, h * k), (0, 0, 0, 0)), k
+
+
+def down(im, w, h):
+    return im.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def gg_glade():
+    """240 x 180 (shown stretched): a radial glade, soft light shafts from the upper left and a
+    dark canopy in the top corners."""
     w, h = 240, 180
     im = Image.new("RGBA", (w, h))
     px = im.load()
-    centre, edge = rgba("#1C3B31"), rgba("#06110D")
+    centre, edge = rgba("#1E4636"), rgba("#040C09")
     for y in range(h):
         for x in range(w):
-            d = min(1.0, math.hypot((x - w / 2) / (w * 0.62), (y - h * 0.42) / (h * 0.7)))
-            c = mix(centre, edge, d ** 1.6)
-            if (x + y) % 24 == 0 or (x - y) % 24 == 0:
-                c = mix(c, rgba(GOLD), 0.06)
+            d = min(1.0, math.hypot((x - w * 0.5) / (w * 0.66), (y - h * 0.46) / (h * 0.72)))
+            c = mix(centre, edge, d ** 1.45)
+            # Light shafts: bands along a diagonal, brighter near the top.
+            u = (x * 0.8 + y * 0.6)
+            shaft = max(0.0, math.sin(u / 9.0) ** 8) * max(0.0, 1 - y / h) * 0.22
+            c = mix(c, rgba("#F6E7B0"), shaft)
+            corner = max(0.0, 1 - math.hypot(x / (w * 0.35), y / (h * 0.42))) + \
+                max(0.0, 1 - math.hypot((w - x) / (w * 0.32), y / (h * 0.40)))
+            c = mix(c, rgba("#020604"), min(0.75, corner * 0.9))
             px[x, y] = c
     return im
 
 
-def gg_panel(fill="#0A1813E6"):
-    """A 24 x 24 panel for nine-slicing: dark glass (solid for menus, questions and messages
-    over a screen), an outer gold line, an inner dark gold line and a small diamond in each
-    corner."""
-    im = Image.new("RGBA", (24, 24), rgba(fill))
-    d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, 23, 23], outline=rgba(GOLD))
-    d.rectangle([2, 2, 21, 21], outline=rgba(GOLD_DARK))
-    for cx, cy in ((3, 3), (20, 3), (3, 20), (20, 20)):
-        d.polygon([(cx, cy - 2), (cx + 2, cy), (cx, cy + 2), (cx - 2, cy)], fill=rgba(GOLD))
-    return im
+def gg_mote(size=24):
+    return glow(size, "#FFE9A8", 1.2)
 
 
-def gg_highlight():
-    im = vgrad(24, 24, [(0, "#E3B54A55"), (1, "#E3B54A22")])
-    ImageDraw.Draw(im).rectangle([0, 0, 23, 23], outline=rgba(GOLD))
-    return rounded(im, 4)
-
-
-def gg_diamond(size=12, colour=GOLD):
-    s4 = size * 4
-    big = Image.new("RGBA", (s4, s4), (0, 0, 0, 0))
+def gg_frame(fill="#0A1813", alpha="E8"):
+    """A 64 x 64 ornate panel for nine-slicing (slice 22): a bronze outer line, a metallic gold
+    band, a thin inner gold line, curled corner flourishes with an emerald gem, dark glass."""
+    n, k = 64, 4
+    big = Image.new("RGBA", (n * k, n * k), (0, 0, 0, 0))
     d = ImageDraw.Draw(big)
-    m = s4 // 2
-    d.polygon([(m, 0), (s4 - 1, m), (m, s4 - 1), (0, m)], fill=rgba(colour))
-    d.polygon([(m, s4 // 4), (s4 * 3 // 4, m), (m, s4 * 3 // 4), (s4 // 4, m)], fill=rgba(GOLD_DARK))
-    return big.resize((size, size), Image.Resampling.LANCZOS)
+    S = lambda v: round(v * k)
+    d.rounded_rectangle([S(3), S(3), S(n - 3), S(n - 3)], S(3), fill=rgba(fill + alpha))
+    # Metallic band: light at the top, dark at the bottom.
+    band = vgrad(n * k, n * k, [(0, GOLD_LIGHT), (0.45, GOLD), (1, GOLD_DARK)])
+    mask = Image.new("L", (n * k, n * k), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle([S(2), S(2), S(n - 2), S(n - 2)], S(4), outline=255, width=S(3))
+    big.paste(band, (0, 0), mask)
+    d.rounded_rectangle([S(1), S(1), S(n - 1), S(n - 1)], S(5), outline=rgba("#3A2A0C"), width=S(1))
+    d.rounded_rectangle([S(7), S(7), S(n - 7), S(n - 7)], S(2), outline=rgba(GOLD + "C0"), width=S(0.8))
+    for cx, cy, sx, sy in ((10, 10, 1, 1), (n - 10, 10, -1, 1), (10, n - 10, 1, -1), (n - 10, n - 10, -1, -1)):
+        # A stem along each edge ending in a leaf.
+        for along in ("x", "y"):
+            if along == "x":
+                d.line([(S(cx), S(cy)), (S(cx + sx * 10), S(cy))], fill=rgba(GOLD), width=S(0.8))
+                lx, ly = cx + sx * 12, cy
+                leaf = [(lx - sx * 3, ly), (lx, ly - 1.6), (lx + sx * 3, ly), (lx, ly + 1.6)]
+            else:
+                d.line([(S(cx), S(cy)), (S(cx), S(cy + sy * 10))], fill=rgba(GOLD), width=S(0.8))
+                lx, ly = cx, cy + sy * 12
+                leaf = [(lx, ly - sy * 3), (lx - 1.6, ly), (lx, ly + sy * 3), (lx + 1.6, ly)]
+            d.polygon([(S(x), S(y)) for x, y in leaf], fill=rgba(GOLD_LIGHT))
+        d.ellipse([S(cx - 3.2), S(cy - 3.2), S(cx + 3.2), S(cy + 3.2)], fill=rgba("#3A2A0C"))
+        d.ellipse([S(cx - 2.6), S(cy - 2.6), S(cx + 2.6), S(cy + 2.6)], fill=rgba(EMERALD))
+        d.ellipse([S(cx - 1.6), S(cy - 2.0), S(cx + 0.2), S(cy - 0.4)], fill=rgba(EMERALD_LIGHT))
+    return down(big, n, n)
 
 
-def gg_divider(w=200):
-    """A thin gold rule fading out to both ends, with a diamond in the middle."""
-    im = Image.new("RGBA", (w, 12), (0, 0, 0, 0))
-    g = rgba(GOLD)
+def gg_banner():
+    """The focused row: a warm glow fading to both ends, gold edge rules, 48 x 28 (slice 12)."""
+    w, h = 96, 28
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = im.load()
+    g, l = rgba(GOLD), rgba(GOLD_LIGHT)
     for x in range(w):
-        a = round(255 * (1 - abs(x - w / 2) / (w / 2)) ** 0.7)
-        im.putpixel((x, 6), (g[0], g[1], g[2], a))
-    im.alpha_composite(gg_diamond(12), (w // 2 - 6, 0))
+        fade = min(1.0, min(x, w - 1 - x) / 14)
+        for y in range(h):
+            core = 1 - abs(y - h / 2) / (h / 2)
+            a = round((40 + 50 * core) * fade)
+            c = g
+            if y in (1, h - 2):
+                a, c = round(230 * fade), l if y == 1 else g
+            px[x, y] = (c[0], c[1], c[2], a)
     return im
 
 
-def gg_pill(fill_top, fill_bottom, border):
-    im = vgrad(16, 12, [(0, fill_top), (1, fill_bottom)])
-    ImageDraw.Draw(im).rectangle([0, 0, 15, 11], outline=rgba(border))
-    return rounded(im, 5)
+def gg_rule(w=440, crest=True):
+    """A gold rule fading to both ends with a laurel crest and a four-point star in the middle."""
+    h = 22
+    big, k = ss(w, h)
+    d = ImageDraw.Draw(big)
+    g = rgba(GOLD)
+    for x in range(w * k):
+        t = abs(x / (w * k) - 0.5) * 2
+        a = round(255 * max(0.0, 1 - t) ** 0.6)
+        for y in range(round(10.4 * k), round(11.6 * k)):
+            big.putpixel((x, y), (g[0], g[1], g[2], a))
+    if crest:
+        m = w * k // 2
+        S = lambda v: round(v * k)
+        d.rectangle([m - S(40), S(6), m + S(40), S(16)], fill=(0, 0, 0, 0))
+        for side in (-1, 1):
+            for i in range(5):
+                cx = m + side * S(10 + i * 6)
+                cy = S(11 - (i * 0.6))
+                d.ellipse([cx - S(3.2), cy - S(1.6), cx + S(3.2), cy + S(1.6)], fill=rgba(GOLD))
+            d.line([(m + side * S(8), S(12)), (m + side * S(38), S(9))], fill=rgba(GOLD_DARK), width=S(1))
+        star = [(0, -9), (2, -2), (9, 0), (2, 2), (0, 9), (-2, 2), (-9, 0), (-2, -2)]
+        d.polygon([(m + S(x), S(11) + S(y)) for x, y in star], fill=rgba(GOLD_LIGHT))
+        d.ellipse([m - S(2), S(9), m + S(2), S(13)], fill=rgba(EMERALD))
+    return down(big, w, h)
+
+
+def gg_flourish(w=200):
+    """A small divider: thin rule with a gem in a lozenge."""
+    h = 14
+    big, k = ss(w, h)
+    d = ImageDraw.Draw(big)
+    S = lambda v: round(v * k)
+    g = rgba(GOLD)
+    for x in range(w * k):
+        t = abs(x / (w * k) - 0.5) * 2
+        a = round(220 * max(0.0, 1 - t) ** 0.8)
+        for y in range(S(6.6), S(7.4)):
+            big.putpixel((x, y), (g[0], g[1], g[2], a))
+    m = w * k // 2
+    d.polygon([(m, S(1)), (m + S(7), S(7)), (m, S(13)), (m - S(7), S(7))], fill=rgba(GOLD))
+    d.polygon([(m, S(3.4)), (m + S(3.6), S(7)), (m, S(10.6)), (m - S(3.6), S(7))], fill=rgba(EMERALD))
+    return down(big, w, h)
+
+
+def gg_medallion():
+    """A 48 x 48 frame for the cover (slice 16): a double gold ring with gems at the corners and a
+    clear middle."""
+    n = 48
+    big, k = ss(n, n)
+    d = ImageDraw.Draw(big)
+    S = lambda v: round(v * k)
+    band = vgrad(n * k, n * k, [(0, GOLD_LIGHT), (0.5, GOLD), (1, GOLD_DARK)])
+    mask = Image.new("L", (n * k, n * k), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([S(1), S(1), S(n - 1), S(n - 1)], S(7), outline=255, width=S(4))
+    big.paste(band, (0, 0), mask)
+    d.rounded_rectangle([S(0.5), S(0.5), S(n - 0.5), S(n - 0.5)], S(8), outline=rgba("#3A2A0C"), width=S(1))
+    d.rounded_rectangle([S(5), S(5), S(n - 5), S(n - 5)], S(4), outline=rgba("#3A2A0C"), width=S(1))
+    for cx, cy in ((6, 6), (n - 6, 6), (6, n - 6), (n - 6, n - 6)):
+        d.polygon([(S(cx), S(cy - 4)), (S(cx + 4), S(cy)), (S(cx), S(cy + 4)), (S(cx - 4), S(cy))], fill=rgba(GOLD_LIGHT))
+        d.polygon([(S(cx), S(cy - 2.4)), (S(cx + 2.4), S(cy)), (S(cx), S(cy + 2.4)), (S(cx - 2.4), S(cy))], fill=rgba(EMERALD))
+    return down(big, n, n)
+
+
+def gg_meter(fill):
+    """The meter (slice 10 x 7): a recessed tube with a gold rim, or its emerald liquid with a gloss."""
+    w, h = 28, 16
+    big, k = ss(w, h)
+    d = ImageDraw.Draw(big)
+    S = lambda v: round(v * k)
+    if fill:
+        liquid = vgrad(w * k, h * k, [(0, EMERALD_LIGHT), (0.45, "#2FC27F"), (1, "#0C5C3A")])
+        mask = Image.new("L", (w * k, h * k), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([S(2), S(2.5), S(w - 2), S(h - 2.5)], S(5), fill=255)
+        big.paste(liquid, (0, 0), mask)
+        d.rounded_rectangle([S(5), S(4), S(w - 5), S(6.4)], S(1.2), fill=(255, 255, 255, 120))
+    else:
+        d.rounded_rectangle([S(0.5), S(1), S(w - 0.5), S(h - 1)], S(7), fill=rgba("#3A2A0C"))
+        band = vgrad(w * k, h * k, [(0, GOLD_LIGHT), (0.5, GOLD), (1, GOLD_DARK)])
+        mask = Image.new("L", (w * k, h * k), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([S(1), S(1.5), S(w - 1), S(h - 1.5)], S(6.5), outline=255, width=S(1.2))
+        big.paste(band, (0, 0), mask)
+        d.rounded_rectangle([S(2.2), S(2.7), S(w - 2.2), S(h - 2.7)], S(5), fill=rgba("#061410"))
+    return down(big, w, h)
+
+
+def gg_gem():
+    n = 16
+    big, k = ss(n, n)
+    d = ImageDraw.Draw(big)
+    S = lambda v: round(v * k)
+    d.polygon([(S(8), S(0.5)), (S(15.5), S(8)), (S(8), S(15.5)), (S(0.5), S(8))], fill=rgba(GOLD))
+    d.polygon([(S(8), S(3)), (S(13), S(8)), (S(8), S(13)), (S(3), S(8))], fill=rgba(EMERALD))
+    d.polygon([(S(8), S(3)), (S(10.5), S(5.5)), (S(8), S(8)), (S(5.5), S(5.5))], fill=rgba(EMERALD_LIGHT))
+    return down(big, n, n)
+
+
+def GS(x, y, w, h, text, font, color="text", align="left", **kw):
+    return TS(x, y, w, h, text, font, color, align, shadow="#020604C0", off=1, **kw)
+
+
+def gg_panel_at(x, y, w, h, image="frame"):
+    return [I(x - 4, y + 2, w + 8, h + 6, "shadow", slice=[20, 20, 20, 20]),
+            I(x, y, w, h, image, slice=[22, 22, 22, 22])]
+
+
+def gg_row(w, focused, h=36):
+    out = []
+    if focused:
+        out += [I(2, 1, w - 4, h - 2, "banner", slice=[16, 6, 16, 6]),
+                I(8, (h - 12) // 2, 12, 12, "gem", **{"if": "!row_art & !numbered"})]
+    fg = "focus" if focused else "text"
+    a = h - 8
+    out.append({"type": "group", "if": "row_art", "elements": [
+        R(5, 3, a + 2, a + 2, GOLD_DARK, radius=3, **{"if": "!numbered"}),
+        {"type": "art", "x": 6, "y": 4, "size": a, "radius": 3, "source": "row"},
+        when("!has_detail", T(a + 16, 0, w - a - 56, h, "{label}", "menu", fg)),
+        when("has_detail", T(a + 16, -1, w - a - 56, 20, "{label}", "row_title", fg)),
+        when("has_detail", T(a + 16, 19, w - a - 56, 15, "{detail}", "small", "muted")),
+    ]})
+    plain = []
+    for cond, lw in (("has_detail", w - 230), ("!has_detail", w - 70)):
+        plain += GS(26, 0, lw, h, "{label}", "menu", fg, **{"if": f"{cond} & !disabled"})
+        plain.append(T(26, 0, lw, h, "{label}", "menu", "dim", **{"if": f"{cond} & disabled"}))
+    plain += [
+        T(w - 214, 0, 170, h, "{detail}", "detail", "gold" if focused else "muted", "right"),
+        T(w - 134, 0, 90, h, "On", "detail", "gold", "right", **{"if": "toggle & on & !has_detail"}),
+        T(w - 134, 0, 90, h, "Off", "detail", "dim", "right", **{"if": "toggle & !on & !has_detail"}),
+    ]
+    out.append({"type": "group", "if": "!row_art", "elements": plain})
+    out += [
+        {"type": "icon", "if": "checked", "x": w - 32, "y": (h - 18) // 2, "size": 18, "icon": "check", "color": "gold"},
+        {"type": "icon", "if": "chevron & !checked", "x": w - 26, "y": (h - 12) // 2, "size": 12, "icon": "chevron", "color": "gold" if focused else "dim"},
+        {"type": "icon", "if": "current", "x": w - 30, "y": (h - 16) // 2, "size": 16, "icon": "speaker", "color": "gold"},
+    ]
+    return out
+
+
+def gg_backdrop():
+    motes = [(52, 92, 18, "B0"), (120, 300, 12, "90"), (210, 70, 10, "A0"), (300, 250, 16, "80"),
+             (410, 110, 20, "B0"), (440, 290, 12, "70"), (30, 230, 10, "80"), (350, 190, 8, "A0"),
+             (170, 200, 8, "60"), (260, 330, 10, "70")]
+    return [I(0, 0, 480, 360, "glade")] + [I(x, y, size, size, "mote", tint=f"#FFFFFF{alpha}")
+                                             for x, y, size, alpha in motes]
+
+
+def gg_list_screen(st, x=12, y=48, w=456, h=302):
+    rows = (h - 24) // st.row_h
+    status_rows = (h - 24 - 36) // st.row_h
+    lst = lambda r, cond: {"type": "list", "x": x + 10, "y": y + 12, "w": w - 20, "rows": r, "row_height": st.row_h,
+                           "row": [P("row436")], "focused": [P("row436_focused")], "if": cond,
+                           "scrollbar": {"x": w - 30, "w": 3, "track": "#1E3A2E", "thumb": "gold"}}
+    return [P("backdrop"), *gg_panel_at(x, y, w, h), P("titlebar"), P("title"),
+            lst(rows, "!has_status & !empty"), lst(status_rows, "has_status & !empty"),
+            I(x + 40, y + h - 46, w - 80, 14, "flourish", **{"if": "has_status"}),
+            T(x + 20, y + h - 34, w - 40, 30, "{status}", "small", "muted", "center", lines=2, line_height=15, **{"if": "has_status"}),
+            *GS(x + 20, 118, w - 40, 34, "{empty_title}", "big", "text", "center", **{"if": "empty"}),
+            I(140, 156, 200, 14, "flourish", **{"if": "empty"}),
+            T(x + 30, 176, w - 60, 60, "{empty_body}", "body", "muted", "center", lines=3, line_height=20, **{"if": "empty"}),
+            I(150, 250, 180, 34, "banner", slice=[16, 6, 16, 6], **{"if": "empty & has_action"}),
+            T(150, 250, 180, 34, "{empty_action}", "title2", "focus", "center", **{"if": "empty & has_action"})]
+
+
+def gg_page_screen(st):
+    x, y, w, h = 12, 48, 456, 302
+    def rows_from(top):
+        return max(1, (y + h - 12 - top) // st.row_h)
+    lst = lambda top, cond: {"type": "list", "x": x + 10, "y": top, "w": w - 20, "rows": rows_from(top),
+                             "row_height": st.row_h, "row": [P("row436")], "focused": [P("row436_focused")], "if": cond}
+    return [P("backdrop"), *gg_panel_at(x, y, w, h), P("titlebar"), P("title"),
+            *GS(x + 24, y + 16, w - 48, 30, "{page_title}", "big"),
+            I(x + 24, y + 46, 200, 14, "flourish"),
+            T(x + 24, y + 62, w - 48, 0, "{page_body}", "body", "muted", lines=3, line_height=19, **{"if": "has_body"}),
+            {"type": "list", "x": x + 24, "y": y + 118, "w": w - 48, "rows": 4, "row_height": 24, "source": "facts",
+             "row": [R(0, 0, w - 48, 1, "#E3B54A40", **{"if": "!first"}),
+                     T(0, 0, 180, 24, "{label}", "small", "muted"),
+                     T(180, 0, w - 228, 24, "{detail}", "small", "text", "right")]},
+            lst(y + 218, "has_facts"), lst(y + 120, "!has_facts & has_body"), lst(y + 64, "!has_facts & !has_body"),
+            I(x + 40, y + h - 46, w - 80, 14, "flourish", **{"if": "has_status"}),
+            T(x + 20, y + h - 34, w - 40, 30, "{status}", "small", "muted", "center", lines=2, line_height=15, **{"if": "has_status"})]
 
 
 def gilded_grove():
     s = Skin("gilded-grove", "Gilded Grove",
-             "A fantasy adventure: forest green, gold-framed panels, parchment text and a green meter.")
-    s.palette = {"bg": FOREST, "text": PARCHMENT, "muted": "#CDBF95", "dim": "#A39670", "accent": GOLD,
+             "A storybook forest: gold-framed panels with emerald gems, a glowing medallion and serif type.")
+    s.palette = {"bg": FOREST, "text": PARCHMENT, "muted": "#D6C9A0", "dim": "#A89A74", "accent": GOLD,
                  "glass": PARCHMENT, "scrim": "#000000", "sheet": "#0A1813", "track": "#23382F",
-                 "danger": "#FF7A6B", "success": "#7BD88F", "warning": "#F2C14E"}
+                 "danger": "#FF8A78", "success": "#7CF0B8", "warning": "#F2C14E"}
     s.colors = {"bar_text": PARCHMENT, "panel": "#0A1813", "accent_text": "#1A1206", "ink": "#06110D",
                 "gold": GOLD, "golddark": GOLD_DARK, "focus": "#FFF6DA"}
-    s.fonts = {"menu": ("NotoSerif-Regular", 17, None), "title2": ("NotoSerif-Bold", 16, None),
-               "bartitle": ("NotoSerif-Bold", 15, None), "big": ("NotoSerif-Bold", 21, None),
+    s.fonts = {"menu": ("NotoSerifDisplay-Regular", 19, None), "title2": ("NotoSerifDisplay-Medium", 17, None),
+               "row_title": ("NotoSerifDisplay-Medium", 15, None), "big": ("NotoSerifDisplay-Medium", 24, None),
                "detail": ("NotoSerif-Regular", 15, None), "body": ("NotoSerif-Regular", 14, None),
-               "small": ("NotoSerif-Regular", 13, None), "clock": ("NotoSerif-Bold", 28, "ascii")}
+               "small": ("NotoSerif-Regular", 13, None), "clock": ("NotoSerifDisplay-Medium", 34, "ascii")}
+    shadow = Image.new("RGBA", (48, 48), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle([6, 6, 41, 41], 8, fill=(0, 0, 0, 150))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(5))
     s.images = {
-        "glade": gg_background(),
-        "panel": gg_panel(),
-        "panel_solid": gg_panel("#0A1813"),
-        "highlight": gg_highlight(),
-        "diamond": gg_diamond(12),
-        "divider": gg_divider(200),
-        "track": gg_pill("#0A1813", "#16291F", GOLD_DARK),
-        "fill": gg_pill("#8FF0A0", "#2FA84F", GOLD),
+        "glade": gg_glade(), "mote": gg_mote(), "frame": gg_frame(), "frame_solid": gg_frame(alpha="FF"),
+        "shadow": shadow, "banner": gg_banner(), "rule": gg_rule(440), "flourish": gg_flourish(200), "flourish_small": gg_flourish(100),
+        "medallion": gg_medallion(), "glow": glow(64, GOLD, 0.9), "gem": gg_gem(),
+        "track": gg_meter(False), "fill": gg_meter(True),
         "battery": battery_pictures(GOLD),
         "battery_fill": vgrad(4, 10, [(0, PARCHMENT), (1, "#CDBF95")]),
         "battery_low": vgrad(4, 10, [(0, "#FF9A8A"), (1, "#C8382A")]),
     }
-    pan = {"slice": [8, 8, 8, 8]}
-    st = Style(row_h=34, top=42, pad=16, ffg="focus", fmuted="text", icon_ffg="gold", icon_fg="dim",
-               highlight=lambda w, h: [I(4, 1, w - 8, h - 2, "highlight", slice=[6, 6, 6, 6])],
-               scroll={"x": -8, "w": 3, "track": "#23382F", "thumb": "gold"},
-               bar_track_image="track", bar_fill_image="fill", bar_slice=[6, 5, 6, 5],
-               sheet_bg="#0A1813", sheet_frame="gold", sheet_radius=4, scrim="#000000A0",
-               toast_bg="#0A1813F0", toast_fg=PARCHMENT, toast_error="#5A1610F0")
+    st = Style(row_h=36, top=48)
+    meter = lambda x, y, w, h, value: {"type": "bar", "x": x, "y": y, "w": w, "h": h, "value": value,
+                                       "track_image": "track", "fill_image": "fill", "slice": [10, 7, 10, 7]}
+    s.parts["backdrop"] = gg_backdrop()
     s.parts["titlebar"] = [
-        R(0, 0, 480, 34, "panel"), R(0, 34, 480, 1, "gold"), R(0, 36, 480, 1, "golddark"),
-        T(14, 0, 80, 34, "{clock}", "bartitle", "gold", **{"if": "has_clock"}),
+        {"type": "gradient", "x": 0, "y": 0, "w": 480, "h": 38, "top": "#0F241CF0", "bottom": "#050E0BF0"},
+        I(20, 30, 440, 22, "rule"),
+        *GS(14, 0, 84, 34, "{clock}", "row_title", "gold", **{"if": "has_clock"}),
         *battery_part(442, 10),
     ]
-    s.parts["title"] = [T(130, 0, 220, 34, "{screen}", "bartitle", "text", "center", case="upper", tracking=2)]
-    np = [I(0, 0, 480, 360, "glade"), P("titlebar"),
-          T(130, 0, 220, 34, "NOW PLAYING", "bartitle", "text", "center", tracking=2),
-          I(12, 46, 204, 204, "panel", **pan),
-          {"type": "art", "x": 26, "y": 60, "size": 176, "radius": 6},
-          R(24, 58, 180, 180, "gold", radius=8, stroke=2),
-          {"type": "icon", "if": "!has_art", "x": 82, "y": 116, "size": 64, "icon": "note", "color": "dim"},
-          T(228, 50, 240, 56, "{title}", "big", lines=2, line_height=27),
-          I(228, 110, 200, 12, "divider"),
-          T(228, 126, 240, 22, "{artist}", "detail", "muted"),
-          T(228, 148, 240, 22, "{album}", "detail", "dim"),
-          T(228, 172, 210, 20, "{quality}", "small", "dim"),
-          {"type": "icon", "if": "favorite", "x": 446, "y": 174, "size": 16, "icon": "heart", "color": "danger"},
-          T(228, 196, 240, 20, "Song {queue_index} of {queue_length}", "small", "gold", **{"if": "!live"}),
-          T(228, 196, 240, 20, "On Air · {station}", "small", "gold", **{"if": "live"}),
-          {"type": "icon", "if": "shuffle", "x": 228, "y": 222, "size": 16, "icon": "shuffle", "color": "gold"},
-          {"type": "icon", "if": "repeat", "x": 252, "y": 222, "size": 16, "icon": "repeat_mode", "color": "gold"},
-          {"type": "icon", "x": 444, "y": 220, "size": 20, "icon": "play_pause", "color": "gold"},
-          I(12, 258, 456, 92, "panel", **pan),
-          bar(st, 30, 274, 420, 14, "progress"),
-          T(30, 292, 120, 20, "{elapsed}", "small", "text"),
-          T(330, 292, 120, 20, "{remaining}", "small", "text", "right"),
-          I(190, 296, 100, 12, "divider"),
-          T(30, 318, 420, 22, "{output}", "small", "muted", "center")]
-    home = [I(0, 0, 480, 360, "glade"),
-            I(8, 44, 284, 308, "panel", **pan),
-            rows_list(st, 54, 8, w=268, x=16),
-            I(300, 44, 172, 196, "panel", **pan),
-            {"type": "art", "if": "has_art", "x": 326, "y": 58, "size": 120, "radius": 6},
-            R(324, 56, 124, 124, "gold", radius=8, stroke=1, **{"if": "has_art"}),
-            {"type": "icon", "if": "!has_art", "x": 354, "y": 86, "size": 64, "icon": "note", "color": "dim"},
-            T(308, 186, 156, 22, "{title}", "small", "text", "center", **{"if": "has_track"}),
-            T(308, 208, 156, 22, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
-            T(308, 196, 156, 22, "Nothing playing", "small", "dim", "center", **{"if": "!has_track"}),
-            I(300, 248, 172, 104, "panel", **pan),
-            T(308, 258, 156, 36, "{clock}", "clock", "gold", "center", **{"if": "has_clock"}),
-            I(336, 296, 100, 12, "divider"),
-            T(308, 312, 156, 22, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
-            P("titlebar"), T(130, 0, 220, 34, "GILDED GROVE", "bartitle", "text", "center", tracking=2)]
-    s.parts["row268"] = row_elements(st, 268, False)
-    s.parts["row268_focused"] = row_elements(st, 268, True)
-    standard(s, st, np, home)
-    s.screens["sheet"][1:3] = [I(60, 40, 360, 280, "panel_solid", **pan)]
-    s.screens["toast"][0:2] = [I(70, 286, 340, 58, "panel_solid", **pan)]
-    s.screens["toast"][-1].update(x=86, y=292, w=308, h=46)
-    s.screens["volume"] = [I(40, 288, 400, 56, "panel_solid", **pan),
-                           {"type": "icon", "x": 58, "y": 305, "size": 22, "icon": "speaker", "color": "gold"},
-                           bar(st, 92, 309, 290, 14, "volume"),
-                           T(384, 288, 40, 56, "{volume}", "small", "text", "right")]
-    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False},
-                             P("titlebar"), T(130, 0, 220, 34, "{sheet_title}", "bartitle", "text", "center")]
+    s.parts["title"] = GS(130, 0, 220, 32, "{screen}", "row_title", "text", "center", case="upper", tracking=3)
+    for w in (436, 340):
+        s.parts[f"row{w}"] = gg_row(w, False)
+        s.parts[f"row{w}_focused"] = gg_row(w, True)
+    s.parts["row252"] = gg_row(252, False)
+    s.parts["row252_focused"] = gg_row(252, True)
+    np = [P("backdrop"), P("titlebar"),
+          *GS(130, 0, 220, 32, "NOW PLAYING", "row_title", "text", "center", tracking=3),
+          I(-8, 26, 236, 236, "glow"),
+          {"type": "art", "x": 24, "y": 58, "size": 172, "radius": 6},
+          {"type": "icon", "if": "!has_art", "x": 78, "y": 112, "size": 64, "icon": "note", "color": "dim"},
+          I(14, 48, 192, 192, "medallion", slice=[16, 16, 16, 16]),
+          *GS(222, 56, 246, 60, "{title}", "big", lines=2, line_height=29),
+          I(222, 120, 200, 14, "flourish"),
+          T(222, 138, 246, 22, "{artist}", "detail", "muted"),
+          T(222, 160, 246, 22, "{album}", "detail", "dim"),
+          T(222, 184, 220, 20, "{quality}", "small", "gold"),
+          {"type": "icon", "if": "favorite", "x": 448, "y": 186, "size": 16, "icon": "heart", "color": "danger"},
+          T(222, 206, 200, 20, "Song {queue_index} of {queue_length}", "small", "dim", **{"if": "!live"}),
+          T(222, 206, 200, 20, "On Air · {station}", "small", "gold", **{"if": "live"}),
+          {"type": "icon", "if": "shuffle", "x": 400, "y": 208, "size": 16, "icon": "shuffle", "color": "gold"},
+          {"type": "icon", "if": "repeat", "x": 422, "y": 208, "size": 16, "icon": "repeat_mode", "color": "gold"},
+          {"type": "icon", "x": 446, "y": 206, "size": 20, "icon": "play_pause", "color": "gold"},
+          *gg_panel_at(12, 254, 456, 96),
+          meter(34, 274, 412, 16, "progress"),
+          *GS(34, 294, 120, 20, "{elapsed}", "small", "text"),
+          *GS(326, 294, 120, 20, "{remaining}", "small", "text", "right"),
+          I(190, 298, 100, 14, "flourish_small"),
+          T(34, 318, 412, 22, "{output}", "small", "muted", "center")]
+    home = [P("backdrop"), *gg_panel_at(12, 48, 272, 302),
+            {"type": "list", "x": 22, "y": 60, "w": 252, "rows": 7, "row_height": 36,
+             "row": [P("row252")], "focused": [P("row252_focused")]},
+            *gg_panel_at(294, 48, 174, 194),
+            I(318, 56, 126, 126, "glow", **{"if": "has_art"}),
+            {"type": "art", "if": "has_art", "x": 328, "y": 66, "size": 106, "radius": 5},
+            I(320, 58, 122, 122, "medallion", slice=[16, 16, 16, 16], **{"if": "has_art"}),
+            {"type": "icon", "if": "!has_art", "x": 349, "y": 88, "size": 64, "icon": "note", "color": "dim"},
+            *GS(304, 188, 154, 22, "{title}", "small", "text", "center", **{"if": "has_track"}),
+            T(304, 208, 154, 20, "{artist}", "small", "muted", "center", **{"if": "has_track"}),
+            T(304, 198, 154, 22, "Nothing playing", "small", "dim", "center", **{"if": "!has_track"}),
+            *gg_panel_at(294, 252, 174, 98),
+            *GS(304, 262, 154, 40, "{clock}", "clock", "gold", "center", **{"if": "has_clock"}),
+            I(331, 304, 100, 14, "flourish_small"),
+            T(304, 320, 154, 20, "{date}", "small", "muted", "center", **{"if": "has_clock"}),
+            P("titlebar"), *GS(130, 0, 220, 32, "GILDED GROVE", "row_title", "text", "center", tracking=3)]
+    s.screens["now_playing"] = np
+    s.screens["home"] = home
+    s.screens["list"] = gg_list_screen(st)
+    s.screens["page"] = gg_page_screen(st)
+    sheet = [R(0, 0, 480, 360, "#000000A8"), *gg_panel_at(60, 40, 360, 280, "frame_solid"),
+             *GS(80, 54, 320, 30, "{sheet_title}", "big", "text", "center", **{"if": "!danger"}),
+             *GS(80, 54, 320, 30, "{sheet_title}", "big", "danger", "center", **{"if": "danger"}),
+             I(140, 86, 200, 14, "flourish"),
+             T(80, 100, 320, 38, "{sheet_body}", "body", "muted", "center", lines=2, line_height=19),
+             {"type": "list", "x": 70, "y": 138, "w": 340, "rows": 4, "row_height": 36, "source": "sheet",
+              "row": [P("row340")], "focused": [P("row340_focused")]}]
+    s.screens["sheet"] = sheet
+    s.screens["toast"] = [*gg_panel_at(60, 282, 360, 64, "frame_solid"),
+                          T(80, 288, 320, 52, "{message}", "title2", "text", "center", lines=2, line_height=21, **{"if": "!error"}),
+                          T(80, 288, 320, 52, "{message}", "title2", "danger", "center", lines=2, line_height=21, **{"if": "error"})]
+    s.screens["volume"] = [*gg_panel_at(40, 284, 400, 62, "frame_solid"),
+                           {"type": "icon", "x": 62, "y": 304, "size": 22, "icon": "speaker", "color": "gold"},
+                           meter(94, 307, 286, 16, "volume"),
+                           T(384, 284, 40, 62, "{volume}", "small", "text", "right")]
+    s.screens["keyboard"] = [{"type": "native", "part": "screen", "recolor": False}, P("titlebar"),
+                             *GS(130, 0, 220, 32, "{sheet_title}", "row_title", "text", "center")]
     prune(s)
     return s
-
 
 
 def main():
