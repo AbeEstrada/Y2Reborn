@@ -8175,3 +8175,39 @@ fn a_song_opened_again_after_a_seek_keeps_its_quality_tag() {
     m.playback = PlaybackState::Playing;
     assert!(!starting(&m));
 }
+
+#[test]
+fn battery_saver_is_a_picker_of_display() {
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsDisplay);
+    m.platform.brightness_available = true;
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        let rows = ui.rows(m, &m.library.tracks);
+        rows.into_iter().map(|r| r.key).collect()
+    };
+    assert_eq!(
+        keys(&ui, &m),
+        ["brightness", "screen_timeout", "battery_saver"]
+    );
+    assert_eq!(select_key(&mut ui, &mut m, "battery_saver"), Effect::None);
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::SettingsDisplay, crate::BATTERY_SAVER)
+    );
+    assert_eq!(crate::screens::screen_title(&m), "Battery Saver");
+    assert_eq!(
+        keys(&ui, &m),
+        ["saver_set:off", "saver_set:automatic", "saver_set:on"]
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "saver_set:on"),
+        Effect::SetBatterySaver(reborn_core::BatterySaver::On)
+    );
+    // At 15 % that has turned itself on says so on Display.
+    m.navigation.filter.clear();
+    m.platform.battery.percent = Some(12);
+    m.platform.battery.charging = reborn_core::platform::ChargingState::OnBattery;
+    m.platform.battery.cable = false;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.rows[2].secondary, "On now");
+}

@@ -15,6 +15,8 @@ pub mod play_stats;
 pub mod playlist;
 pub mod queue;
 mod radio;
+mod saver;
+pub use saver::{BatterySaver, SAVER_BRIGHTNESS, SAVER_PERCENT, SAVER_TIMEOUT_SECONDS};
 mod screens;
 pub use screens::Screen;
 pub mod scrobble;
@@ -886,6 +888,9 @@ pub struct Settings {
     /// Backlight level in percent of the panel maximum.
     #[serde(default = "default_brightness")]
     pub brightness: u8,
+    /// When Battery Saver is on (power plan 2026-11; Automatic until chosen).
+    #[serde(default)]
+    pub battery_saver: BatterySaver,
     /// How Albums and Audiobooks present their covers.
     #[serde(default)]
     pub album_view: AlbumView,
@@ -1275,6 +1280,7 @@ impl Default for Settings {
             bluetooth_absolute_volume: false,
             codec_preference: CodecPreference::Auto,
             screen_timeout_seconds: 60,
+            battery_saver: BatterySaver::Automatic,
             music_directory: "/data/music".into(),
             replay_gain: ReplayGainMode::Off,
             eq_enabled: false,
@@ -1656,6 +1662,7 @@ pub enum Effect {
     SetPlaylistSort(std::path::PathBuf, PlaylistSort),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
+    SetBatterySaver(BatterySaver),
     /// Switch to the skin with this id ("" = Reborn's own look).
     SetTheme(String),
     /// Look for installed skins again (the picker opened).

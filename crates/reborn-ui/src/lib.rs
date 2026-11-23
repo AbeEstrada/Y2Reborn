@@ -338,6 +338,8 @@ pub enum FmView {
 
 /// The filter of `Screen::SettingsLibrary` that is the Wi-Fi Share page.
 pub const SHARE: &str = "share";
+/// The filter of `Screen::SettingsDisplay` that is the Battery Saver picker.
+pub const BATTERY_SAVER: &str = "battery_saver";
 
 /// Settings → Library → Wi-Fi Share as the player knows it: empty while it is not running.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

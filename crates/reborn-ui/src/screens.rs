@@ -757,6 +757,9 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::HomeMenu => "Home Menu".into(),
         Screen::SettingsLibrary if m.navigation.filter == crate::SHARE => "Wi-Fi Share".into(),
         Screen::SettingsLibrary => "Library".into(),
+        Screen::SettingsDisplay if m.navigation.filter == crate::BATTERY_SAVER => {
+            "Battery Saver".into()
+        }
         Screen::SettingsDisplay => "Display".into(),
         Screen::Customize => crate::customize::title(&m.navigation.filter),
         Screen::Audiobooks => "Audiobooks".into(),

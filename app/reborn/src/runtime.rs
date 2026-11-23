@@ -9,6 +9,7 @@ mod idle;
 mod platform;
 mod queue;
 mod radio;
+mod saver;
 mod sleep;
 mod themes;
 mod transport;

@@ -223,8 +223,10 @@ impl Runtime {
                 .flash("Battery critically low. Connect a charger now."),
             _ => {}
         }
+        let saver = self.model.battery_saver_active();
         self.model.platform.battery = battery;
         self.dirty.mark_render();
+        self.follow_battery_saver(saver);
     }
 
     pub(crate) fn status(&self) -> Value {

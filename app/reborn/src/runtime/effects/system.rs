@@ -130,13 +130,15 @@ impl Runtime {
             || self.model.settings.replay_gain != defaults.replay_gain
             || self.model.settings.crossfade_ms != defaults.crossfade_ms
             || self.model.settings.repeat != defaults.repeat;
+        let saver = self.model.battery_saver_active();
         self.model.settings = defaults;
+        self.follow_battery_saver(saver);
         self.configure_wired();
         if self.ui.skin.is_some() {
             let _ = self.apply_theme("", false);
         }
         if !self.headless && self.model.platform.brightness_available {
-            let _ = power::set_brightness(self.model.settings.brightness);
+            let _ = power::set_brightness(self.model.effective_brightness());
         }
         if reload {
             self.reload_dsp()?;

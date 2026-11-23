@@ -51,7 +51,7 @@ Settings
 ├ Sound                      Equalizer › · Normalize Volume · Balance › · Playback › · Output card ›
 │  ├ Playback                Gapless Playback · Crossfade ›
 │  └ Output                  Headphone Jack / Bluetooth devices · Speaker · Headphone Level › · DAC Filter ›
-├ Display                    Brightness card · Screen Off After ›
+├ Display                    Brightness card · Screen Off After › · Battery Saver ›
 ├ Skin                       Reborn · Reborn Light · the installed skins
 ├ Customize                  Home Menu › · Browsing › · Buttons ›
 │  ├ Home Menu               the places on Home and their order
@@ -92,6 +92,13 @@ be played here (WMA, DSD), so they aren't in your library.", Y2Reborn #104); wit
 `reborn-light` keeps the native drawing and `reborn_ui::light` recolours each finished frame (tokens to light
 counterparts, glass to black, greys turned around, bright colours darkened to 4.5:1; covers untouched). Type on an
 accent fill uses `color::ON_ACCENT`, which stays white there.
+
+Display's **Battery Saver** (power plan 2026-11; a picker: Off, **At 15 %** by default, On) caps the screen at
+30 % brightness and 15 s without a button press and stops Reborn's animation (`Ui::ui_motion`); the music and the
+listener's own Brightness and Screen Off After stay as set. At 15 % turns it on while the battery is at or below
+15 % with no cable, says so once in a toast, and the row then reads "On now"
+(`reborn_core::saver`, `runtime/saver.rs`). The picker is `Screen::SettingsDisplay` with the filter
+`battery_saver`.
 
 Shuffle and Repeat are on Now Playing's menu, the sleep timer on Now Playing too: things you change while
 listening stay where you listen.

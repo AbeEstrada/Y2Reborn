@@ -1108,6 +1108,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.navigation.focus = 1;
         m.settings.screen_timeout_seconds = 30;
     });
+    // Power plan 2026-11: Display > Battery Saver.
+    case!(
+        "31b-battery-saver",
+        at(Screen::SettingsDisplay, reborn_ui::BATTERY_SAVER),
+        |_, m| {
+            m.navigation.focus = 1;
+        }
+    );
     case!("32-storage", at(Screen::Storage, ""), |_, m| m
         .navigation
         .focus = 0);
@@ -1809,6 +1817,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::SettingsDisplay, ""),
         |_, m| {
             m.navigation.focus = 2;
+        }
+    );
+    // Power plan 2026-11: the third row (Battery Saver) still fits; its line while it is on.
+    case!(
+        "51d-display-saver-on",
+        at(Screen::SettingsDisplay, ""),
+        |_, m| {
+            m.navigation.focus = 2;
+            m.settings.battery_saver = reborn_core::BatterySaver::On;
         }
     );
     // Beta 8.18: Customize (Wrap Around, Home Menu, Album View).

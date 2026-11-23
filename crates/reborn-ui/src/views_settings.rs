@@ -34,6 +34,9 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             picker(c, ui, &page, focus, interactive)
         }
         Screen::Theme => themes(c, ui, m, &page, focus, interactive),
+        Screen::SettingsDisplay if m.navigation.filter == crate::BATTERY_SAVER => {
+            picker(c, ui, &page, focus, interactive)
+        }
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
         Screen::Storage => storage(c, m, &page, focus, interactive),
         Screen::Update if m.navigation.filter == pages::SOFTWARE_UPDATE => {

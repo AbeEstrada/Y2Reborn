@@ -264,7 +264,7 @@ impl Runtime {
             Effect::SetBrightness(percent) => {
                 self.model.settings.brightness = percent.clamp(reborn_core::BRIGHTNESS_MIN, 100);
                 if !self.headless {
-                    power::set_brightness(self.model.settings.brightness)?;
+                    power::set_brightness(self.model.effective_brightness())?;
                 }
                 self.checkpoint();
             }
@@ -348,6 +348,12 @@ impl Runtime {
             }
             Effect::SetScreenTimeout(seconds) => {
                 self.model.settings.screen_timeout_seconds = seconds;
+                self.checkpoint();
+            }
+            Effect::SetBatterySaver(choice) => {
+                let saver = self.model.battery_saver_active();
+                self.model.settings.battery_saver = choice;
+                self.follow_battery_saver(saver);
                 self.checkpoint();
             }
             Effect::SetTimeZone(zone) => {

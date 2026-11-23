@@ -262,6 +262,13 @@ impl Ui {
                 Self::go(m, Screen::SettingsLibrary, crate::SHARE);
                 Effect::None
             }
+            "battery_saver" => {
+                Self::go(m, Screen::SettingsDisplay, crate::BATTERY_SAVER);
+                Effect::None
+            }
+            k if k.starts_with("saver_set:") => Effect::SetBatterySaver(
+                reborn_core::BatterySaver::from_key(&k["saver_set:".len()..])?,
+            ),
             "share_stop" => {
                 Self::back(m);
                 Effect::None

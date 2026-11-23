@@ -214,6 +214,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 .with_kind(RowKind::Chevron),
         ]),
         Screen::SettingsLibrary => library::page(ui, m, tracks),
+        Screen::SettingsDisplay if m.navigation.filter == crate::BATTERY_SAVER => battery_saver(m),
         Screen::SettingsDisplay => {
             let mut rows = vec![];
             if m.platform.brightness_available {
@@ -231,6 +232,12 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 )
                 .with_kind(RowKind::Chevron),
             );
+            // Automatic says when it has turned the saver on (the card keeps the chosen level).
+            let saver = match m.settings.battery_saver {
+                reborn_core::BatterySaver::Automatic if m.battery_saver_active() => "On now",
+                choice => choice.label(),
+            };
+            rows.push(row("Battery Saver", "battery_saver", saver).with_kind(RowKind::Chevron));
             Page::rows(rows)
         }
         Screen::Customize => crate::customize::page(ui, m),
@@ -586,6 +593,32 @@ fn screen_timeout(m: &AppModel) -> Page {
             "Never keeps the screen on while music plays and drains the battery faster."
         } else {
             "The screen turns off after this long without a button press."
+        }
+        .into(),
+    );
+    page
+}
+
+/// Settings → Display → Battery Saver: Off, At 15 %, On.
+fn battery_saver(m: &AppModel) -> Page {
+    let mut page = Page::rows(
+        reborn_core::BatterySaver::ALL
+            .into_iter()
+            .map(|s| {
+                row(s.label(), &format!("saver_set:{}", s.key()), "")
+                    .with_kind(RowKind::Check(m.settings.battery_saver == s))
+            })
+            .collect(),
+    );
+    page.status = Some(
+        match m.settings.battery_saver {
+            reborn_core::BatterySaver::Off => "The screen and animations stay as you set them.",
+            reborn_core::BatterySaver::Automatic => {
+                "Turns on by itself at 15 % on the battery: a dimmer screen, off after 15 s."
+            }
+            reborn_core::BatterySaver::On => {
+                "A dimmer screen, off after 15 s, and no animation. The music is unchanged."
+            }
         }
         .into(),
     );

@@ -112,10 +112,11 @@ pub(crate) fn run() -> Result<(), String> {
         // A previous instance may have ended on the dark shutdown frame.
         let _ = power::blank(false);
         model.platform.brightness_available = power::brightness_available();
-        if model.platform.brightness_available {
-            let _ = power::set_brightness(model.settings.brightness);
-        }
+        // The battery first: Battery Saver may cap the brightness.
         model.platform.battery = power::battery(&power::status());
+        if model.platform.brightness_available {
+            let _ = power::set_brightness(model.effective_brightness());
+        }
         // The wired level and DAC filter, before anything plays.
         if let Err(e) =
             reborn_audio::wired_configure(model.settings.hp_level, model.settings.dac_filter)
@@ -160,7 +161,7 @@ pub(crate) fn run() -> Result<(), String> {
     startup_phase(&log, process_started, "graphics_ready");
     // The player animates (Beta 7.2); previews and tests draw still frames.
     let mut ui = Ui::default();
-    ui.ui_motion = true;
+    ui.ui_motion = !model.battery_saver_active();
     // The early splash keeps the display, showing real startup progress, until
     // the first complete UI frame below is ready. That frame is the hand-off:
     // it is presented under a full boot-screen cover that dissolves at once.
@@ -2127,9 +2128,9 @@ impl MainLoop {
                             | reborn_core::PlatformTask::UpdateRollback
                     )
                 )
-                && rt.model.settings.screen_timeout_seconds != 0
+                && rt.model.effective_screen_timeout() != 0
                 && rt.last_activity.elapsed().as_secs()
-                    >= rt.model.settings.screen_timeout_seconds as u64
+                    >= rt.model.effective_screen_timeout() as u64
             {
                 let _ = rt.effect(Effect::ScreenSleep);
             }
