@@ -6,6 +6,7 @@ impl Ui {
         self.motion.begin_frame();
         glyph_cache::begin_frame();
         let frame = screens::draw(self, m, tracks, has_art);
+        self.flow.borrow_mut().end_frame();
         let mut frame = if self.ui_motion {
             self.slide_screens(m, frame)
         } else {

@@ -22,6 +22,8 @@ pub struct Flow {
     stamp: Option<(Screen, String)>,
     /// When the centre came to rest (for loading the sharp cover once).
     settled_at: Option<Instant>,
+    /// Cover Flow was drawn in the frame now running.
+    drawn: bool,
 }
 
 impl Flow {
@@ -33,6 +35,7 @@ impl Flow {
         fixed: bool,
         now: Instant,
     ) -> f32 {
+        self.drawn = true;
         if self.stamp.as_ref() != Some(&stamp) {
             // A new list starts at its focus, without gliding across it.
             self.stamp = Some(stamp);
@@ -63,6 +66,15 @@ impl Flow {
             self.settled_at = (self.pos == goal).then_some(now);
         }
         self.pos
+    }
+    /// A frame is done. When it did not draw Cover Flow, the row was left: it is
+    /// forgotten, so opening it again starts at its focus instead of gliding back
+    /// from where it was left.
+    pub fn end_frame(&mut self) {
+        if !self.drawn {
+            self.stamp = None;
+        }
+        self.drawn = false;
     }
     /// Still gliding toward the focus.
     pub fn moving(&self) -> bool {
@@ -185,6 +197,27 @@ mod tests {
             f.advance((Screen::Albums, "genre:Jazz".into()), 7, true, t0),
             7.
         );
+    }
+
+    #[test]
+    fn a_frame_without_cover_flow_forgets_the_position() {
+        let mut f = Flow::default();
+        let t0 = Instant::now();
+        let stamp = (Screen::Albums, String::new());
+        f.advance(stamp.clone(), 2, false, t0);
+        f.end_frame();
+        // Another frame with Cover Flow keeps it, and it glides to a new focus.
+        let p = f.advance(stamp.clone(), 0, false, t0 + Duration::from_millis(16));
+        assert!(p > 0. && p < 2.);
+        f.end_frame();
+        // A frame without it: the list opened again starts at its focus.
+        f.end_frame();
+        assert!(!f.moving());
+        assert_eq!(
+            f.advance(stamp, 0, false, t0 + Duration::from_millis(500)),
+            0.
+        );
+        assert!(!f.moving());
     }
 
     #[test]

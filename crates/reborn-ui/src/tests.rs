@@ -3709,6 +3709,62 @@ fn cover_flow_glides_opens_with_a_flight_and_asks_for_the_sharp_cover_at_rest() 
         .any(|q| q.tex == reborn_graphics::Tex::CollectionArt));
 }
 
+/// Draw frames until Cover Flow's glide has come to rest.
+fn settle_cover_flow(ui: &Ui, m: &AppModel, tracks: &[Track]) {
+    for _ in 0..8 {
+        ui.draw(m, tracks, false);
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    ui.draw(m, tracks, false);
+    assert!(!ui.gliding(), "the row came to rest");
+}
+
+#[test]
+fn cover_flow_opens_on_the_first_album_after_a_visit_elsewhere() {
+    let mut ui = radios();
+    ui.ui_motion = true;
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = 2;
+    settle_cover_flow(&ui, &m, &tracks);
+    assert_eq!(ui.flow.borrow().pos, 2.);
+    // Leave Albums and open it again: Select on Albums starts at the first album.
+    let mut m = app(Screen::Home);
+    ui.draw(&m, &tracks, false);
+    Ui::go(&mut m, Screen::Albums, "");
+    assert_eq!(m.navigation.focus, 0);
+    ui.draw(&m, &tracks, false);
+    assert_eq!(
+        ui.flow.borrow().pos,
+        0.,
+        "the row stands on the first album at once"
+    );
+    // (The screen's own 200 ms slide in is not the row gliding.)
+    assert!(
+        !ui.flow.borrow().moving(),
+        "it does not glide back from where it was left"
+    );
+}
+
+#[test]
+fn cover_flow_keeps_the_album_you_return_to_from_its_page() {
+    let mut ui = radios();
+    ui.ui_motion = true;
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = 2;
+    settle_cover_flow(&ui, &m, &tracks);
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+    ui.draw(&m, &tracks, false);
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!((m.screen, m.navigation.focus), (Screen::Albums, 2));
+    ui.draw(&m, &tracks, false);
+    assert_eq!(ui.flow.borrow().pos, 2., "the row stands where it was left");
+}
+
 #[test]
 fn cover_flow_names_the_artist_without_the_year_its_detail_line_shows() {
     // Y2Reborn #73: "corook · 2023" over "2023 · 1 song · 3 min" showed the year twice.
