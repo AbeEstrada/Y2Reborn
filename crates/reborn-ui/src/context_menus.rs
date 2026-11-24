@@ -51,6 +51,7 @@ impl Ui {
                     None => Effect::None,
                 }
             }
+            Some(Modal::BookSpeed) => Effect::None,
             Some(Modal::DateField(field)) => {
                 Self::close_modal(m);
                 if let Some(n) = key.strip_prefix("date_value:").and_then(|s| s.parse().ok()) {
@@ -182,16 +183,12 @@ impl Ui {
         }
     }
 
-    /// Now Playing's menu for a book; it stays open for the next press. Speed steps on;
+    /// Now Playing's menu for a book; it stays open for the next press.
     /// Previous/Next Chapter move one chapter at any distance (Y2Linux #103: the buttons stop
     /// at 10 minutes).
     fn playing_book_effect(&mut self, m: &AppModel, menu_key: &str) -> Option<Effect> {
         let (book, part) = m.book_part()?;
         let forward = match menu_key {
-            "book_speed" => {
-                let speed = reborn_core::books::next_speed(book.speed);
-                return Some(Effect::SetBookSpeed(speed));
-            }
             "book_chapter_next" => true,
             "book_chapter_previous" => false,
             _ => return None,
@@ -217,6 +214,13 @@ impl Ui {
             .clone()
             .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
             .unwrap_or_default();
+        if menu_key == "book_speed" {
+            if let Some((book, _)) = m.book_part() {
+                self.speed_draft = Some(reborn_core::books::speed_percent(book.speed));
+                Self::open_modal(m, Modal::BookSpeed);
+            }
+            return Effect::None;
+        }
         if menu_key == "sleep_timer" {
             // A picker (#29): the wheel chooses, Select starts it, Back leaves
             // the timer as it was. It opens on the timer set, else 30 min.

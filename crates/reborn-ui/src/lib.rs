@@ -469,6 +469,8 @@ pub struct Ui {
     pub pairing_focus: usize,
     /// The Brightness card follows the wheel until Select or Back.
     pub(crate) adjusting_brightness: bool,
+    /// Draft audiobook playback speed (in percent, 50..=200) while `Modal::BookSpeed` is open.
+    pub(crate) speed_draft: Option<u16>,
     /// A Home place carried in Customize > Home Menu (Y2Reborn #53).
     pub(crate) home_moving: Option<reorder::Carry>,
     /// The full-screen keyboard, while it is open.

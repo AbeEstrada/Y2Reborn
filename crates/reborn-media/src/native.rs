@@ -2482,6 +2482,13 @@ mod metadata_tests {
             (0.45..0.55).contains(&ratio),
             "2x plays half as long: {ratio}"
         );
+        let (granular, _, filters) = run(1.65);
+        assert!(filters.ends_with(",atempo=1.65"), "{filters}");
+        let granular_ratio = granular as f64 / normal as f64;
+        assert!(
+            (0.55..0.66).contains(&granular_ratio),
+            "1.65x plays ~0.61x as long: {granular_ratio}"
+        );
         // Positions are the source's: the last block is near the end at any speed.
         assert!(end > 5_000 && fast_end > 5_000, "{end} {fast_end}");
         // Out of range is normal speed.

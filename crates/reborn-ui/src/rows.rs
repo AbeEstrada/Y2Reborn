@@ -477,6 +477,7 @@ impl Ui {
             Some(Modal::EqBand(_)) => (-12..=12)
                 .map(|gain| Item::new(format!("{gain:+} dB"), format!("eq_gain:{gain}")))
                 .collect(),
+            Some(Modal::BookSpeed) => vec![],
             Some(Modal::DateField(field)) => date_time::picker(self, m, field).0,
             Some(Modal::SleepTimer) => {
                 use reborn_core::SleepChoice;
@@ -583,6 +584,10 @@ impl Ui {
             Some(Modal::SleepTimer) => (
                 "Sleep Timer",
                 "Turn the wheel to choose. Select starts it; Back cancels.",
+            ),
+            Some(Modal::BookSpeed) => (
+                "Playback Speed",
+                "Turn the wheel, then Select · Back cancels.",
             ),
             Some(Modal::Confirm(action)) => confirm_copy(action),
             Some(Modal::PlaylistPicker) => ("Add to Playlist", "Songs are added at the end."),

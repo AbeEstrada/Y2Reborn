@@ -712,6 +712,8 @@ pub enum Modal {
     DateField(DateField),
     /// The sleep timer's lengths (Beta 8.36, #29).
     SleepTimer,
+    /// Playback speed slider for the playing audiobook (0.5×–2× in 0.05× steps).
+    BookSpeed,
     Confirm(ConfirmAction),
     /// "Add to Playlist": the playlists, the last used first, and New.
     PlaylistPicker,

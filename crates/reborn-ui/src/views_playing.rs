@@ -123,7 +123,7 @@ pub fn now_playing(
         // How far into the book, how long it still runs.
         let info = b.left();
         let mut x = 222.;
-        if (b.speed - 1.).abs() > 0.01 {
+        if (b.speed - 1.).abs() > 0.005 {
             let label = format!("{}×", crate::speed_label(b.speed));
             x += components::tag(c, x, info_cy, &label, accent) + 8.;
         }

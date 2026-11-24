@@ -638,8 +638,8 @@ fn modal(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
             let title = song.unwrap_or(title);
             components::action_sheet(c, &title, &subtitle, &sheet, focus);
         }
-        // Its own panel (`views_quick`), drawn with the other overlays.
-        Some(Modal::QuickMenu) => {}
+        // Their own overlays (`views_quick`), drawn with the other overlays.
+        Some(Modal::QuickMenu | Modal::BookSpeed) => {}
         _ => components::action_sheet(c, &title, &body, &sheet, focus),
     }
 }
