@@ -48,7 +48,9 @@ struct Shared {
     /// While it played without a move: how far the reported position went, and in how much real
     /// time (Y2Linux #145: a Bluetooth delay that grows shows as sound slower than the clock).
     sound_ms: i64,
-    wall_ms: i64,
+    /// Kept whole, not in milliseconds: a main-loop step is ~17 ms, and its cut-off fraction lost
+    /// ~4 % of the clock (test build 279).
+    wall: Duration,
     /// The position as last reported, unsmoothed.
     reported_ms: i64,
     stop: bool,
@@ -68,10 +70,10 @@ impl Shared {
         // Every step of continuous play counts, a stalled or hurried position too (they are what
         // this measures); only a seek or another film (a jump past FAR_MS) and a pause do not.
         if let (true, Some(at)) = (self.playing && playing, self.reported) {
-            let wall = now.saturating_duration_since(at).as_millis() as i64;
+            let wall = now.saturating_duration_since(at);
             let sound = reported - self.reported_ms;
-            if (sound - wall).abs() <= FAR_MS {
-                self.wall_ms += wall;
+            if (sound - wall.as_millis() as i64).abs() <= FAR_MS {
+                self.wall += wall;
                 self.sound_ms += sound;
             }
         }
@@ -202,7 +204,7 @@ impl Reader {
         }
         let (sound_ms, wall_ms) = {
             let s = self.link.lock();
-            (s.sound_ms, s.wall_ms)
+            (s.sound_ms, s.wall.as_millis() as u64)
         };
         let late_avg_ms = self.late_sum_ms / self.shown.max(1) as i64;
         let fields = json!({
@@ -596,15 +598,29 @@ mod tests {
             let at = start + Duration::from_millis(step * 1050);
             assert!(!s.report(step as i64 * 1000, true, at));
         }
-        assert_eq!((s.sound_ms, s.wall_ms), (10_000, 10_500));
+        assert_eq!((s.sound_ms, s.wall.as_millis() as i64), (10_000, 10_500));
         // A seek far ahead is a move: neither counts.
         assert!(s.report(60_000, true, start + Duration::from_millis(11_000)));
-        assert_eq!((s.sound_ms, s.wall_ms), (10_000, 10_500));
+        assert_eq!((s.sound_ms, s.wall.as_millis() as i64), (10_000, 10_500));
         // The position stands still 400 ms, then catches up: sound and clock stay equal.
         let at = |ms: u64| start + Duration::from_millis(11_000 + ms);
         s.report(60_000, true, at(400));
         s.report(60_600, true, at(600));
-        assert_eq!((s.sound_ms, s.wall_ms), (10_600, 11_100));
+        assert_eq!((s.sound_ms, s.wall.as_millis() as i64), (10_600, 11_100));
+    }
+
+    #[test]
+    fn many_short_main_loop_steps_lose_no_clock() {
+        // 600 steps of 16.667 ms with the sound right on time: ten seconds each.
+        let start = Instant::now();
+        let mut s = Shared::default();
+        s.report(0, true, start);
+        for step in 1..=600u64 {
+            let at = start + Duration::from_micros(step * 16_667);
+            s.report((step * 16_667 / 1000) as i64, true, at);
+        }
+        assert_eq!(s.sound_ms, 10_000);
+        assert_eq!(s.wall.as_millis(), 10_000, "test build 279 lost ~4 % here");
     }
 
     #[test]
