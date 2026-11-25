@@ -3939,6 +3939,39 @@ fn cover_flow_keeps_the_album_you_return_to_from_its_page() {
 }
 
 #[test]
+fn cover_flow_survives_a_list_that_shrinks_under_the_gliding_row() {
+    // The row's position is stamped by screen and filter only, so a library that loses albums
+    // (an SD card pulled, a rescan) leaves it far past the new end. That used to underflow.
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    let tracks: Vec<Track> = (0..12)
+        .map(|i| Track {
+            id: i,
+            source_id: "internal".into(),
+            title: format!("Song {i}"),
+            album: format!("Album {i}"),
+            path: format!("/data/music/album{i}/song.flac").into(),
+            filename: "song.flac".into(),
+            duration_ms: 200_000,
+            codec: "flac".into(),
+            sample_rate: 44_100,
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    m.library.tracks = tracks.clone();
+    m.navigation.focus = 11;
+    ui.draw(&m, &tracks, false); // anchors the row at the last album
+    let fewer = &tracks[..2];
+    m.library.tracks = fewer.to_vec();
+    let quads = ui.draw(&m, fewer, false);
+    assert!(
+        quads.iter().filter(|q| q.warp.is_some()).count() >= 2,
+        "the remaining covers are still drawn"
+    );
+}
+
+#[test]
 fn cover_flow_names_the_artist_without_the_year_its_detail_line_shows() {
     // Y2Reborn #73: "corook · 2023" over "2023 · 1 song · 3 min" showed the year twice.
     let mut ui = radios();
