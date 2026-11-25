@@ -225,6 +225,10 @@ FILM_FILES = {
     # as a song (Reddit 2026-11-22: HEVC anime episodes showed up as music).
     "film-hevc.mp4": ["-c:v", "libx265", "-x265-params", "log-level=error", "-tag:v", "hvc1"],
     "film-h264.mp4": ["-c:v", "libx264", "-profile:v", "baseline"],
+    # A film remuxed from a TV recording starts its clock at 1.4 s, not 0: the sound and the picture
+    # must still agree.
+    "film-h264-offset.mkv": ["-c:v", "libx264", "-profile:v", "baseline", "-output_ts_offset", "1.4",
+                             "-f", "matroska"],
 }
 
 

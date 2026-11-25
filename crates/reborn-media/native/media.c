@@ -182,6 +182,9 @@ typedef struct {
   int seek_pending;
   uint64_t skip_start, skip_end, packets, frames, corrupt_packets;
   int64_t position, seek_target, seek_trim_remaining;
+  /* Where the file's own clock starts (AV_TIME_BASE). A film cut from a recording may start at 1.4 s;
+   * positions count from the start of the file, as the picture's do (video.c), not from that time. */
+  int64_t start_us;
   uint8_t *pending;
   size_t pending_frames, pending_offset, pending_capacity;
   double applied_gain_db, headroom_db;
@@ -889,7 +892,8 @@ static int decode_more(RbMedia *m) {
     int64_t pts = m->frame->best_effort_timestamp;
     if (pts != AV_NOPTS_VALUE) {
       int64_t decoded = av_rescale_q(pts, m->f->streams[m->stream]->time_base,
-                                     (AVRational){1, m->c->sample_rate});
+                                     (AVRational){1, m->c->sample_rate}) -
+                        av_rescale(m->start_us, m->c->sample_rate, AV_TIME_BASE);
       if (m->seek_pending) {
         m->seek_trim_remaining = decoded < m->seek_target
                                      ? m->seek_target - decoded
@@ -1398,6 +1402,7 @@ int rb_media_open(const char *path, int rate, int output_format,
   if (ret < 0)
     goto fail;
   m->stream = ret;
+  m->start_us = m->f->start_time == AV_NOPTS_VALUE ? 0 : m->f->start_time;
   m->c = avcodec_alloc_context3(codec);
   if (!m->c) {
     ret = AVERROR(ENOMEM);
@@ -1496,7 +1501,7 @@ int rb_media_read(RbMedia *m, uint8_t *out, int capacity_frames,
     if (m->pending_frames == m->pending_offset)
       break;
     if (total == 0)
-      first = av_rescale(m->position, 1000, m->c->sample_rate);
+      first = FFMAX(av_rescale(m->position, 1000, m->c->sample_rate), 0);
     size_t n = m->pending_frames - m->pending_offset;
     if (n > (size_t)capacity_frames - total)
       n = (size_t)capacity_frames - total;
@@ -1524,7 +1529,7 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
     m->seek_points_restored = 1;
     rb_seek_points_restore(&m->identity, m->f, m->stream);
   }
-  int r = avformat_seek_file(m->f, -1, INT64_MIN, ms * 1000, ms * 1000, 0);
+  int r = avformat_seek_file(m->f, -1, INT64_MIN, ms * 1000 + m->start_us, ms * 1000 + m->start_us, 0);
   if (r < 0)
     return r;
   avcodec_flush_buffers(m->c);

@@ -251,8 +251,8 @@ fn pinned_file_probe_preserves_fixture_metadata_and_pcm_without_extension() {
         tested += 1;
     }
     // 36 music fixtures, the five cover-3s ones (9.3.17), the three audiobook specimens (book-*)
-    // and the two films (film-h264, film-hevc).
-    assert_eq!(tested, 46);
+    // and the three films (film-h264, film-hevc, film-h264-offset).
+    assert_eq!(tested, 47);
     let pinned = reborn_platform::storage::pin_track(&track(), &root).unwrap();
     assert!(external_artwork(pinned.path(), ART_SIZE as u32).is_err());
     for name in [
