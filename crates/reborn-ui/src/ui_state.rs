@@ -190,7 +190,13 @@ impl Ui {
         // A faster (or slower) book moves through its time at its speed.
         let speed = m.book_part().map_or(1., |(book, _)| book.speed);
         let ahead = (ahead as f32 * speed) as u64;
-        let length = m.current().map_or(u64::MAX, |t| t.duration_ms.max(1));
+        // A track without a length (a radio stream, a file whose duration
+        // is unknown) has no end to stop at: clamping it to 1 ms froze the
+        // elapsed time at 0:00 while motion was on.
+        let length = m.current().map_or(u64::MAX, |t| match t.duration_ms {
+            0 => u64::MAX,
+            ms => ms,
+        });
         (reported + ahead).min(length)
     }
 

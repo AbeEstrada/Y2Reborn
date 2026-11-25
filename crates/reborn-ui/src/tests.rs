@@ -5311,6 +5311,31 @@ fn motion_waves_while_playing_slides_screens_and_glides_focus() {
 }
 
 #[test]
+fn the_shown_position_runs_on_for_a_track_without_a_length() {
+    // A stream has no duration (0): the position moved on from the last
+    // report was clamped to 1 ms, so the elapsed time sat at 0:00.
+    let ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::NowPlaying);
+    let reported_a_second_ago = Some((60_000, Instant::now() - Duration::from_secs(1)));
+    for (length, floor, ceiling) in [(0, 60_900, u64::MAX), (60_400, 60_400, 60_400)] {
+        let mut track = m.queue[0].clone();
+        track.duration_ms = length;
+        m.replace_queue(vec![track], 0).unwrap();
+        m.playback = reborn_core::PlaybackState::Playing;
+        m.position_ms = 60_000;
+        ui.position_seen.set(reported_a_second_ago);
+        let shown = ui.shown_position(&m);
+        assert!(
+            (floor..=ceiling).contains(&shown),
+            "length {length}: shown {shown}"
+        );
+    }
+}
+
+#[test]
 fn a_long_wheel_jump_glides_only_its_last_row() {
     let ui = Ui {
         ui_motion: true,
