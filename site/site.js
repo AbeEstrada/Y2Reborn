@@ -61,7 +61,8 @@
     ['winamp', 'Winamp'], ['paper', 'Paper'], ['big-type', 'Big Type'], ['cassette', 'Cassette'],
     ['neon', 'Neon Night'], ['zune', 'Zune'], ['bunny-bow', 'Bunny Bow'], ['luna-xp', 'Luna XP'],
     ['mini-blue', 'Mini Blue'], ['mini-gold', 'Mini Gold'], ['mini-green', 'Mini Green'],
-    ['mini-pink', 'Mini Pink'], ['mini-silver', 'Mini Silver'],
+    ['mini-pink', 'Mini Pink'], ['mini-silver', 'Mini Silver'], ['pixel-quest', 'Pixel Quest'],
+    ['gilded-grove', 'Gilded Grove'],
   ];
   const skin = document.getElementById('skin');
   const chips = document.getElementById('chips');
