@@ -45,6 +45,12 @@ struct Shared {
     playing: bool,
     /// Counts the times the sound was moved (a seek, a pause or a play).
     moves: u64,
+    /// While it played without a move: how far the reported position went, and in how much real
+    /// time (Y2Linux #145: a Bluetooth delay that grows shows as sound slower than the clock).
+    sound_ms: i64,
+    wall_ms: i64,
+    /// The position as last reported, unsmoothed.
+    reported_ms: i64,
     stop: bool,
     /// The film could not be opened.
     failed: bool,
@@ -54,10 +60,38 @@ struct Shared {
 }
 
 impl Shared {
+    /// The player reported the sound at `reported` ms at `now`; `true` when it was moved (a seek, a
+    /// pause or a play) rather than played on.
+    fn report(&mut self, reported: i64, playing: bool, now: Instant) -> bool {
+        let drift = reported - self.clock_at(now);
+        let moved = self.playing != playing || drift.abs() > JUMP_MS;
+        if let (true, false, Some(at)) = (self.playing && playing, moved, self.reported) {
+            self.wall_ms += now.saturating_duration_since(at).as_millis() as i64;
+            self.sound_ms += reported - self.reported_ms;
+        }
+        self.reported_ms = reported;
+        // Small differences are the position's coarse steps: lean towards it, do not jump.
+        self.position_ms = if moved {
+            reported
+        } else {
+            self.clock_at(now) + drift / 8
+        };
+        self.reported = Some(now);
+        self.playing = playing;
+        self.moves += u64::from(moved);
+        moved
+    }
+
     /// Where the sound is now.
     fn clock(&self) -> i64 {
+        self.clock_at(Instant::now())
+    }
+
+    fn clock_at(&self, now: Instant) -> i64 {
         match (self.playing, self.reported) {
-            (true, Some(at)) => self.position_ms + at.elapsed().as_millis() as i64,
+            (true, Some(at)) => {
+                self.position_ms + now.saturating_duration_since(at).as_millis() as i64
+            }
             _ => self.position_ms,
         }
     }
@@ -91,6 +125,9 @@ struct Reader {
     seeked_for: u64,
     shown: u64,
     dropped: u64,
+    /// How late the shown pictures were behind the sound: the most and the sum.
+    late_max_ms: i64,
+    late_sum_ms: i64,
     hardware: bool,
     /// Time spent decoding and converting pictures, for the log.
     decode: Duration,
@@ -120,6 +157,8 @@ impl Reader {
                     seeked_for: 0,
                     shown: 0,
                     dropped: 0,
+                    late_max_ms: 0,
+                    late_sum_ms: 0,
                     hardware: false,
                     decode: Duration::ZERO,
                     convert: Duration::ZERO,
@@ -155,8 +194,15 @@ impl Reader {
                 Err(e) => result = Err(e),
             }
         }
+        let (sound_ms, wall_ms) = {
+            let s = self.link.lock();
+            (s.sound_ms, s.wall_ms)
+        };
+        let late_avg_ms = self.late_sum_ms / self.shown.max(1) as i64;
         let fields = json!({
             "shown": self.shown, "dropped": self.dropped, "hardware": self.hardware,
+            "late_max_ms": self.late_max_ms, "late_avg_ms": late_avg_ms,
+            "sound_ms": sound_ms, "wall_ms": wall_ms,
             "codec": self.video.info.codec, "width": self.video.info.width,
             "height": self.video.info.height, "seconds": started.elapsed().as_secs(),
             "decode_ms": self.decode.as_millis() as u64,
@@ -182,7 +228,7 @@ impl Reader {
         };
         self.hardware |= picture.hardware;
         let pts = picture.pts_ms;
-        loop {
+        let shown_late = loop {
             let (stop, clock, playing, moves) = {
                 let s = self.link.lock();
                 (s.stop, s.clock(), s.playing, s.moves)
@@ -207,15 +253,19 @@ impl Reader {
                 return Ok(true);
             }
             if late >= 0 || pts < 0 {
-                break;
+                break late;
             }
             // Early: hold it until the sound is there (or the position changes).
             let wait = Duration::from_millis((-late).min(50) as u64);
             let s = self.link.lock();
             drop(self.link.changed.wait_timeout(s, wait));
-        }
+        };
         self.catching_up = false;
         self.video.hurry(false);
+        if pts >= 0 {
+            self.late_max_ms = self.late_max_ms.max(shown_late);
+            self.late_sum_ms += shown_late;
+        }
         self.show(pts)?;
         Ok(true)
     }
@@ -385,20 +435,9 @@ impl Player {
         let Some((_, link, _)) = &self.running else {
             return;
         };
-        let mut s = link.lock();
-        let reported = position_ms as i64;
-        let drift = reported - s.clock();
-        let moved = s.playing != playing || drift.abs() > JUMP_MS;
-        // Small differences are the position's coarse steps: lean towards it, do not jump.
-        s.position_ms = if moved {
-            reported
-        } else {
-            s.clock() + drift / 8
-        };
-        s.reported = Some(Instant::now());
-        s.playing = playing;
-        s.moves += u64::from(moved);
-        drop(s);
+        let moved = link
+            .lock()
+            .report(position_ms as i64, playing, Instant::now());
         if moved {
             link.changed.notify_all();
         }
@@ -539,6 +578,22 @@ mod tests {
         s.playing = true;
         s.reported = Some(Instant::now() - Duration::from_millis(250));
         assert!((5240..5400).contains(&s.clock()), "{}", s.clock());
+    }
+
+    #[test]
+    fn sound_slower_than_the_clock_is_counted_and_a_seek_is_not() {
+        let start = Instant::now();
+        let mut s = Shared::default();
+        assert!(s.report(0, true, start), "play: a move");
+        // Ten seconds of sound reported over ten and a half seconds: a delay that grew.
+        for step in 1..=10 {
+            let at = start + Duration::from_millis(step * 1050);
+            assert!(!s.report(step as i64 * 1000, true, at));
+        }
+        assert_eq!((s.sound_ms, s.wall_ms), (10_000, 10_500));
+        // A seek far ahead is a move: neither counts.
+        assert!(s.report(60_000, true, start + Duration::from_millis(11_000)));
+        assert_eq!((s.sound_ms, s.wall_ms), (10_000, 10_500));
     }
 
     #[test]
