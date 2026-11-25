@@ -199,7 +199,10 @@ impl Runtime {
 
     /// `Effect::SetBookSpeed`.
     pub(crate) fn on_set_book_speed(&mut self, percent: u16) -> Result<(), String> {
-        let speed = f32::from(percent.clamp(50, 200)) / 100.;
+        let speed = f32::from(percent.clamp(
+            reborn_core::books::MIN_SPEED_PERCENT,
+            reborn_core::books::MAX_SPEED_PERCENT,
+        )) / 100.;
         if let Some(book) = &mut self.model.book {
             book.speed = speed;
         }

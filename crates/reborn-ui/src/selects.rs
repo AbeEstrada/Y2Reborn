@@ -9,6 +9,28 @@ pub(crate) struct TypedJoin {
     pub hidden: bool,
 }
 
+/// Outcome of one input step on a wheel-driven range slider (Brightness or Audiobook Speed).
+enum RangeAction {
+    Value(u16),
+    Commit,
+    Cancel,
+    Other,
+}
+
+/// Shared click-wheel range-slider controller: wheel / Up / Down step by `step` clamped to
+/// `min..=max`, Select commits, Back cancels, and any other action exits to the screen.
+fn range_slider_input(action: Action, current: u16, min: u16, max: u16, step: u16) -> RangeAction {
+    let delta = match action {
+        Action::WheelClockwise(_) | Action::NavigateDown => i32::from(step),
+        Action::WheelCounterClockwise(_) | Action::NavigateUp => -i32::from(step),
+        Action::Select => return RangeAction::Commit,
+        Action::Back => return RangeAction::Cancel,
+        _ => return RangeAction::Other,
+    };
+    let next = (i32::from(current) + delta).clamp(i32::from(min), i32::from(max)) as u16;
+    RangeAction::Value(next)
+}
+
 impl Ui {
     /// The Brightness card while it is adjusted: the wheel moves it in 5 % steps, Select or Back
     /// ends (Y2Linux #74: Select only cycled 20 % steps). `None` leaves the action to the screen.
@@ -21,22 +43,67 @@ impl Ui {
             self.adjusting_brightness = false;
             return None;
         }
-        let step = i16::from(reborn_core::BRIGHTNESS_STEP);
-        let delta = match action {
-            Action::WheelClockwise(_) | Action::NavigateDown => step,
-            Action::WheelCounterClockwise(_) | Action::NavigateUp => -step,
-            Action::Select | Action::Back => {
+        match range_slider_input(
+            action,
+            u16::from(m.settings.brightness),
+            u16::from(reborn_core::BRIGHTNESS_MIN),
+            100,
+            u16::from(reborn_core::BRIGHTNESS_STEP),
+        ) {
+            RangeAction::Value(level) => Some(Effect::SetBrightness(level as u8)),
+            RangeAction::Commit | RangeAction::Cancel => {
                 self.adjusting_brightness = false;
-                return Some(Effect::None);
+                Some(Effect::None)
             }
-            _ => {
+            RangeAction::Other => {
                 self.adjusting_brightness = false;
-                return None;
+                None
             }
+        }
+    }
+
+    /// The Audiobook Playback Speed slider (`Modal::BookSpeed`): reuses the same wheel range
+    /// controller (`0.5×–2×` in `0.05×` steps), applying once on Select and discarding on Back.
+    pub(crate) fn book_speed_input(&mut self, m: &mut AppModel, action: Action) -> Option<Effect> {
+        if m.navigation.modal != Some(Modal::BookSpeed) {
+            self.speed_draft = None;
+            return None;
+        }
+        let Some((book, _)) = m.book_part() else {
+            self.speed_draft = None;
+            Self::close_modal(m);
+            return None;
         };
-        let level = (i16::from(m.settings.brightness) + delta)
-            .clamp(i16::from(reborn_core::BRIGHTNESS_MIN), 100);
-        Some(Effect::SetBrightness(level as u8))
+        let current = self
+            .speed_draft
+            .unwrap_or_else(|| reborn_core::books::speed_percent(book.speed));
+        match range_slider_input(
+            action,
+            current,
+            reborn_core::books::MIN_SPEED_PERCENT,
+            reborn_core::books::MAX_SPEED_PERCENT,
+            reborn_core::books::SPEED_STEP_PERCENT,
+        ) {
+            RangeAction::Value(pct) => {
+                self.speed_draft = Some(pct);
+                Some(Effect::None)
+            }
+            RangeAction::Commit => {
+                let pct = self.speed_draft.take().unwrap_or(current);
+                Self::close_modal(m);
+                Some(Effect::SetBookSpeed(pct))
+            }
+            RangeAction::Cancel => {
+                self.speed_draft = None;
+                Self::close_modal(m);
+                Some(Effect::None)
+            }
+            RangeAction::Other => {
+                self.speed_draft = None;
+                Self::close_modal(m);
+                None
+            }
+        }
     }
 
     pub(crate) fn radio_select(&mut self, m: &mut AppModel, key: &str) -> Effect {

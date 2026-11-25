@@ -53,9 +53,13 @@ fn eased(ui: &Ui, key: &str, start: Option<f32>, target: f32, rate: f32, settle:
         .ease(key, start, target, rate, settle, Instant::now())
 }
 
-/// A menu that draws as a sheet or a dialog: any but the Quick Menu's panel.
+/// A menu that draws as a sheet or a dialog: any but the Quick Menu's panel and the speed slider.
 pub(crate) fn sheet_modal(m: &AppModel) -> bool {
-    m.navigation.modal.is_some() && m.navigation.modal != Some(Modal::QuickMenu)
+    m.navigation.modal.is_some()
+        && !matches!(
+            m.navigation.modal,
+            Some(Modal::QuickMenu | Modal::BookSpeed)
+        )
 }
 
 /// The panel (open, or fading out), then the full-screen ring of a Power hold without it.
@@ -66,8 +70,63 @@ pub(crate) fn overlay(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     }
 }
 
+/// The audiobook playback speed slider sheet (`0.5×–2×`, reusing `components::slider`).
+fn draw_book_speed(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    let pct = ui
+        .speed_draft
+        .or_else(|| {
+            m.book_part()
+                .map(|(b, _)| reborn_core::books::speed_percent(b.speed))
+        })
+        .unwrap_or(100);
+    crate::components::scrim(c, false);
+    let (x, w, h) = (8., WIDTH - 16., 128.);
+    let y = HEIGHT - h - 8.;
+    c.rrect(x, y, w, h, 18., color::SHEET);
+    c.rrect_outline(x, y, w, h, 18., 1., color::GLASS);
+    c.text_mid(
+        x + 20.,
+        y + 24.,
+        240.,
+        "Playback Speed",
+        Face::S15,
+        color::TEXT,
+    );
+    let label = format!("{}×", crate::speed_label(f32::from(pct) / 100.));
+    c.text_mid_right(x + w - 20., y + 24., &label, Face::S15, ui.accent());
+    let min = f32::from(reborn_core::books::MIN_SPEED_PERCENT);
+    let max = f32::from(reborn_core::books::MAX_SPEED_PERCENT);
+    let value = ((f32::from(pct) - min) / (max - min)).clamp(0., 1.);
+    let (track_x, track_w, track_cy) = (x + 20., w - 40., y + 62.);
+    crate::components::slider(c, track_x, track_cy, track_w, value, ui.accent(), true);
+    let ticks_y = y + 84.;
+    c.text_mid(track_x, ticks_y, 40., "0.5×", Face::R11, color::MUTED);
+    let one_x = track_x + track_w * ((100. - min) / (max - min));
+    c.text_center(
+        one_x,
+        ticks_y + Face::R11.mid_offset(),
+        "1×",
+        Face::R11,
+        color::MUTED,
+    );
+    c.text_mid_right(track_x + track_w, ticks_y, "2×", Face::R11, color::MUTED);
+    c.text_mid(
+        x + 20.,
+        y + 108.,
+        w - 40.,
+        "Turn the wheel, then Select · Back cancels",
+        Face::R11,
+        color::MUTED,
+    );
+}
+
 /// The panel while the Quick Menu is open, and as it fades out after closing.
 pub(crate) fn draw(c: &mut Canvas, ui: &Ui, m: &AppModel) {
+    if m.navigation.modal == Some(Modal::BookSpeed) {
+        ui.motion.reset("quick.open", 0.);
+        draw_book_speed(c, ui, m);
+        return;
+    }
     let open = m.navigation.modal == Some(Modal::QuickMenu);
     if m.navigation.modal.is_some() && !open {
         // Another menu opened from it (the sleep timer) takes the screen at once.

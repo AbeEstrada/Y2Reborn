@@ -761,17 +761,51 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
     m.navigation.modal_focus = 2;
     assert_eq!(ui.model_action(&mut m, Action::Select), chapter(2));
     m.navigation.modal_focus = 3;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(m.navigation.modal, Some(Modal::BookSpeed));
+    assert_eq!(ui.speed_draft, Some(100));
+    // Wheel adjusts in 0.05× steps without restarting playback until Select.
+    for _ in 0..13 {
+        assert_eq!(
+            ui.model_action(&mut m, Action::WheelClockwise(1)),
+            Effect::None
+        );
+    }
+    assert_eq!(ui.speed_draft, Some(165));
+    let slider_text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(slider_text.contains("Playback Speed"), "{slider_text}");
+    assert!(slider_text.contains("1.65×"), "{slider_text}");
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
-        Effect::SetBookSpeed(110)
+        Effect::SetBookSpeed(165)
     );
-    assert!(
-        m.navigation.modal.is_some(),
-        "the menu stays open for the next step"
-    );
-    m.book.as_mut().unwrap().speed = 1.1;
+    assert_eq!(m.navigation.modal, None);
+    assert_eq!(ui.speed_draft, None);
+    m.book.as_mut().unwrap().speed = 1.65;
+    ui.model_action(&mut m, Action::ContextMenu);
     let rows = ui.modal_rows_public(&m, &tracks);
-    assert_eq!(rows[3].secondary, "1.1×");
+    assert_eq!(rows[3].secondary, "1.65×");
+    // Clamps to 0.5×..=2× and Back cancels without emitting SetBookSpeed.
+    m.navigation.modal_focus = 3;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(m.navigation.modal, Some(Modal::BookSpeed));
+    for _ in 0..20 {
+        assert_eq!(
+            ui.model_action(&mut m, Action::WheelClockwise(1)),
+            Effect::None
+        );
+    }
+    assert_eq!(ui.speed_draft, Some(200));
+    for _ in 0..40 {
+        assert_eq!(
+            ui.model_action(&mut m, Action::WheelCounterClockwise(1)),
+            Effect::None
+        );
+    }
+    assert_eq!(ui.speed_draft, Some(50));
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!(m.navigation.modal, None);
+    assert_eq!(ui.speed_draft, None);
 }
 
 #[test]
