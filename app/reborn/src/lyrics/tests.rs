@@ -147,3 +147,27 @@ fn closing_lyrics_cancels_and_normal_playback_never_starts_a_reader() {
     assert!(controller.key.is_none());
     assert!(view.key.is_none());
 }
+
+#[test]
+fn shown_lyrics_keep_the_screen_on_only_while_the_music_plays() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("Original.lrc"), b"[00:01]A new day\n").unwrap();
+    let (mut controller, mut view) = (Controller::default(), reborn_ui::lyrics::View::default());
+    let mut model = fixture.model();
+    wait(&mut controller, &model, &mut view);
+    assert!(
+        !keeps_screen_on(&model, &view),
+        "paused: the screen times out"
+    );
+    model.playback = PlaybackState::Playing;
+    assert!(keeps_screen_on(&model, &view), "Y2Linux #142: read along");
+    model.screen = Screen::NowPlaying;
+    assert!(!keeps_screen_on(&model, &view), "another screen times out");
+    model.screen = Screen::Lyrics;
+    view.publish(None, State::Missing);
+    assert!(
+        !keeps_screen_on(&model, &view),
+        "no lyrics: nothing to read"
+    );
+    assert!(controller.quiesce());
+}

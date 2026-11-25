@@ -82,10 +82,22 @@ impl Controller {
         changed
     }
 }
+/// Lyrics read along with the music keep the screen on, as a playing film does (Y2Linux #142);
+/// paused, or with no lyrics to show, the screen times out as usual.
+fn keeps_screen_on(model: &AppModel, view: &reborn_ui::lyrics::View) -> bool {
+    model.screen == Screen::Lyrics
+        && !model.screen_off
+        && model.playback == PlaybackState::Playing
+        && matches!(view.state, State::Ready(_))
+}
+
 impl Runtime {
     pub(crate) fn lyrics_tick(&mut self) {
         if self.lyrics.tick(&self.model, &mut self.ui.lyrics) {
             self.dirty.mark_render();
+        }
+        if keeps_screen_on(&self.model, &self.ui.lyrics) {
+            self.last_activity = Instant::now();
         }
     }
 }

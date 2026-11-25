@@ -1,7 +1,9 @@
 # Synchronized lyrics
 
 Open the Now Playing options menu (hold Select) and select **Lyrics**. Reborn shows the lyrics of
-the song playing: from a `.lrc` file beside it, or, without one, from the song's own tags.
+the song playing: from a `.lrc` file beside it, or, without one, from the song's own tags. While
+lyrics are shown and the music plays, the screen stays on, as it does for a film; paused, it turns
+off after the usual time.
 
 Place a UTF-8 `.lrc` file beside the local song, with the same base name:
 
