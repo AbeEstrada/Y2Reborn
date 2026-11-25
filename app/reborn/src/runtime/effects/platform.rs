@@ -31,6 +31,8 @@ impl Runtime {
             return Err("Unplug from the computer first".into());
         }
         if task == reborn_core::PlatformTask::SdRepair {
+            // A start still opening its sink may be a song on the card.
+            self.cancel_pending_start();
             // The card is unmounted for the repair: nothing may hold a
             // song or its folder open on it.
             let on_card = self.model.current().is_some_and(|t| {

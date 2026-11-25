@@ -157,6 +157,19 @@ impl Runtime {
             self.dirty = pending.dirty_before;
         }
     }
+    /// Give up a start that is still opening its sink: the model goes back
+    /// to what it was, the start is dropped and playback is paused. Rolling
+    /// the model back alone left the start in `Playback`, which only
+    /// `poll_pending_reconfiguration` polls (and not once nothing is pending):
+    /// the screen said Playing and nothing played. Returns whether a start
+    /// was pending.
+    pub(crate) fn cancel_pending_start(&mut self) -> bool {
+        if self.pending_reconfiguration.is_none() {
+            return false;
+        }
+        self.pause();
+        true
+    }
     /// A rolled-back model keeps the level headphones hold: it is theirs,
     /// set on them already, not part of the change that failed.
     pub(crate) fn keep_held_volume(&self, previous: &mut AppModel) {

@@ -273,6 +273,10 @@ impl Runtime {
                 }
             }
             PlaybackAction::Stop => {
+                // A start still opening its sink: without this it stays
+                // pending for good and every action answers "Audio output
+                // is still starting".
+                self.abandon_pending_reconfiguration();
                 self.model.invalidate();
                 self.playback.stop(self.model.generation);
                 self.model.playback = PlaybackState::Stopped;

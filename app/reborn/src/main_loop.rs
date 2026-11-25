@@ -2009,7 +2009,9 @@ impl MainLoop {
                 }
                 self.last_sd = sd;
                 if sources != rt.model.sources {
-                    rt.abandon_pending_reconfiguration();
+                    // A song still starting would finish into the model the
+                    // source change rewrites: stop it too, not just roll back.
+                    rt.cancel_pending_start();
                     let old = rt.model.sources.clone();
                     for s in &sources {
                         if !old.iter().any(|v| v.id == s.id) {
