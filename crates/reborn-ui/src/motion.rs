@@ -99,8 +99,8 @@ impl Motion {
         self.live.set(self.frame.get());
     }
 
-    /// Something drawn in the latest frame is still moving: keep the
-    /// panel's full frame rate for the next one.
+    /// Something drawn in the latest frame is still moving, eased or live.
+    #[cfg(test)]
     pub fn moving(&self) -> bool {
         self.settling() || {
             let frame = self.frame.get();

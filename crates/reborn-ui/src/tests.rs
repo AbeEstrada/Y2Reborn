@@ -832,6 +832,7 @@ fn the_sleep_timer_is_picked_with_the_wheel_and_shows_on_now_playing() {
         [
             "Off",
             "End of Song",
+            "End of Queue",
             "5 min",
             "10 min",
             "15 min",
@@ -847,6 +848,17 @@ fn the_sleep_timer_is_picked_with_the_wheel_and_shows_on_now_playing() {
         ]
     );
     assert_eq!(picker[m.navigation.modal_focus], "30 min");
+    // Y2Reborn #175: End of Queue is a choice of its own.
+    let focus = m.navigation.modal_focus;
+    m.navigation.modal_focus = 2;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetSleepTimer(SleepChoice::EndOfQueue)
+    );
+    ui.model_action(&mut m, Action::ContextMenu);
+    m.navigation.modal_focus = at;
+    ui.model_action(&mut m, Action::Select);
+    m.navigation.modal_focus = focus;
     // The wheel stops at the ends; Select starts the length chosen.
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(

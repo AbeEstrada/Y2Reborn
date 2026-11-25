@@ -16,6 +16,12 @@ pub fn faded(volume: u8, left: Duration) -> u8 {
     (f32::from(volume) * left.as_secs_f32() / FADE.as_secs_f32()).round() as u8
 }
 
+/// Whether moving from `before` to `now` played out the queue: the entry that ended was the
+/// last one (a chapter change inside it is not its end).
+fn ended_the_queue(before: SleepItem, now: SleepItem, queue: &[reborn_core::QueueEntryId]) -> bool {
+    before.0.is_some() && before.0 != now.0 && before.0.as_ref() == queue.last()
+}
+
 impl Runtime {
     pub(crate) fn set_sleep_timer(&mut self, choice: SleepChoice) {
         self.end_sleep_fade();
@@ -27,7 +33,7 @@ impl Runtime {
                 until: Some(Instant::now() + Duration::from_secs(u64::from(m) * 60)),
                 item,
             }),
-            SleepChoice::EndOfItem => Some(SleepTimer {
+            SleepChoice::EndOfItem | SleepChoice::EndOfQueue => Some(SleepTimer {
                 choice,
                 until: None,
                 item,
@@ -117,6 +123,20 @@ impl Runtime {
         if !playing || self.model.sleep_item() == timer.item {
             return;
         }
+        // End of Queue: only the last entry's end pauses; before it the timer moves on.
+        if timer.choice == SleepChoice::EndOfQueue
+            && !ended_the_queue(
+                timer.item,
+                self.model.sleep_item(),
+                &self.model.queue_entry_ids,
+            )
+        {
+            self.model.sleep_timer = Some(SleepTimer {
+                item: self.model.sleep_item(),
+                ..timer
+            });
+            return;
+        }
         // The chapter or song ended: pause, ready to start the next one from
         // its beginning.
         self.model.sleep_timer = None;
@@ -140,6 +160,25 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_last_entry_ending_ends_the_queue() {
+        use reborn_core::QueueEntryId as E;
+        let queue = [E(1), E(2), E(3)];
+        let at = |id| (Some(E(id)), None);
+        assert!(
+            !ended_the_queue(at(1), at(2), &queue),
+            "the next song: go on"
+        );
+        assert!(
+            ended_the_queue(at(3), at(1), &queue),
+            "Repeat All wrapped: pause"
+        );
+        assert!(
+            !ended_the_queue((Some(E(3)), Some(1)), (Some(E(3)), Some(2)), &queue),
+            "a chapter inside the last part is not its end"
+        );
+    }
 
     #[test]
     fn a_timed_sleep_fades_over_its_last_ten_seconds() {

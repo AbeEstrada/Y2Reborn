@@ -44,6 +44,7 @@ impl Ui {
                 match key.strip_prefix("sleep_set:") {
                     Some("off") => Effect::SetSleepTimer(reborn_core::SleepChoice::Off),
                     Some("end") => Effect::SetSleepTimer(reborn_core::SleepChoice::EndOfItem),
+                    Some("queue") => Effect::SetSleepTimer(reborn_core::SleepChoice::EndOfQueue),
                     Some(n) => n
                         .parse()
                         .map(|n| Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(n)))

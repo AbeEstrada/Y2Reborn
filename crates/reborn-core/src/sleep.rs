@@ -8,13 +8,17 @@ pub enum SleepChoice {
     Minutes(u16),
     /// The end of the chapter (a book) or the song playing.
     EndOfItem,
+    /// The end of the last song in Up Next (or a book's last part), even with Repeat on
+    /// (Y2Reborn #175: Repeat All started the first song again).
+    EndOfQueue,
 }
 /// The timed lengths in minutes (#29): short steps first, up to three hours.
 pub const SLEEP_MINUTES: [u16; 12] = [5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 150, 180];
 impl SleepChoice {
-    /// The picker's rows: Off, the end of this song or chapter, the lengths.
+    /// The picker's rows: Off, the end of this song or chapter, the end of the queue, the
+    /// lengths.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Off, Self::EndOfItem];
+        let mut all = vec![Self::Off, Self::EndOfItem, Self::EndOfQueue];
         all.extend(SLEEP_MINUTES.iter().map(|&m| Self::Minutes(m)));
         all
     }
@@ -70,12 +74,13 @@ mod sleep_timer_tests {
     #[test]
     fn the_sleep_timer_offers_off_the_end_of_the_item_and_lengths_to_three_hours() {
         let all = SleepChoice::all();
-        assert_eq!(all.len(), 14);
+        assert_eq!(all.len(), 15);
         assert_eq!(
-            all[..3],
+            all[..4],
             [
                 SleepChoice::Off,
                 SleepChoice::EndOfItem,
+                SleepChoice::EndOfQueue,
                 SleepChoice::Minutes(5)
             ]
         );

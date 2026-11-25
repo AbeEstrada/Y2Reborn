@@ -278,6 +278,8 @@ pub(crate) fn sleep_note(m: &AppModel) -> Option<String> {
         match crate::sleep_label(m, m.book_part().is_some()).as_str() {
             "End of Chapter" => "Sleeps after chapter".to_owned(),
             "End of Song" => "Sleeps after song".to_owned(),
+            "End of Book" => "Sleeps after book".to_owned(),
+            "End of Queue" => "Sleeps after queue".to_owned(),
             minutes => format!("Sleeps in {minutes}"),
         },
     )

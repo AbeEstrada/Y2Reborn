@@ -1100,6 +1100,8 @@ pub(crate) fn sleep_label(m: &AppModel, book: bool) -> String {
         Some(t) => match (t.choice, t.until) {
             (reborn_core::SleepChoice::EndOfItem, _) if book => "End of Chapter".into(),
             (reborn_core::SleepChoice::EndOfItem, _) => "End of Song".into(),
+            (reborn_core::SleepChoice::EndOfQueue, _) if book => "End of Book".into(),
+            (reborn_core::SleepChoice::EndOfQueue, _) => "End of Queue".into(),
             (_, Some(_)) => minutes_label(sleep_minutes_left(m).unwrap_or(1)),
             _ => "Off".into(),
         },
@@ -1112,6 +1114,8 @@ pub(crate) fn sleep_choice_label(choice: reborn_core::SleepChoice, book: bool) -
         reborn_core::SleepChoice::Off => "Off".into(),
         reborn_core::SleepChoice::EndOfItem if book => "End of Chapter".into(),
         reborn_core::SleepChoice::EndOfItem => "End of Song".into(),
+        reborn_core::SleepChoice::EndOfQueue if book => "End of Book".into(),
+        reborn_core::SleepChoice::EndOfQueue => "End of Queue".into(),
         reborn_core::SleepChoice::Minutes(n) => minutes_label(u64::from(n)),
     }
 }

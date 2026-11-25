@@ -517,7 +517,7 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 | `bitrate` | `320 kbps` (empty when unknown) |
 | `output` | `Headphone Jack` or the Bluetooth device |
 | `playback` | `Playing`, `Paused`, `Stopped` |
-| `sleep` | a sleep timer: `Sleeps in 23 min`, `Sleeps after song`; empty without one |
+| `sleep` | a sleep timer: `Sleeps in 23 min`, `Sleeps after song`, `Sleeps after queue`; empty without one |
 | `screen` | the screen's name (empty on Home) |
 | `position` | where the selection is in the list: `25 of 100` |
 | `battery` `volume` | numbers 0–100 |

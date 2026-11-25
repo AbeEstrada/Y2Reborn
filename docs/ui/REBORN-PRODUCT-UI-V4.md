@@ -451,7 +451,8 @@ reopens on the headphones; headphones out while they play: pause, as stock. Not 
 ## Sleep timer lengths (Beta 8.37, Y2Reborn #29)
 
 Now Playing's *Sleep Timer* row opens a picker instead of stepping on each press: Off, End of Song (End of
-Chapter in a book), 5, 10, 15, 20, 30, 45 min, 1 h, 1 h 15, 1 h 30, 2 h, 2 h 30, 3 h (`SLEEP_MINUTES`).
+Chapter in a book), End of Queue (End of Book; Y2Reborn #175: pauses when the last song in Up Next ends, also
+with Repeat on), 5, 10, 15, 20, 30, 45 min, 1 h, 1 h 15, 1 h 30, 2 h, 2 h 30, 3 h (`SLEEP_MINUTES`).
 It opens on the timer set (else 30 min), marks it ("23 min left"), stops at its ends; Select starts it, Back
 leaves it as it was. Now Playing keeps "Sleeps in 23 min" opposite the output and now redraws it as the
 minutes change, also while paused. Skins get `{sleep}` and `"if": "sleep"`; every shipped skin shows

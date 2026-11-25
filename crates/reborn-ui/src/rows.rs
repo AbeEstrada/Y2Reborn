@@ -489,6 +489,9 @@ impl Ui {
                         let (key, running) = match c {
                             SleepChoice::Off => ("sleep_set:off".to_owned(), String::new()),
                             SleepChoice::EndOfItem => ("sleep_set:end".to_owned(), "On".to_owned()),
+                            SleepChoice::EndOfQueue => {
+                                ("sleep_set:queue".to_owned(), "On".to_owned())
+                            }
                             SleepChoice::Minutes(n) => (
                                 format!("sleep_set:{n}"),
                                 sleep_minutes_left(m).map_or_else(String::new, |l| {
