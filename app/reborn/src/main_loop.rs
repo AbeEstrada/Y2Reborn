@@ -2002,7 +2002,11 @@ impl MainLoop {
                     let _ = storage::mount_sd();
                 }
                 if !sd && self.last_sd {
-                    rt.pause();
+                    // Only a song on the card goes with it; internal storage
+                    // and stations play on.
+                    if rt.model.current_on_sd_card() {
+                        rt.pause();
+                    }
                     if !storage::platform_manages_media() {
                         let _ = storage::unmount_sd();
                     }

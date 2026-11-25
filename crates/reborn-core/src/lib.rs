@@ -1762,6 +1762,15 @@ impl AppModel {
     pub fn current(&self) -> Option<&Track> {
         self.queue.get(self.queue_position)
     }
+    /// The current song is stored on an SD card (not internal storage, not a
+    /// station): taking the card out ends it, taking nothing else does.
+    pub fn current_on_sd_card(&self) -> bool {
+        self.current().is_some_and(|t| {
+            self.sources
+                .iter()
+                .any(|s| s.id == t.source_id && matches!(s.kind, MediaSource::SdCard(_)))
+        })
+    }
     pub fn replace_queue(&mut self, tracks: Vec<Track>, index: usize) -> Result<(), String> {
         if tracks.is_empty() || tracks.len() > MAX_QUEUE || index >= tracks.len() {
             return Err("invalid queue bounds".into());
@@ -2435,6 +2444,37 @@ mod tests {
         assert!(m.screen_off);
         m.apply(Event::ScreenWake);
         assert!(!m.screen_off);
+    }
+
+    #[test]
+    fn only_a_song_on_the_sd_card_is_lost_with_the_card() {
+        let source = |id: &str, kind| Source {
+            id: id.into(),
+            kind,
+            root: PathBuf::new(),
+            online: true,
+            mount: String::new(),
+            mount_id: None,
+        };
+        let mut m = AppModel {
+            sources: vec![
+                source("internal", MediaSource::Internal),
+                source("sd", MediaSource::SdCard("card".into())),
+            ],
+            ..Default::default()
+        };
+        let track = |source_id: &str| Track {
+            source_id: source_id.into(),
+            ..Default::default()
+        };
+        assert!(!m.current_on_sd_card(), "empty queue");
+        m.replace_queue(vec![track("internal")], 0).unwrap();
+        assert!(!m.current_on_sd_card(), "internal storage");
+        m.replace_queue(vec![track("sd")], 0).unwrap();
+        assert!(m.current_on_sd_card(), "SD card");
+        let station = RadioStation::default();
+        m.replace_queue(vec![Track::radio(&station)], 0).unwrap();
+        assert!(!m.current_on_sd_card(), "radio station");
     }
 
     #[test]
