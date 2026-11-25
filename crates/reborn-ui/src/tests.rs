@@ -5190,9 +5190,13 @@ fn motion_waves_while_playing_slides_screens_and_glides_focus() {
     m.position_ms = 60_000;
     let frame = ui.draw(&m, &m.library.tracks, false);
     assert!(warped(&frame) > 20, "the played part waves");
+    // Y2Reborn #197: the wave redraws at the calm rate, not the panel's full rate.
+    ui.draw(&m, &m.library.tracks, false);
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    ui.draw(&m, &m.library.tracks, false);
     assert!(
-        ui.gliding(),
-        "the wave keeps the full frame rate while playing"
+        ui.animating() && !ui.gliding(),
+        "the wave keeps drawing, at the calm rate"
     );
     // …without the Interactive CPU lease: its frames fit the lowest clock.
     ui.draw(&m, &m.library.tracks, false);

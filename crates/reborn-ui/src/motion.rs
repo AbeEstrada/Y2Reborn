@@ -108,6 +108,12 @@ impl Motion {
         }
     }
 
+    /// This frame drew motion that goes on by itself (the playing wave).
+    pub fn live(&self) -> bool {
+        let frame = self.frame.get();
+        frame > 0 && self.live.get() == frame
+    }
+
     /// A value is still on its way (motion a button started), as opposed to
     /// motion that goes on by itself (the playing wave).
     pub fn settling(&self) -> bool {

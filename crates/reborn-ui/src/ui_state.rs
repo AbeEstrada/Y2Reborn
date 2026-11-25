@@ -100,12 +100,15 @@ impl Ui {
             || self.power_hold.is_some()
             || self.spinning
             || self.in_motion()
+            || (self.ui_motion && self.motion.live())
             || glyph_cache::pending()
     }
 
     /// Motion that wants the panel's full frame rate: Cover Flow's glide and
-    /// the cover's flight, and (Beta 7.2) every eased value on its way, a
-    /// screen sliding in and the playing wave. Spinners stay at the calm rate.
+    /// the cover's flight, and (Beta 7.2) every eased value on its way and a
+    /// screen sliding in. Spinners and the playing wave stay at the calm rate
+    /// (Y2Reborn #197: the wave at the full rate doubled the CPU's work for
+    /// the length of every song played with the screen on).
     pub fn gliding(&self) -> bool {
         // A film's pictures come at their own times: the loop looks for one at the panel's
         // rate, but only a new picture is a reason to draw (`in_motion` leaves films out).
@@ -117,7 +120,7 @@ impl Ui {
         self.flow.borrow().moving()
             || self.transition_progress().is_some()
             || (self.ui_motion
-                && (self.motion.moving()
+                && (self.motion.settling()
                     || self.slide.borrow().is_some()
                     || self.folding.borrow().is_some()
                     || self.download_shown))
