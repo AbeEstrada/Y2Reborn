@@ -43,7 +43,8 @@ impl Ui {
                     .map(|r| (m.navigation.focus, r.key)),
             );
         }
-        if m.navigation.modal.is_some() {
+        // The speed slider has no rows: it is a value the wheel moves (PR #198).
+        if m.navigation.modal.is_some() && m.navigation.modal != Some(Modal::BookSpeed) {
             let rows = self.modal_rows(m, tracks);
             if rows.is_empty() {
                 m.navigation.modal = None;
