@@ -58,10 +58,10 @@ impl Runtime {
         }
     }
 
-    /// The listener's own volume again after a fade.
+    /// The software level again after a fade (full while headphones hold the volume).
     fn end_sleep_fade(&mut self) {
         if std::mem::take(&mut self.sleep_fading) {
-            self.playback.set_volume(self.model.settings.volume);
+            self.playback.set_volume(self.sink_volume());
         }
     }
 
@@ -109,8 +109,7 @@ impl Runtime {
                 self.end_sleep_fade();
                 self.dirty.mark_both();
             } else if playing && left < FADE {
-                self.playback
-                    .set_volume(faded(self.model.settings.volume, left));
+                self.playback.set_volume(faded(self.sink_volume(), left));
                 self.sleep_fading = true;
             }
             return;
