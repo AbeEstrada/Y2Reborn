@@ -711,7 +711,27 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             color::DIM,
         );
     }
+    // Ask for the covers around the three shown too, nearest first and forward before back, so
+    // they are in place by the time the wheel gets there (Cover Flow shows five either side).
+    let shown = first..first + 3.min(albums - first);
+    let mut ahead: Vec<usize> = (album_focus.saturating_sub(COVERS_AHEAD)
+        ..(album_focus + COVERS_AHEAD + 1).min(albums))
+        .filter(|index| !shown.contains(index))
+        .collect();
+    ahead.sort_by_key(|index| (index.abs_diff(album_focus), *index < album_focus));
+    for index in ahead {
+        let art = all.get(1 + index).and_then(|row| row.art);
+        if let Some((at, track)) = art.and_then(|a| tracks.get(a).map(|t| (a, t))) {
+            let key = components::art_key(track);
+            if !ui.thumb_resident(key) {
+                ui.want_thumb(key, at);
+            }
+        }
+    }
 }
+
+/// Albums either side of the focus on an artist's page whose covers are loaded before they show.
+const COVERS_AHEAD: usize = 5;
 
 // ------------------------------------------------------------------- folders
 
