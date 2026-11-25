@@ -311,6 +311,46 @@ fn quote(s: &str) -> Result<String, String> {
 fn hex_ssid(s: &str) -> String {
     s.bytes().map(|b| format!("{b:02x}")).collect()
 }
+/// A network name as `SCAN_RESULTS`, `STATUS` and `LIST_NETWORKS` print it:
+/// wpa_supplicant 2.x runs it through `printf_encode`, so `Café` arrives as
+/// `Caf\xc3\xa9` and `"` and `\` are escaped. This is the real name again.
+/// A hidden network has an empty name or only NUL bytes (`\x00\x00`): `None`.
+fn ssid_text(encoded: &str) -> Option<String> {
+    let raw = encoded.as_bytes();
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] != b'\\' {
+            out.push(raw[i]);
+            i += 1;
+            continue;
+        }
+        let hex = |at: usize| {
+            raw.get(at..at + 2)
+                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+        };
+        let (byte, used) = match raw.get(i + 1) {
+            Some(b'x') => match hex(i + 2) {
+                Some(b) => (b, 4),
+                None => (b'\\', 1),
+            },
+            Some(b'n') => (b'\n', 2),
+            Some(b'r') => (b'\r', 2),
+            Some(b't') => (b'\t', 2),
+            Some(b'e') => (0x1b, 2),
+            Some(&c @ (b'\\' | b'"')) => (c, 2),
+            _ => (b'\\', 1),
+        };
+        out.push(byte);
+        i += used;
+    }
+    if out.iter().all(|&b| b == 0) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).into_owned())
+}
 pub fn enabled() -> bool {
     Paths::default().power().unwrap_or(false)
 }
@@ -723,11 +763,11 @@ fn networks(text: &str) -> Result<Vec<Network>, String> {
         .take(256)
         .filter_map(|line| {
             let p = line.splitn(5, '\t').collect::<Vec<_>>();
-            if p.len() != 5 || p[4].is_empty() {
+            if p.len() != 5 {
                 return None;
             }
             Some(Network {
-                ssid: p[4].into(),
+                ssid: ssid_text(p[4])?,
                 signal: p[2].parse().ok()?,
                 security: p[3].into(),
                 saved_id: None,
@@ -788,7 +828,7 @@ fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
                     if let Some((k, v)) = line.split_once('=') {
                         match k {
                             "wpa_state" => s.state = v.into(),
-                            "ssid" => s.ssid = v.into(),
+                            "ssid" => s.ssid = ssid_text(v).unwrap_or_default(),
                             "bssid" => s.association_id = Some(v.into()),
                             "ip_address" => s.ip = v.into(),
                             _ => {}
@@ -818,7 +858,7 @@ fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
                                 let p = l.split('\t').collect::<Vec<_>>();
                                 Some(Network {
                                     saved_id: Some(p.first()?.parse().ok()?),
-                                    ssid: p.get(1)?.to_string(),
+                                    ssid: ssid_text(p.get(1)?)?,
                                     ..Default::default()
                                 })
                             })
@@ -2052,6 +2092,37 @@ mod tests {
     fn password_encoding_cannot_inject_commands() {
         assert!(quote("x\nREMOVE_NETWORK all").is_err());
         assert!(quote("tab\there").is_err());
+    }
+    #[test]
+    fn names_the_supplicant_prints_escaped_are_decoded() {
+        // wpa_supplicant 2.12 prints these with printf_encode.
+        assert_eq!(ssid_text("Home").as_deref(), Some("Home"));
+        assert_eq!(ssid_text("Caf\\xc3\\xa9").as_deref(), Some("Café"));
+        assert_eq!(ssid_text("a\\\"b\\\\c").as_deref(), Some("a\"b\\c"));
+        assert_eq!(ssid_text("tab\\there").as_deref(), Some("tab\there"));
+        assert_eq!(ssid_text("\\xe2\\x82\\xac5").as_deref(), Some("€5"));
+        // A stray backslash or a bad hex escape stays as written.
+        assert_eq!(ssid_text("a\\q").as_deref(), Some("a\\q"));
+        assert_eq!(ssid_text("a\\x+f").as_deref(), Some("a\\x+f"));
+        // Hidden networks have no name.
+        assert_eq!(ssid_text(""), None);
+        assert_eq!(ssid_text("\\x00\\x00\\x00"), None);
+        // What the join sends back is the name the user saw.
+        assert_eq!(
+            hex_ssid(&ssid_text("Caf\\xc3\\xa9").unwrap()),
+            hex_ssid("Café")
+        );
+    }
+    #[test]
+    fn scan_results_and_saved_networks_use_the_real_name() {
+        let scan = format!(
+            "{HEADER}aa:bb:cc:00:00:01\t2412\t-40\t[WPA2-PSK][ESS]\tCaf\\xc3\\xa9\n\
+             aa:bb:cc:00:00:02\t2412\t-50\t[ESS]\t\\x00\\x00\\x00\n\
+             aa:bb:cc:00:00:03\t2412\t-60\t[ESS]\t\n"
+        );
+        let found = networks(&scan).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].ssid, "Café");
     }
     #[test]
     fn passwords_and_names_reach_the_supplicant_unchanged() {
