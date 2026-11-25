@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define RB_CUES 4096
+#define RB_CUES_MAX 16384 /* about 6.5 MB; a feature film has a few thousand lines */
 #define RB_CUE_TEXT 384
 
 typedef struct {
@@ -61,7 +61,7 @@ typedef struct RbVideo {
   uint8_t *line_y;                 /* one output row of averaged luma */
   uint8_t *chroma;                 /* averaged CbCr at half the output size */
   RbCue *cues;
-  int cue_count, cue_next;
+  int cue_count, cue_cap, cue_next;
 } RbVideo;
 
 /* The picture codecs Reborn plays (y2_production_defconfig); a cover's are not among them. */
@@ -128,10 +128,22 @@ static void plain_text(const char *in, int ass, char *out, size_t size) {
   out[n] = 0;
 }
 
+/* Room for one more line, the list growing as the film needs it; 0 at RB_CUES_MAX or when out of memory. */
+static int cue_room(RbVideo *v) {
+  if (v->cue_count < v->cue_cap) return 1;
+  if (v->cue_cap >= RB_CUES_MAX) return 0;
+  int cap = v->cue_cap ? v->cue_cap * 2 : 256;
+  RbCue *grown = realloc(v->cues, (size_t)cap * sizeof(*grown));
+  if (!grown) return 0;
+  v->cues = grown;
+  v->cue_cap = cap;
+  return 1;
+}
+
 static void add_cue(RbVideo *v, AVCodecContext *decoder, AVPacket *p, AVRational tb) {
   AVSubtitle s;
   int got = 0;
-  if (v->cue_count == RB_CUES || avcodec_decode_subtitle2(decoder, &s, &got, p) < 0 || !got) return;
+  if (!cue_room(v) || avcodec_decode_subtitle2(decoder, &s, &got, p) < 0 || !got) return;
   int64_t at = p->pts == AV_NOPTS_VALUE ? 0 : av_rescale_q(p->pts, tb, (AVRational){1, 1000});
   int64_t length = s.end_display_time > s.start_display_time
       ? (int64_t)s.end_display_time - s.start_display_time
@@ -285,8 +297,7 @@ int rb_video_open(const char *path, int max_w, int max_h, int hardware, RbVideo 
   v->sub_stream = -1;
   v->p = av_packet_alloc();
   v->frame = av_frame_alloc();
-  v->cues = calloc(RB_CUES, sizeof(*v->cues));
-  if (!v->p || !v->frame || !v->cues) { ret = AVERROR(ENOMEM); goto fail; }
+  if (!v->p || !v->frame) { ret = AVERROR(ENOMEM); goto fail; }
   if ((ret = avformat_open_input(&v->f, path, NULL, NULL)) < 0) goto fail;
   if ((ret = avformat_find_stream_info(v->f, NULL)) < 0) goto fail;
   ret = av_find_best_stream(v->f, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);

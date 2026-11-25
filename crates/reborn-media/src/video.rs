@@ -298,6 +298,44 @@ mod tests {
         );
     }
 
+    /// The cue list used to stop at 4096 lines, so a long film lost its subtitles from there on.
+    #[test]
+    fn a_long_subtitle_file_is_read_to_its_last_line() {
+        const LINES: i64 = 6000;
+        let film =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/film-h264.mp4");
+        let dir = std::env::temp_dir().join(format!("reborn-long-subs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let srt = dir.join("long.srt");
+        let stamp = |ms: i64| {
+            format!(
+                "{:02}:{:02}:{:02},{:03}",
+                ms / 3_600_000,
+                ms / 60_000 % 60,
+                ms / 1000 % 60,
+                ms % 1000
+            )
+        };
+        let text: String = (0..LINES)
+            .map(|i| {
+                let start = i * 2000;
+                format!(
+                    "{}\n{} --> {}\nline {i}\n\n",
+                    i + 1,
+                    stamp(start),
+                    stamp(start + 1500)
+                )
+            })
+            .collect();
+        std::fs::write(&srt, text).unwrap();
+        let mut video = Video::open(&film, 64, 48, false).unwrap();
+        assert!(video.subtitles_from(&srt));
+        assert_eq!(video.subtitle(10), "line 0");
+        assert_eq!(video.subtitle(5000 * 2000 + 100), "line 5000");
+        assert_eq!(video.subtitle((LINES - 1) * 2000 + 100), "line 5999");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_missing_film_is_an_error_not_a_crash() {
         assert!(Video::open(Path::new("/nonexistent/film.mp4"), 480, 360, false).is_err());
