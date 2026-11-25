@@ -65,9 +65,15 @@ impl Shared {
     fn report(&mut self, reported: i64, playing: bool, now: Instant) -> bool {
         let drift = reported - self.clock_at(now);
         let moved = self.playing != playing || drift.abs() > JUMP_MS;
-        if let (true, false, Some(at)) = (self.playing && playing, moved, self.reported) {
-            self.wall_ms += now.saturating_duration_since(at).as_millis() as i64;
-            self.sound_ms += reported - self.reported_ms;
+        // Every step of continuous play counts, a stalled or hurried position too (they are what
+        // this measures); only a seek or another film (a jump past FAR_MS) and a pause do not.
+        if let (true, Some(at)) = (self.playing && playing, self.reported) {
+            let wall = now.saturating_duration_since(at).as_millis() as i64;
+            let sound = reported - self.reported_ms;
+            if (sound - wall).abs() <= FAR_MS {
+                self.wall_ms += wall;
+                self.sound_ms += sound;
+            }
         }
         self.reported_ms = reported;
         // Small differences are the position's coarse steps: lean towards it, do not jump.
@@ -594,6 +600,11 @@ mod tests {
         // A seek far ahead is a move: neither counts.
         assert!(s.report(60_000, true, start + Duration::from_millis(11_000)));
         assert_eq!((s.sound_ms, s.wall_ms), (10_000, 10_500));
+        // The position stands still 400 ms, then catches up: sound and clock stay equal.
+        let at = |ms: u64| start + Duration::from_millis(11_000 + ms);
+        s.report(60_000, true, at(400));
+        s.report(60_600, true, at(600));
+        assert_eq!((s.sound_ms, s.wall_ms), (10_600, 11_100));
     }
 
     #[test]
