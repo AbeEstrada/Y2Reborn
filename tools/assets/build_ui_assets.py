@@ -177,9 +177,10 @@ class Pen:
         self.w, self.h = w, h
         self.img = Image.new('L', (w * SS, h * SS), 0)
         self.d = ImageDraw.Draw(self.img)
+        self.scale = 1.0  # drawing units per pixel: an icon drawn on a 32 unit grid fills a larger pen
 
     def p(self, v):
-        return v * SS
+        return v * SS * self.scale
 
     def line(self, pts, width=2.0, cap=True):
         pts = [(self.p(x), self.p(y)) for x, y in pts]
@@ -613,6 +614,27 @@ ICONS = [
     ('palette', 32, ic_palette), ('sliders', 32, ic_sliders), ('moon', 32, ic_moon),
     ('book', 32, ic_book),
 ]
+
+
+def scaled(draw, size):
+    """`draw`, an icon on the 32 unit grid, redrawn at `size` pixels (not a stretched bitmap)."""
+    def go(pen):
+        pen.scale = size / 32
+        draw(pen)
+    return go
+
+
+# Icons the UI draws above 32 px (empty-cover tiles, the charging bolt, skins' big icons). A bitmap
+# drawn at any other size than its own is resampled and soft, so each size the UI uses has a sprite
+# of exactly that size (Canvas::icon snaps a size within 10% of one to it). Sizes: the empty-cover
+# tiles draw their note or book at 34% of the tile, Now Playing's at 60 px, skins ask for up to 80.
+# Kept after every other sprite, so the rectangles of the ones above do not move.
+LARGE_ICONS = (
+    [(f'note_{n}', n, scaled(ic_note, n)) for n in (36, 40, 48, 64, 80)]
+    + [(f'book_{n}', n, scaled(ic_book, n)) for n in (36, 40, 48, 64)]
+    + [('heart_on_48', 48, scaled(ic_heart_on, 48)), ('bolt_40', 40, scaled(ic_bolt, 40)),
+       ('warning_36', 36, scaled(ic_warning, 36)), ('info_36', 36, scaled(ic_info, 36))]
+)
 ARC_FRAMES = 48
 ARC_SIZE = 96
 # Pixel-exact corner sprites: filled quarter discs and quarter rings, per radius.
@@ -657,6 +679,10 @@ def build_masks():
             for w in CORNER_RING_WIDTHS:
                 if w < r:
                     sheet.add(f'cring_{r}_{w}_{o}', corner_sprite(r, o, w))
+    for name, size, draw in LARGE_ICONS:
+        pen = Pen(size)
+        draw(pen)
+        sheet.add(name, pen.out())
     return sheet.finish()
 
 

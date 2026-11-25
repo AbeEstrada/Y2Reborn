@@ -2,7 +2,7 @@
 // Source rectangles [x, y, w, h] in the mask atlas.
 #![allow(dead_code)]
 
-pub const MASK_SIZE: (usize, usize) = (512, 1488);
+pub const MASK_SIZE: (usize, usize) = (512, 1600);
 pub const ARC_FRAMES: usize = 48;
 pub const ARC_SIZE: f32 = 96.;
 
@@ -71,6 +71,19 @@ pub const PALETTE: [u16; 4] = [264, 180, 32, 32];
 pub const SLIDERS: [u16; 4] = [297, 180, 32, 32];
 pub const MOON: [u16; 4] = [330, 180, 32, 32];
 pub const BOOK: [u16; 4] = [363, 180, 32, 32];
+pub const NOTE_36: [u16; 4] = [297, 1450, 36, 36];
+pub const NOTE_40: [u16; 4] = [334, 1450, 40, 40];
+pub const NOTE_48: [u16; 4] = [375, 1450, 48, 48];
+pub const NOTE_64: [u16; 4] = [424, 1450, 64, 64];
+pub const NOTE_80: [u16; 4] = [0, 1515, 80, 80];
+pub const BOOK_36: [u16; 4] = [81, 1515, 36, 36];
+pub const BOOK_40: [u16; 4] = [118, 1515, 40, 40];
+pub const BOOK_48: [u16; 4] = [159, 1515, 48, 48];
+pub const BOOK_64: [u16; 4] = [208, 1515, 64, 64];
+pub const HEART_ON_48: [u16; 4] = [273, 1515, 48, 48];
+pub const BOLT_40: [u16; 4] = [322, 1515, 40, 40];
+pub const WARNING_36: [u16; 4] = [363, 1515, 36, 36];
+pub const INFO_36: [u16; 4] = [400, 1515, 36, 36];
 
 pub const CORNER_RADII: [u8; 20] = [
     2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32,

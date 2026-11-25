@@ -131,6 +131,60 @@ impl Icon {
             Self::Book => mask::BOOK,
         }
     }
+
+    /// The sprites drawn bigger than `src`, smallest first, for the sizes the UI shows an icon at above
+    /// its 32 px grid (empty-cover tiles, the charging bolt, skins' big icons).
+    fn larger(self) -> &'static [[u16; 4]] {
+        match self {
+            Self::Play => &[mask::PLAY_L],
+            Self::Pause => &[mask::PAUSE_L],
+            Self::Prev => &[mask::PREV_L],
+            Self::Next => &[mask::NEXT_L],
+            Self::Note => &[
+                mask::NOTE_36,
+                mask::NOTE_40,
+                mask::NOTE_48,
+                mask::NOTE_64,
+                mask::NOTE_80,
+            ],
+            Self::Book => &[mask::BOOK_36, mask::BOOK_40, mask::BOOK_48, mask::BOOK_64],
+            Self::HeartOn => &[mask::HEART_ON_48],
+            Self::Bolt => &[mask::BOLT_40],
+            Self::Warning => &[mask::WARNING_36],
+            Self::Info => &[mask::INFO_36],
+            _ => &[],
+        }
+    }
+
+    /// The sprite to draw an icon asked for at `size` pixels, and the size to draw it at. A sprite drawn
+    /// at any size but its own is resampled by the bilinear filter and comes out soft, so a size within
+    /// a tenth of a sprite's edge snaps to that edge (drawn 1:1, sharp); a size between sprites uses the
+    /// smallest that is not smaller (resampled down, never stretched up); past the biggest, the biggest.
+    /// Sizes up to the 32 px grid draw as asked.
+    fn fit(self, size: f32) -> ([u16; 4], f32) {
+        let native = self.src();
+        let larger = self.larger();
+        if size <= f32::from(native[2]) {
+            return (native, size);
+        }
+        let near = larger
+            .iter()
+            .filter(|s| (f32::from(s[2]) - size).abs() <= size * 0.1)
+            .min_by(|a, b| {
+                let gap = |s: &&[u16; 4]| (f32::from(s[2]) - size).abs();
+                gap(a).total_cmp(&gap(b))
+            });
+        if let Some(sprite) = near {
+            return (*sprite, f32::from(sprite[2]));
+        }
+        let sprite = larger
+            .iter()
+            .find(|s| size <= f32::from(s[2]))
+            .or(larger.last())
+            .copied()
+            .unwrap_or(native);
+        (sprite, size)
+    }
 }
 
 /// Quarter index within a corner table.
@@ -442,8 +496,7 @@ impl Canvas {
         self.masked(mask::RAMP_UP, x, y, w, h, color);
     }
     pub fn icon(&mut self, icon: Icon, cx: f32, cy: f32, size: f32, color: u32) {
-        let src = icon.src();
-        let size = size.round();
+        let (src, size) = icon.fit(size.round());
         self.masked(
             src,
             (cx - size / 2.).round(),
@@ -622,5 +675,88 @@ mod tests {
         let n = c.draw.len();
         c.text(0., 0., "x", Face::R15, 0xFFFFFF00);
         assert_eq!(c.draw.len(), n, "invisible text draws nothing");
+    }
+
+    /// The sprite an icon asked for at `size` is drawn from, and the size it ends up drawn at.
+    fn icon_drawn(icon: Icon, size: f32) -> ([u16; 4], f32) {
+        let mut c = Canvas::new();
+        c.icon(icon, 100., 100., size, 0xFFFFFFFF);
+        let q = c.draw.last().expect("an icon quad");
+        assert_eq!(q.w, q.h, "icons are square");
+        (q.src, q.w)
+    }
+
+    #[test]
+    fn an_icon_near_a_sprites_size_is_drawn_at_exactly_that_size() {
+        // Now Playing's empty cover (176 px tile: 60), the album page's (180: 61), a playlist's
+        // empty mosaic (47) and the skins' 68 px note: within a tenth of a sprite, so drawn 1:1.
+        for (asked, sprite, edge) in [
+            (60., mask::NOTE_64, 64.),
+            (61., mask::NOTE_64, 64.),
+            (68., mask::NOTE_64, 64.),
+            (47., mask::NOTE_48, 48.),
+            (44., mask::NOTE_40, 40.), // as far from 48: a tie goes to the smaller
+            (45., mask::NOTE_48, 48.),
+            (39., mask::NOTE_40, 40.),
+            (35., mask::NOTE_36, 36.),
+            (80., mask::NOTE_80, 80.),
+        ] {
+            assert_eq!(
+                icon_drawn(Icon::Note, asked),
+                (sprite, edge),
+                "note at {asked}"
+            );
+        }
+        assert_eq!(icon_drawn(Icon::Book, 61.), (mask::BOOK_64, 64.));
+        assert_eq!(icon_drawn(Icon::HeartOn, 52.), (mask::HEART_ON_48, 48.));
+        assert_eq!(icon_drawn(Icon::Bolt, 40.), (mask::BOLT_40, 40.));
+        assert_eq!(icon_drawn(Icon::Warning, 36.), (mask::WARNING_36, 36.));
+        assert_eq!(icon_drawn(Icon::Info, 36.), (mask::INFO_36, 36.));
+    }
+
+    #[test]
+    fn a_size_between_sprites_never_stretches_one_up() {
+        // 56 is further than a tenth from 48 and 64: the 64 px one, resampled down.
+        assert_eq!(icon_drawn(Icon::Note, 56.), (mask::NOTE_64, 56.));
+        // Past the biggest sprite there is nothing bigger to use.
+        assert_eq!(icon_drawn(Icon::Note, 120.), (mask::NOTE_80, 120.));
+        // The transport icons already had a bigger sprite; an icon without one keeps its own.
+        assert_eq!(icon_drawn(Icon::Play, 48.), (mask::PLAY_L, 48.));
+        assert_eq!(icon_drawn(Icon::Search, 40.), (mask::SEARCH, 40.));
+    }
+
+    #[test]
+    fn sizes_up_to_the_grid_draw_as_asked() {
+        // Smaller than 32 px is a downscale, which the icons always did: unchanged.
+        for asked in [11., 14., 20., 24., 30., 32.] {
+            assert_eq!(icon_drawn(Icon::Note, asked), (mask::NOTE, asked));
+        }
+    }
+
+    #[test]
+    fn the_icons_the_ui_draws_big_are_drawn_from_a_sprite_of_their_own_size() {
+        // The empty-cover tile on Now Playing and the album page, a playlist's empty mosaic, the
+        // Favorites tile, the charging bolt: none of them is resampled.
+        let mut c = Canvas::new();
+        crate::components::placeholder(&mut c, 26., 46., 176., 15., 0);
+        crate::components::placeholder(&mut c, 266., 58., 180., 8., 0);
+        crate::components::icon_tile(&mut c, 24., 44., 104., 11., 0xFF5A7AFF, Icon::HeartOn, 52.);
+        crate::components::icon_tile(&mut c, 24., 44., 104., 11., 0xA07BFFFF, Icon::Note, 47.);
+        c.icon(Icon::Bolt, 240., 160., 40., 0xFFFFFFFF);
+        let icons: Vec<_> = c
+            .draw
+            .iter()
+            .filter(|q| q.tex == Tex::Mask && q.src[2] == q.src[3] && q.src[2] > 32)
+            .collect();
+        assert_eq!(icons.len(), 5, "the five large icons");
+        for q in icons {
+            assert_eq!(
+                q.w,
+                f32::from(q.src[2]),
+                "a {} px sprite drawn at {} px",
+                q.src[2],
+                q.w
+            );
+        }
     }
 }
