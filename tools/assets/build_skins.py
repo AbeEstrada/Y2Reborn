@@ -1726,12 +1726,15 @@ def pq_row(w, focused, h=34):
         when("has_detail", T(a + 16, 17, w - a - 56, 16, "{detail}", "small", "muted")),
     ]})
     plain = []
-    for cond, lw in (("has_detail", w - 230), ("!has_detail", w - 70)):
+    # The detail column fits the row: full-width lists keep 170 px for it, narrower ones less,
+    # Home's menu 56 px (Y2Reborn #196: a fixed 170 left the label 18 px, drawn as "...").
+    dw = 170 if w >= 400 else 96 if w >= 320 else 56
+    for cond, lw in (("has_detail", w - 60 - dw), ("!has_detail", w - 70)):
         plain.append(when(f"{cond} & !disabled", T(28, 0, lw, h, "{label}", "menu", fg)))
         plain.append(when(f"{cond} & disabled", T(28, 0, lw, h, "{label}", "menu", "dim")))
     plain = [e for c in plain for e in ([dict(c, x=c["x"] + 2, y=2, color=PQ_SHADOW)] if c["color"] != "dim" else []) + [c]]
     plain += [
-        T(w - 214, 0, 170, h, "{detail}", "body", "muted", "right"),
+        T(w - 44 - dw, 0, dw, h, "{detail}", "body", "muted", "right"),
         T(w - 134, 0, 90, h, "ON", "small", "success", "right", **{"if": "toggle & on & !has_detail"}),
         T(w - 134, 0, 90, h, "OFF", "small", "dim", "right", **{"if": "toggle & !on & !has_detail"}),
     ]
@@ -2107,11 +2110,14 @@ def gg_row(w, focused, h=36):
         when("has_detail", T(a + 16, 19, w - a - 56, 15, "{detail}", "small", "muted")),
     ]})
     plain = []
-    for cond, lw in (("has_detail", w - 230), ("!has_detail", w - 70)):
+    # The detail column fits the row: full-width lists keep 170 px for it, narrower ones less,
+    # Home's menu 56 px (Y2Reborn #196: a fixed 170 left the label 18 px, drawn as "...").
+    dw = 170 if w >= 400 else 96 if w >= 320 else 56
+    for cond, lw in (("has_detail", w - 60 - dw), ("!has_detail", w - 70)):
         plain += GS(26, 0, lw, h, "{label}", "menu", fg, **{"if": f"{cond} & !disabled"})
         plain.append(T(26, 0, lw, h, "{label}", "menu", "dim", **{"if": f"{cond} & disabled"}))
     plain += [
-        T(w - 214, 0, 170, h, "{detail}", "detail", "gold" if focused else "muted", "right"),
+        T(w - 44 - dw, 0, dw, h, "{detail}", "detail", "gold" if focused else "muted", "right"),
         T(w - 134, 0, 90, h, "On", "detail", "gold", "right", **{"if": "toggle & on & !has_detail"}),
         T(w - 134, 0, 90, h, "Off", "detail", "dim", "right", **{"if": "toggle & !on & !has_detail"}),
     ]
