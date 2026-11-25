@@ -450,9 +450,16 @@ impl Ui {
                     .get(i)
                     .is_some_and(|r| r.search_kind() == catalog::SearchKind::Heading),
             };
+            // Past an end, a heading lets a wrapping list carry on from the other.
+            let may_wrap = wraps && rested && delta.abs() == 1;
+            let mut hops = 0;
             while heading(next) {
-                let n = next as i32 + delta.signum();
-                if n < 0 || n > last {
+                let mut n = next as i32 + delta.signum();
+                if may_wrap && (n < 0 || n > last) {
+                    n = n.rem_euclid(count as i32);
+                }
+                hops += 1;
+                if n < 0 || n > last || hops >= count {
                     next = *focus;
                     break;
                 }

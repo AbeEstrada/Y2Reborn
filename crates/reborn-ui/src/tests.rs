@@ -6289,6 +6289,35 @@ fn up_next_opens_on_the_song_playing_with_history_above_and_its_parts_named() {
 }
 
 #[test]
+fn up_from_the_first_song_under_a_heading_wraps_when_lists_wrap_everywhere() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    let tracks = m.library.tracks.clone();
+    m.step(1);
+    m.step(1);
+    m.note_played(&tracks[0]);
+    m.note_played(&tracks[1]);
+    m.screen = Screen::Queue;
+    m.settings.wrap_around = WrapAround::Everywhere;
+    ui.normalize(&mut m, &tracks);
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows[0].key, "heading:history", "row 0 is a heading");
+    let last = rows.len() - 1;
+    // The first song is row 1: Up wraps to the end, as it does from row 0 of a
+    // list with no heading.
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(m.navigation.focus, last, "Up from the first song wraps");
+    // And Down from the end comes back to it.
+    ui.model_action(&mut m, Action::NavigateDown);
+    assert_eq!(m.navigation.focus, 1, "Down from the end skips the heading");
+    // With wrapping off it holds.
+    m.settings.wrap_around = WrapAround::Off;
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(m.navigation.focus, 1, "Off: the end holds");
+}
+
+#[test]
 fn a_moved_song_follows_the_wheel_until_select_puts_it_down() {
     let mut ui = radios();
     let mut m = app(Screen::Queue);
