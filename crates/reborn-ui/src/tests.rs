@@ -2350,6 +2350,30 @@ fn other_network_joins_a_hidden_network_by_its_name() {
 }
 
 #[test]
+fn a_network_name_keeps_its_leading_and_trailing_spaces() {
+    // A name is any 32 bytes; "Attic " and "Attic" are two networks.
+    use crate::keyboard::Purpose;
+    let mut ui = radios();
+    let mut m = app(Screen::Wifi);
+    select_key(&mut ui, &mut m, "wifi_other");
+    ui.keyboard.as_mut().unwrap().text = " Attic ".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert_eq!(
+        ui.keyboard.as_ref().unwrap().purpose,
+        Purpose::WifiPassword {
+            ssid: " Attic ".into(),
+            hidden: true
+        }
+    );
+    // Only blanks is no name.
+    ui.keyboard = None;
+    select_key(&mut ui, &mut m, "wifi_other");
+    ui.keyboard.as_mut().unwrap().text = "   ".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert_eq!(ui.keyboard.as_ref().unwrap().purpose, Purpose::WifiName);
+}
+
+#[test]
 fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
     // Y2Reborn #20: one wrong letter, 15 tries; the player showed
     // "Connecting…" then "Saved" and never said the password was wrong.

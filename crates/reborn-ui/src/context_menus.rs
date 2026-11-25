@@ -519,11 +519,17 @@ impl Ui {
                         self.playlist_named(&purpose, text)
                     }
                     Purpose::WifiName => {
-                        if text.is_empty() || text.len() > 32 {
-                            self.flash("Type the network's name (up to 32 characters)");
+                        // A name may start or end with a space: keep it as typed.
+                        if text.is_empty() {
+                            self.flash("Type the network's name");
                             return Effect::None;
                         }
-                        self.open_wifi_keyboard(text, "", true);
+                        if k.text.len() > 32 {
+                            self.flash("Network names take up to 32 bytes");
+                            return Effect::None;
+                        }
+                        let name = k.text.clone();
+                        self.open_wifi_keyboard(name, "", true);
                         Effect::None
                     }
                     Purpose::WifiPassword { ssid, hidden } => {
