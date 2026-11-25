@@ -160,6 +160,9 @@ pub enum Command {
     PlayPause,
     Next,
     Previous,
+    /// In a book one chapter, at any distance; elsewhere Next / Previous (Y2Reborn #177).
+    NextChapter,
+    PreviousChapter,
     SeekForward,
     SeekBack,
     Stop,
@@ -186,7 +189,7 @@ pub enum Command {
 
 impl Command {
     /// What the pickers offer, in their order.
-    pub const OFFERED: [Self; 32] = [
+    pub const OFFERED: [Self; 34] = [
         Self::Select,
         Self::Back,
         Self::Home,
@@ -198,6 +201,8 @@ impl Command {
         Self::PlayPause,
         Self::Next,
         Self::Previous,
+        Self::NextChapter,
+        Self::PreviousChapter,
         Self::SeekForward,
         Self::SeekBack,
         Self::Stop,
@@ -235,6 +240,8 @@ impl Command {
             Self::PlayPause => "Play/Pause",
             Self::Next => "Next",
             Self::Previous => "Previous",
+            Self::NextChapter => "Next Chapter",
+            Self::PreviousChapter => "Previous Chapter",
             Self::SeekForward => "Fast Forward",
             Self::SeekBack => "Rewind",
             Self::Stop => "Stop",
@@ -274,6 +281,8 @@ impl Command {
             Self::PlayPause => "play_pause",
             Self::Next => "next",
             Self::Previous => "previous",
+            Self::NextChapter => "next_chapter",
+            Self::PreviousChapter => "previous_chapter",
             Self::SeekForward => "seek_forward",
             Self::SeekBack => "seek_back",
             Self::Stop => "stop",
@@ -321,6 +330,9 @@ impl Command {
             Self::Queue => "Opens Up Next.",
             Self::PlayPause => "Plays or pauses.",
             Self::Next | Self::Previous => "The next or previous song, chapter, station or film.",
+            Self::NextChapter | Self::PreviousChapter => {
+                "In a book one chapter, however long; otherwise the next or previous song."
+            }
             Self::SeekForward | Self::SeekBack => "Moves through the song; held, it keeps going.",
             Self::Stop => "Stops the music.",
             Self::Shuffle => "Shuffle on or off.",
@@ -366,6 +378,8 @@ impl Command {
                 | Self::PlayPause
                 | Self::Next
                 | Self::Previous
+                | Self::NextChapter
+                | Self::PreviousChapter
                 | Self::SeekForward
                 | Self::SeekBack
                 | Self::Shuffle

@@ -711,6 +711,46 @@ fn the_book_list_is_kept_and_the_playing_book_follows_the_sound() {
 }
 
 #[test]
+fn chapter_buttons_step_chapters_in_a_book_and_songs_elsewhere() {
+    use reborn_core::books::{books, Listening};
+    use reborn_core::buttons::Command;
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    let tracks = m.library.tracks.clone();
+    // A song: the next or previous song.
+    assert_eq!(
+        ui.run_command(&mut m, &tracks, Command::NextChapter),
+        Effect::NextTrack
+    );
+    assert_eq!(
+        ui.run_command(&mut m, &tracks, Command::PreviousChapter),
+        Effect::PreviousTrack
+    );
+    // Y2Reborn #177: a book, 30 s into its second part: one chapter each way.
+    with_book(&mut m);
+    let tracks = m.library.tracks.clone();
+    let book = books(&tracks).remove(0);
+    let parts: Vec<Track> = book.parts.iter().map(|&i| tracks[i].clone()).collect();
+    m.replace_queue(parts, 1).unwrap();
+    m.book = Some(Listening::new(&book, &tracks, 1.0));
+    m.position_ms = 30_000;
+    let chapter = |n| Effect::PlayBook(book.key.clone(), reborn_core::BookStart::Chapter(n));
+    assert_eq!(
+        ui.run_command(&mut m, &tracks, Command::NextChapter),
+        chapter(2)
+    );
+    assert_eq!(
+        ui.run_command(&mut m, &tracks, Command::PreviousChapter),
+        chapter(1)
+    );
+    assert!(Command::OFFERED.contains(&Command::NextChapter));
+    assert!(
+        Command::NextChapter.in_the_dark(),
+        "an audiobook in the pocket"
+    );
+}
+
+#[test]
 fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
     use reborn_core::books::{books, Listening};
     let ui = radios();

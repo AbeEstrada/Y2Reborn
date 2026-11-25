@@ -476,6 +476,13 @@ impl Ui {
                 Effect::SetButtons(Box::new(settings))
             }
             Command::Stop => Effect::StopPlayback,
+            // Y2Reborn #177: a chapter in a book, a song elsewhere.
+            Command::NextChapter => self
+                .playing_book_effect(m, "book_chapter_next")
+                .unwrap_or(Effect::NextTrack),
+            Command::PreviousChapter => self
+                .playing_book_effect(m, "book_chapter_previous")
+                .unwrap_or(Effect::PreviousTrack),
             Command::Shuffle => {
                 let next = match m.settings.shuffle_mode() {
                     reborn_core::ShuffleMode::Off => reborn_core::ShuffleMode::Songs,

@@ -187,7 +187,7 @@ impl Ui {
     /// Now Playing's menu for a book; it stays open for the next press.
     /// Previous/Next Chapter move one chapter at any distance (Y2Linux #103: the buttons stop
     /// at 10 minutes).
-    fn playing_book_effect(&mut self, m: &AppModel, menu_key: &str) -> Option<Effect> {
+    pub(crate) fn playing_book_effect(&mut self, m: &AppModel, menu_key: &str) -> Option<Effect> {
         let (book, part) = m.book_part()?;
         let forward = match menu_key {
             "book_chapter_next" => true,
