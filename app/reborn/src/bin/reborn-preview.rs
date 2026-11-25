@@ -1858,6 +1858,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.settings.pin_home("albums", true);
         m.navigation.focus = 1;
     });
+    // Y2Reborn #195: switched on, but no book or film for Home to show yet.
+    case!(
+        "53b-home-menu-empty-shelves",
+        at(Screen::HomeMenu, ""),
+        |_, m| {
+            m.library.tracks.retain(|t| !t.book && !t.is_video());
+            m.navigation.focus = 1;
+        }
+    );
     case!("75-music", at(Screen::Music, ""), |_, m| m
         .navigation
         .focus = 1);

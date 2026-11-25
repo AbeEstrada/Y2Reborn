@@ -74,9 +74,12 @@ pub(crate) fn home_rows(s: &Settings, tracks: &[Track]) -> Vec<Item> {
 }
 
 /// Customize > Home Menu: every place Home can show, in Home's order, each switched on or off; hold
-/// Select to move one (Y2Reborn #53).
-fn home_menu(ui: &Ui, m: &AppModel) -> Page {
+/// Select to move one (Y2Reborn #53). Audiobooks and Videos say when Home leaves them out for an
+/// empty shelf, so a switch that is on does not look broken (Y2Reborn #195).
+fn home_menu(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     let carried = ui.home_moving.map(|c| c.to);
+    let has_books = tracks.iter().any(|t| t.book && t.online);
+    let has_videos = tracks.iter().any(|t| t.online && t.is_video());
     let rows = ui
         .home_menu_places(m)
         .into_iter()
@@ -92,8 +95,13 @@ fn home_menu(ui: &Ui, m: &AppModel) -> Page {
             } else {
                 (format!("home_show:{key}"), m.settings.home_shows(key))
             };
-            let moving = if carried == Some(place) { "Moving" } else { "" };
-            row(label, &row_key, moving).with_kind(RowKind::Toggle(on))
+            let note = match key {
+                _ if carried == Some(place) => "Moving",
+                "audiobooks" if !has_books => "No books yet",
+                "videos" if !has_videos => "No videos yet",
+                _ => "",
+            };
+            row(label, &row_key, note).with_kind(RowKind::Toggle(on))
         });
     let mut page = Page::rows(rows.collect());
     page.status = Some("Hold the centre button on an item to move it.".into());
@@ -179,7 +187,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
         Screen::Home => Page::rows(home_rows(&m.settings, tracks)),
         Screen::Music => Page::rows(music(ui, m, tracks)),
-        Screen::HomeMenu => home_menu(ui, m),
+        Screen::HomeMenu => home_menu(ui, m, tracks),
         Screen::NowPlaying if m.current().is_none() => Page::hero(
             "Nothing Playing",
             "Choose an album, artist or song to start listening.",

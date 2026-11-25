@@ -265,7 +265,15 @@ fn group(
         let cy = y + h / 2.;
         match row.kind {
             RowKind::Toggle(on) => {
-                c.text_mid(28., cy, 300., &row.label, face, tint);
+                // A short note left of the switch ("Moving", "No books yet": Y2Reborn #195).
+                let value = text::fit(Face::R11, &row.secondary, 150.);
+                let mut room = 300.;
+                if !value.is_empty() {
+                    let right = WIDTH - 82.;
+                    room = f32::min(room, right - 28. - text::width(Face::R11, &value) - 16.);
+                    c.text_mid_right(right, cy, &value, Face::R11, color::MUTED);
+                }
+                c.text_mid(28., cy, room, &row.label, face, tint);
                 components::toggle(c, WIDTH - 24., cy, on);
             }
             RowKind::Check(on) => {

@@ -570,6 +570,25 @@ fn audiobooks_stand_on_home_once_there_is_a_book_and_can_be_switched_off() {
 }
 
 #[test]
+fn the_home_menu_says_when_an_empty_shelf_keeps_a_place_off_home() {
+    let ui = radios();
+    let mut m = app(Screen::HomeMenu);
+    let note = |m: &AppModel, key: &str| -> String {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .find(|r| r.key == key)
+            .map(|r| r.secondary)
+            .unwrap()
+    };
+    // Y2Reborn #195: switched on, yet absent from Home with no book and no film.
+    assert_eq!(note(&m, "home_audiobooks"), "No books yet");
+    assert_eq!(note(&m, "home_show:videos"), "No videos yet");
+    with_book(&mut m);
+    assert_eq!(note(&m, "home_audiobooks"), "", "a book: Home shows it");
+    assert_eq!(note(&m, "home_show:videos"), "No videos yet");
+}
+
+#[test]
 fn the_book_list_and_page_follow_progress_and_start_books() {
     use reborn_core::books::{books, Shelf};
     let mut ui = radios();
