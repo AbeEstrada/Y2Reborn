@@ -2042,6 +2042,7 @@ impl MainLoop {
                     }
                     let g = rt.model.generation;
                     rt.model.apply(Event::SourceChanged(sources.clone()));
+                    rt.retry_saved_skin();
                     rt.ui.invalidate_catalog();
                     if let Some(worker) = &mut rt.thumbs {
                         worker.forget_failures();

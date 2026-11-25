@@ -67,6 +67,37 @@ impl Runtime {
         }
     }
 
+    /// The chosen skin once the storage it lives on is mounted (Y2Linux #143: a skin on the SD
+    /// card was looked for ~2.5 s before the card was mounted, and Reborn's own look stayed until
+    /// the next start). Called when a media source comes online; a skin that was refused or is
+    /// still missing is left alone.
+    pub(crate) fn retry_saved_skin(&mut self) {
+        let id = self.model.settings.theme.clone();
+        let showing = self.ui.skin.as_ref().is_some_and(|s| s.id == id);
+        if id.is_empty() || id == reborn_ui::theme::REBORN_LIGHT || showing {
+            return;
+        }
+        self.scan_themes();
+        if !self
+            .ui
+            .themes
+            .iter()
+            .any(|t| t.id == id && t.problem.is_none())
+        {
+            return;
+        }
+        if let Err(e) = self.apply_theme(&id, false) {
+            self.log.emit(
+                Level::Warn,
+                "ui",
+                "skin_unavailable",
+                &e,
+                None,
+                json!({"skin":id}),
+            );
+        }
+    }
+
     /// Switch to the skin `id` ("" = Reborn's own look). A skin that does not
     /// load leaves the current look in place and says why.
     pub(crate) fn apply_theme(&mut self, id: &str, announce: bool) -> Result<(), String> {
