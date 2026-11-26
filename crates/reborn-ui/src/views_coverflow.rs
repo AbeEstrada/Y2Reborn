@@ -54,7 +54,11 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         _ => format!("{} · {} of {count}", screen_title(m), focus + 1),
     };
     components::status_bar(c, ui, m, &title, true);
-    let pos = ui.flow_position(m, focus);
+    // The glide is stamped by screen and filter only, so a list that shrank (a card pulled,
+    // a rescan) can leave it past the new end: keep it inside the list.
+    let pos = ui
+        .flow_position(m, focus)
+        .clamp(0., count.saturating_sub(1) as f32);
     // Back from the album page: the cover lands and the row fades in.
     let landing = ui
         .transition_progress()

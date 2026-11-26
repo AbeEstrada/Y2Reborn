@@ -116,6 +116,17 @@ impl Link {
     }
 }
 
+/// How far the sound is ahead of a picture. A picture without a time (`pts_ms` below 0: the
+/// container gave none) is never late: measured against the clock it would look minutes behind,
+/// be dropped, and send the reader seeking again and again.
+fn lateness(clock_ms: i64, pts_ms: i64) -> i64 {
+    if pts_ms < 0 {
+        0
+    } else {
+        clock_ms - pts_ms
+    }
+}
+
 /// Whether the reader seeks to the sound: it is further away than `FAR_MS` and the reader is not
 /// catching up from a seek, or the sound was moved again since that seek.
 fn follow_move(late_ms: i64, catching_up: bool, moved_since: bool) -> bool {
@@ -244,7 +255,7 @@ impl Reader {
             if stop {
                 return Ok(false);
             }
-            let late = clock - pts;
+            let late = lateness(clock, pts);
             // Catching up, the key picture may lie far before the sound; a move since that seek
             // (Y2Reborn #129: back again while catching up) is followed, or the picture held still
             // until the sound came back to it.
@@ -260,7 +271,7 @@ impl Reader {
                 self.dropped += u64::from(!self.catching_up);
                 return Ok(true);
             }
-            if late >= 0 || pts < 0 {
+            if late >= 0 {
                 break late;
             }
             // Early: hold it until the sound is there (or the position changes).
@@ -621,6 +632,17 @@ mod tests {
         }
         assert_eq!(s.sound_ms, 10_000);
         assert_eq!(s.wall.as_millis(), 10_000, "test build 279 lost ~4 % here");
+    }
+
+    #[test]
+    fn a_picture_without_a_time_is_never_late() {
+        assert_eq!(lateness(61_000, 60_500), 500, "known: the sound is ahead");
+        assert_eq!(lateness(60_000, 60_400), -400, "known: early");
+        // The container gave no time (pts -1) minutes into the film.
+        let late = lateness(61_000, -1);
+        assert!(late <= LATE_MS, "not dropped as late: {late}");
+        assert!(!follow_move(late, false, false), "no seek to the sound");
+        assert!(!follow_move(late, true, true), "none while catching up");
     }
 
     #[test]

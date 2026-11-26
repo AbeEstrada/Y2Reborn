@@ -120,6 +120,10 @@
       "bytes": 41212,
       "sha256": "ee1ab9330673250a1724eb2238235b6b1462284828eaabecd18283722c86213b"
     },
+    "film-h264-offset.mkv": {
+      "bytes": 9299,
+      "sha256": "81b98f9f60cc11157dcac6219792378ba6faa0287a7a2d55a2fefd4919c491e2"
+    },
     "film-h264.mp4": {
       "bytes": 8290,
       "sha256": "a12549e9c4c6381691c398b8873f5462c9e10d96124209d7fec747fd91f291d2"
@@ -256,7 +260,8 @@
   "film_cases": {
     "files": [
       "film-hevc.mp4",
-      "film-h264.mp4"
+      "film-h264.mp4",
+      "film-h264-offset.mkv"
     ],
     "generator_ffmpeg_version": "9.1"
   },

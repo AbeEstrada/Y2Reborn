@@ -2002,14 +2002,20 @@ impl MainLoop {
                     let _ = storage::mount_sd();
                 }
                 if !sd && self.last_sd {
-                    rt.pause();
+                    // Only a song on the card goes with it; internal storage
+                    // and stations play on.
+                    if rt.model.current_on_sd_card() {
+                        rt.pause();
+                    }
                     if !storage::platform_manages_media() {
                         let _ = storage::unmount_sd();
                     }
                 }
                 self.last_sd = sd;
                 if sources != rt.model.sources {
-                    rt.abandon_pending_reconfiguration();
+                    // A song still starting would finish into the model the
+                    // source change rewrites: stop it too, not just roll back.
+                    rt.cancel_pending_start();
                     let old = rt.model.sources.clone();
                     for s in &sources {
                         if !old.iter().any(|v| v.id == s.id) {

@@ -298,6 +298,74 @@ mod tests {
         );
     }
 
+    /// The cue list used to stop at 4096 lines, so a long film lost its subtitles from there on.
+    #[test]
+    fn a_long_subtitle_file_is_read_to_its_last_line() {
+        const LINES: i64 = 6000;
+        let film =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/film-h264.mp4");
+        let dir = std::env::temp_dir().join(format!("reborn-long-subs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let srt = dir.join("long.srt");
+        let stamp = |ms: i64| {
+            format!(
+                "{:02}:{:02}:{:02},{:03}",
+                ms / 3_600_000,
+                ms / 60_000 % 60,
+                ms / 1000 % 60,
+                ms % 1000
+            )
+        };
+        let text: String = (0..LINES)
+            .map(|i| {
+                let start = i * 2000;
+                format!(
+                    "{}\n{} --> {}\nline {i}\n\n",
+                    i + 1,
+                    stamp(start),
+                    stamp(start + 1500)
+                )
+            })
+            .collect();
+        std::fs::write(&srt, text).unwrap();
+        let mut video = Video::open(&film, 64, 48, false).unwrap();
+        assert!(video.subtitles_from(&srt));
+        assert_eq!(video.subtitle(10), "line 0");
+        assert_eq!(video.subtitle(5000 * 2000 + 100), "line 5000");
+        assert_eq!(video.subtitle((LINES - 1) * 2000 + 100), "line 5999");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A transport stream's clock starts at 1.4 s. The picture counted from the start of the file,
+    /// the sound counted the file's own time, so the sound's position (the clock the pictures are
+    /// kept to) ran 1.4 s ahead of the picture, and a seek put the two 1.4 s apart.
+    #[test]
+    fn the_sound_and_the_picture_count_from_the_same_start() {
+        let film = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fixtures/film-h264-offset.mkv");
+        let cancel = crate::Cancel::new().unwrap();
+        let mut sound = crate::Decoder::open(&film, 48_000, cancel).unwrap();
+        let mut video = Video::open(&film, 64, 48, false).unwrap();
+        let sound_at =
+            |sound: &mut crate::Decoder| sound.read().unwrap().unwrap().position_ms as i64;
+        let picture = video.next_picture().unwrap().unwrap().pts_ms;
+        let heard = sound_at(&mut sound);
+        assert!(picture < 200, "picture at {picture} ms");
+        assert!(heard < 200, "sound at {heard} ms");
+        sound.seek(500).unwrap();
+        video.seek(500).unwrap();
+        let picture = video.next_picture().unwrap().unwrap().pts_ms;
+        let heard = sound_at(&mut sound);
+        assert!(
+            picture <= 550,
+            "picture at {picture} ms after a seek to 500"
+        );
+        assert!(
+            (499..700).contains(&heard),
+            "sound at {heard} ms after a seek to 500"
+        );
+    }
+
     #[test]
     fn a_missing_film_is_an_error_not_a_crash() {
         assert!(Video::open(Path::new("/nonexistent/film.mp4"), 480, 360, false).is_err());

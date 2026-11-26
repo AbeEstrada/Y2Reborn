@@ -45,7 +45,7 @@ pub enum Purpose {
 impl Purpose {
     fn max_chars(&self) -> usize {
         match self {
-            // WPA passphrases: 8 to 63 printable ASCII characters.
+            // WPA passphrases: 8 to 63 bytes.
             Self::WifiPassword { .. } => 63,
             // An SSID: up to 32 bytes.
             Self::WifiName => 32,
@@ -54,6 +54,11 @@ impl Purpose {
             Self::LastFmUser => 32,
             Self::LastFmPassword { .. } => 64,
         }
+    }
+    /// Wi-Fi limits are in bytes (a 32 byte SSID, a 63 byte passphrase), so an
+    /// accented letter takes two.
+    fn counts_bytes(&self) -> bool {
+        matches!(self, Self::WifiName | Self::WifiPassword { .. })
     }
     fn secret(&self) -> bool {
         matches!(
@@ -385,7 +390,11 @@ impl Keyboard {
     }
 
     fn type_char(&mut self, c: char) -> Outcome {
-        if self.text.chars().count() >= self.purpose.max_chars() {
+        if self.purpose.counts_bytes() {
+            if self.text.len() + c.len_utf8() > self.purpose.max_chars() {
+                return Outcome::Stay;
+            }
+        } else if self.text.chars().count() >= self.purpose.max_chars() {
             return Outcome::Stay;
         }
         self.text.push(c);
@@ -816,6 +825,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn wifi_limits_count_bytes_not_letters() {
+        // 'é' is two bytes: 16 of them fill a 32 byte network name, and a 17th
+        // (or a one byte letter after them) does not fit.
+        let mut k = kb(Purpose::WifiName);
+        for _ in 0..20 {
+            k.type_char('é');
+        }
+        assert_eq!(k.text.len(), 32);
+        assert_eq!(k.type_char('a'), Outcome::Stay);
+        // Other fields still count letters.
+        let mut s = kb(Purpose::LibrarySearch);
+        for _ in 0..50 {
+            s.type_char('é');
+        }
+        assert_eq!(s.text.chars().count(), 40);
     }
 
     #[test]

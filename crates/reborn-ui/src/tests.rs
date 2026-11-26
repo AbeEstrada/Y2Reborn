@@ -2350,6 +2350,30 @@ fn other_network_joins_a_hidden_network_by_its_name() {
 }
 
 #[test]
+fn a_network_name_keeps_its_leading_and_trailing_spaces() {
+    // A name is any 32 bytes; "Attic " and "Attic" are two networks.
+    use crate::keyboard::Purpose;
+    let mut ui = radios();
+    let mut m = app(Screen::Wifi);
+    select_key(&mut ui, &mut m, "wifi_other");
+    ui.keyboard.as_mut().unwrap().text = " Attic ".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert_eq!(
+        ui.keyboard.as_ref().unwrap().purpose,
+        Purpose::WifiPassword {
+            ssid: " Attic ".into(),
+            hidden: true
+        }
+    );
+    // Only blanks is no name.
+    ui.keyboard = None;
+    select_key(&mut ui, &mut m, "wifi_other");
+    ui.keyboard.as_mut().unwrap().text = "   ".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert_eq!(ui.keyboard.as_ref().unwrap().purpose, Purpose::WifiName);
+}
+
+#[test]
 fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
     // Y2Reborn #20: one wrong letter, 15 tries; the player showed
     // "Connecting…" then "Saved" and never said the password was wrong.
@@ -4218,6 +4242,39 @@ fn cover_flow_keeps_the_album_you_return_to_from_its_page() {
 }
 
 #[test]
+fn cover_flow_survives_a_list_that_shrinks_under_the_gliding_row() {
+    // The row's position is stamped by screen and filter only, so a library that loses albums
+    // (an SD card pulled, a rescan) leaves it far past the new end. That used to underflow.
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    let tracks: Vec<Track> = (0..12)
+        .map(|i| Track {
+            id: i,
+            source_id: "internal".into(),
+            title: format!("Song {i}"),
+            album: format!("Album {i}"),
+            path: format!("/data/music/album{i}/song.flac").into(),
+            filename: "song.flac".into(),
+            duration_ms: 200_000,
+            codec: "flac".into(),
+            sample_rate: 44_100,
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    m.library.tracks = tracks.clone();
+    m.navigation.focus = 11;
+    ui.draw(&m, &tracks, false); // anchors the row at the last album
+    let fewer = &tracks[..2];
+    m.library.tracks = fewer.to_vec();
+    let quads = ui.draw(&m, fewer, false);
+    assert!(
+        quads.iter().filter(|q| q.warp.is_some()).count() >= 2,
+        "the remaining covers are still drawn"
+    );
+}
+
+#[test]
 fn cover_flow_names_the_artist_without_the_year_its_detail_line_shows() {
     // Y2Reborn #73: "corook · 2023" over "2023 · 1 song · 3 min" showed the year twice.
     let mut ui = radios();
@@ -5614,6 +5671,31 @@ fn motion_waves_while_playing_slides_screens_and_glides_focus() {
 }
 
 #[test]
+fn the_shown_position_runs_on_for_a_track_without_a_length() {
+    // A stream has no duration (0): the position moved on from the last
+    // report was clamped to 1 ms, so the elapsed time sat at 0:00.
+    let ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::NowPlaying);
+    let reported_a_second_ago = Some((60_000, Instant::now() - Duration::from_secs(1)));
+    for (length, floor, ceiling) in [(0, 60_900, u64::MAX), (60_400, 60_400, 60_400)] {
+        let mut track = m.queue[0].clone();
+        track.duration_ms = length;
+        m.replace_queue(vec![track], 0).unwrap();
+        m.playback = reborn_core::PlaybackState::Playing;
+        m.position_ms = 60_000;
+        ui.position_seen.set(reported_a_second_ago);
+        let shown = ui.shown_position(&m);
+        assert!(
+            (floor..=ceiling).contains(&shown),
+            "length {length}: shown {shown}"
+        );
+    }
+}
+
+#[test]
 fn a_long_wheel_jump_glides_only_its_last_row() {
     let ui = Ui {
         ui_motion: true,
@@ -6540,6 +6622,35 @@ fn up_next_opens_on_the_song_playing_with_history_above_and_its_parts_named() {
     m.navigation.focus = 1;
     assert_eq!(ui.model_action(&mut m, Action::Select), Effect::PlayNow(0));
     assert_eq!(m.screen, Screen::NowPlaying);
+}
+
+#[test]
+fn up_from_the_first_song_under_a_heading_wraps_when_lists_wrap_everywhere() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    let tracks = m.library.tracks.clone();
+    m.step(1);
+    m.step(1);
+    m.note_played(&tracks[0]);
+    m.note_played(&tracks[1]);
+    m.screen = Screen::Queue;
+    m.settings.wrap_around = WrapAround::Everywhere;
+    ui.normalize(&mut m, &tracks);
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows[0].key, "heading:history", "row 0 is a heading");
+    let last = rows.len() - 1;
+    // The first song is row 1: Up wraps to the end, as it does from row 0 of a
+    // list with no heading.
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(m.navigation.focus, last, "Up from the first song wraps");
+    // And Down from the end comes back to it.
+    ui.model_action(&mut m, Action::NavigateDown);
+    assert_eq!(m.navigation.focus, 1, "Down from the end skips the heading");
+    // With wrapping off it holds.
+    m.settings.wrap_around = WrapAround::Off;
+    ui.model_action(&mut m, Action::NavigateUp);
+    assert_eq!(m.navigation.focus, 1, "Off: the end holds");
 }
 
 #[test]
