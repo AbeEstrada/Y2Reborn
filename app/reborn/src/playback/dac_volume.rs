@@ -100,6 +100,10 @@ impl DacVolumeSink {
             }
             other => {
                 self.live = false;
+                // The ring still holds up to a buffer of PCM rendered at unity for the DAC's
+                // volume: drop it before the Master goes back to the level's own, or it would play
+                // at full level (a burst as loud as volume 100).
+                let _ = self.inner.discard();
                 let _ = self.inner.set_hardware_gain(self.trim_cdb, self.trim_cdb);
                 let why = other
                     .err()

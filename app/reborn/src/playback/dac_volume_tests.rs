@@ -11,6 +11,8 @@ struct Log {
     masters: Vec<(i32, i32)>,
     /// The PCM it received.
     written: Vec<u8>,
+    /// For each discard, how many Master settings had been taken before it.
+    discarded_at: Vec<usize>,
 }
 
 struct Dac {
@@ -22,6 +24,8 @@ struct Dac {
     takes: bool,
     /// The first `n` settings are taken, the next one fails.
     refuse_after: Option<usize>,
+    /// Only that one setting fails; the ones after it are taken again.
+    refuse_once: bool,
 }
 impl Dac {
     fn headphones(log: &Arc<Mutex<Log>>) -> Self {
@@ -31,6 +35,7 @@ impl Dac {
             trim_db: Some(-6.0),
             takes: true,
             refuse_after: None,
+            refuse_once: false,
         }
     }
 }
@@ -55,6 +60,9 @@ impl AudioSink for Dac {
         Ok(pcm.len() / 4)
     }
     fn discard(&mut self) -> Result<(), String> {
+        let mut log = self.log.lock().unwrap();
+        let taken = log.masters.len();
+        log.discarded_at.push(taken);
         Ok(())
     }
     fn delay(&self) -> u64 {
@@ -66,6 +74,9 @@ impl AudioSink for Dac {
         }
         let mut log = self.log.lock().unwrap();
         if self.refuse_after.is_some_and(|n| log.masters.len() >= n) {
+            if self.refuse_once {
+                self.refuse_after = None;
+            }
             return Err("injected mixer failure".into());
         }
         log.masters.push((left_cdb, right_cdb));
@@ -169,6 +180,28 @@ fn a_refused_setting_gives_the_level_back_and_writes_nothing_at_the_wrong_gain()
     assert_eq!(log.lock().unwrap().written, [2; 8]);
     // The opening setting stands in the log: the failed give-back had nothing to add.
     assert_eq!(log.lock().unwrap().masters.len(), 1);
+    // What the ring held for the DAC's volume was dropped.
+    assert_eq!(log.lock().unwrap().discarded_at, [1]);
+}
+
+#[test]
+fn a_refused_setting_drops_the_queued_pcm_before_the_level_comes_back() {
+    let log = Arc::new(Mutex::new(Log::default()));
+    let mut dac = Dac::headphones(&log);
+    dac.refuse_after = Some(1);
+    dac.refuse_once = true; // the volume change fails, the give-back is taken
+    let (mut sink, volume, _) = engaged(dac, 50, 0);
+    let opening = hardware_gain(-600, 50, 0);
+    volume.store(30, Ordering::Relaxed);
+    assert_eq!(sink.write(&[1; 8]).unwrap(), 0);
+    let log = log.lock().unwrap();
+    // The level's own Master (volume 100) comes back only after the unity-gain PCM queued for the
+    // DAC's volume is gone: otherwise it would play at full level.
+    assert_eq!(
+        log.masters,
+        [(opening.left_cdb, opening.right_cdb), (-600, -600)]
+    );
+    assert_eq!(log.discarded_at, [1], "discarded before the give-back");
 }
 
 #[test]
