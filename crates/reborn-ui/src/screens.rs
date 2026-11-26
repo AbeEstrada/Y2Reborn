@@ -21,6 +21,7 @@ pub fn visible_rows_for(screen: Screen) -> usize {
         Screen::Folders | Screen::Queue => 5,
         Screen::Tracks | Screen::Artists | Screen::Genres => 6,
         Screen::Music => views_library::MUSIC_ROWS,
+        Screen::Home => views_library::HOME_ROWS,
         _ => 6,
     }
 }

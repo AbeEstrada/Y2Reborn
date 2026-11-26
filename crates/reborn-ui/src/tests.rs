@@ -3898,6 +3898,191 @@ fn home_with_genres_fits_the_screen() {
     }
 }
 
+/// Home with every Music list pinned: eleven places, more than a window shows.
+fn full_home() -> AppModel {
+    let mut m = app(Screen::Home);
+    for key in ["artists", "albums", "tracks", "genres", "folders"] {
+        m.settings.pin_home(key, true);
+    }
+    m
+}
+
+/// Home's menu column: the marker and the labels, not the cover card or the rail.
+fn home_menu_quads(quads: &[reborn_graphics::Quad]) -> Vec<&reborn_graphics::Quad> {
+    quads
+        .iter()
+        .filter(|q| q.x < 260. && q.y >= 50. && q.color & 0xFF != 0)
+        .collect()
+}
+
+#[test]
+fn home_rows_keep_their_places_when_another_is_chosen() {
+    let ui = radios();
+    for m in [app(Screen::Home), full_home()] {
+        // Inside the first window nothing scrolls: only the two rows that change
+        // their look may differ, however many places Home shows.
+        for focus in 0..5 {
+            let outside = |f: usize| -> Vec<_> {
+                let mut m = m.clone();
+                m.navigation.focus = f;
+                let quads = ui.draw(&m, &m.library.tracks, false);
+                home_menu_quads(&quads)
+                    .into_iter()
+                    .filter(|q| {
+                        let row = ((q.y - 50.) / 44.).floor() as usize;
+                        q.x > 30. && row != focus && row != focus + 1
+                    })
+                    .map(|q| (q.x, q.y, q.w, q.h, q.color))
+                    .collect()
+            };
+            assert_eq!(outside(focus), outside(focus + 1), "focus {focus}");
+        }
+    }
+}
+
+#[test]
+fn home_with_many_places_scrolls_and_its_marker_fits_its_row() {
+    let ui = radios();
+    let m = full_home();
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 11);
+    for focus in 0..11 {
+        let mut m = m.clone();
+        m.navigation.focus = focus;
+        let quads = ui.draw(&m, &m.library.tracks, false);
+        assert!(quads.iter().all(|q| q.y + q.h <= 360.5), "focus {focus}");
+        assert_eq!(crate::focus_target_count(&quads), 1, "focus {focus}");
+        // The window follows the focus; the chosen row stands in its slot.
+        let slot = 50. + (focus - (focus + 1).saturating_sub(6).min(focus)) as f32 * 44.;
+        let marker: Vec<_> = quads
+            .iter()
+            .filter(|q| q.x >= 25.5 && q.x + q.w <= 30.5 && q.y >= 50.)
+            .collect();
+        let top = marker.iter().map(|q| q.y).fold(f32::MAX, f32::min);
+        let bottom = marker.iter().map(|q| q.y + q.h).fold(f32::MIN, f32::max);
+        assert!(
+            top >= slot && bottom <= slot + 44.,
+            "{focus}: {top}..{bottom}"
+        );
+        // The label (bright, at x 42) stands in the slot too, so the row does not grow.
+        let label: Vec<_> = home_menu_quads(&quads)
+            .into_iter()
+            .filter(|q| q.x >= 40. && q.color == crate::theme::color::TEXT)
+            .collect();
+        assert!(!label.is_empty());
+        assert!(label.iter().all(|q| q.y >= slot && q.y + q.h <= slot + 44.));
+    }
+    // No scroll bar: a list that goes on shows the next row, half faded out,
+    // under the window's last. A list that ends (or fits) shows nothing there.
+    let edge = 50. + 6. * 44.;
+    let below = |m: &AppModel| {
+        let quads = ui.draw(m, &m.library.tracks, false);
+        assert!(quads
+            .iter()
+            .all(|q| q.x != crate::theme::WIDTH - 14. || q.y < 50.));
+        let label = |q: &&reborn_graphics::Quad| q.x >= 40. && q.x < 260. && q.y >= edge;
+        let veil = |q: &&reborn_graphics::Quad| q.x == 0. && q.y >= edge - 0.5 && q.w > 200.;
+        (
+            quads.iter().filter(label).count(),
+            quads.iter().filter(veil).count(),
+        )
+    };
+    let (text, veil) = below(&m);
+    assert!(text > 0 && veil > 0, "{text} {veil}");
+    let mut end = m.clone();
+    end.navigation.focus = 10;
+    assert_eq!(below(&end), (0, 0), "the last window has nothing below");
+    let few = app(Screen::Home);
+    assert!(ui.rows(&few, &few.library.tracks).len() <= 6);
+    assert_eq!(below(&few), (0, 0));
+}
+
+#[test]
+fn back_on_home_returns_to_its_top_and_stays_there() {
+    let mut ui = radios();
+    let mut m = full_home();
+    // Far down a scrolled menu: Back goes to the first place, window and all.
+    m.navigation.focus = 9;
+    m.navigation.scroll = 4;
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!((m.navigation.focus, m.navigation.scroll), (0, 0));
+    // At the top already, Back changes nothing.
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!((m.navigation.focus, m.navigation.scroll), (0, 0));
+    // Coming back from a place still returns to where it was (not the top).
+    m.navigation.focus = 3;
+    ui.model_action(&mut m, Action::Select);
+    assert_ne!(m.screen, Screen::Home);
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!((m.screen, m.navigation.focus), (Screen::Home, 3));
+}
+
+#[test]
+fn home_glides_the_marker_and_grows_the_label_in_place() {
+    let mut ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    let mut m = app(Screen::Home);
+    let tracks = m.library.tracks.clone();
+    // Frames as the player draws them: a value eases a step per frame.
+    let settle = |ui: &Ui, m: &AppModel| {
+        for _ in 0..40 {
+            ui.draw(m, &m.library.tracks, false);
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        ui.draw(m, &m.library.tracks, false);
+    };
+    ui.draw(&m, &tracks, false);
+    settle(&ui, &m);
+    assert!(!ui.gliding(), "nothing moves at rest");
+    let rest = ui.draw(&m, &tracks, false);
+    // At rest the frame is the one without UI motion.
+    let still = Ui {
+        ui_motion: false,
+        ..radios()
+    };
+    let plain = still.draw(&m, &tracks, false);
+    let key = |q: &&reborn_graphics::Quad| (q.x, q.y, q.w, q.h, q.color);
+    assert_eq!(
+        home_menu_quads(&rest).iter().map(key).collect::<Vec<_>>(),
+        home_menu_quads(&plain).iter().map(key).collect::<Vec<_>>()
+    );
+
+    let marker_y = |quads: &[reborn_graphics::Quad]| {
+        quads
+            .iter()
+            .filter(|q| q.x >= 25.5 && q.x + q.w <= 30.5 && q.y >= 50.)
+            .map(|q| q.y)
+            .fold(f32::MAX, f32::min)
+    };
+    let before = marker_y(&rest);
+    ui.model_action(&mut m, Action::NavigateDown);
+    ui.draw(&m, &tracks, false);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let during = ui.draw(&m, &tracks, false);
+    assert!(ui.gliding());
+    let at = marker_y(&during);
+    assert!(at > before && at < before + 44., "{before} → {at}");
+    // Both looks of the row being chosen show, each partly faded.
+    let faded = home_menu_quads(&during)
+        .into_iter()
+        .filter(|q| q.x >= 40. && (q.y - 94.) >= 0. && (q.y - 94.) < 44. && q.color & 0xFF < 0xFF)
+        .count();
+    assert!(faded > 0, "the label grows in place");
+    settle(&ui, &m);
+    assert!(!ui.gliding());
+
+    // Fewer places while rows were growing (a Home Menu edit) is no trouble.
+    let mut many = full_home();
+    many.navigation.focus = 10;
+    ui.draw(&many, &tracks, false);
+    let mut few = app(Screen::Home);
+    few.navigation.focus = 5;
+    ui.draw(&few, &tracks, false);
+}
+
 #[test]
 fn albums_use_cover_flow_by_default_and_the_grid_by_setting() {
     let mut ui = radios();

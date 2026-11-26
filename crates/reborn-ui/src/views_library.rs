@@ -5,7 +5,7 @@ use crate::{
     components::{self, cover, cover_rounded, cover_shadow},
     screens::{is_current, row_track, screen_title, visible_rows_for},
     text::{self, Face},
-    theme::{alpha, color, WIDTH},
+    theme::{alpha, color, HEIGHT, WIDTH},
     Item, Ui,
 };
 use reborn_core::{AppModel, MediaSource, Screen, Track};
@@ -32,7 +32,6 @@ pub fn home(
     has_art: bool,
     interactive: bool,
 ) {
-    let accent = ui.accent();
     // The cover card is the one place outside Now Playing that wears the
     // cover's colour.
     let cover = ui.cover_accent();
@@ -89,47 +88,100 @@ pub fn home(
         recently_added(c, ui, tracks);
     }
     components::home_bar(c, ui, m);
+    home_menu(c, ui, m, tracks, interactive);
+}
+
+/// Home's rows: a fixed pitch, so choosing a row moves none of the others, and
+/// a window of `HOME_ROWS` that scrolls once more places are on Home (up to
+/// eleven with every Music list pinned) as every list on the player does.
+pub(crate) const HOME_ROWS: usize = 6;
+const HOME_ROW: f32 = 44.;
+const HOME_TOP: f32 = 50.;
+/// The menu column, left of the cover card.
+const HOME_MENU_W: f32 = 262.;
+/// How fast a label grows into (and out of) the chosen look: about 190 ms, the
+/// pace of scrolling (tried against 125 ms on the player, calm looked better).
+const EXPAND_RATE: f32 = crate::motion::CALM;
+
+fn home_menu(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let rows = ui.rows(m, tracks);
-    let focus = m.navigation.focus.min(rows.len().saturating_sub(1));
-    // Six rows by default, up to eleven with every Music list pinned; all end
-    // above the screen's bottom edge.
-    let step = (296. / rows.len().max(1) as f32).min(44.).floor();
-    let mut y = 50.;
-    for (i, row) in rows.iter().enumerate() {
+    let count = rows.len();
+    let focus = m.navigation.focus.min(count.saturating_sub(1));
+    let first = components::list_window(m, focus, HOME_ROWS);
+    // The next row stands half hidden under the window (see `more` below) so a
+    // longer list shows that it goes on; with UI motion one more above slides
+    // in as the list scrolls.
+    let from = first.saturating_sub(usize::from(ui.ui_motion));
+    let to = (first + HOME_ROWS + 1).min(count);
+    let rows_start = c.draw.len();
+    for (i, row) in rows.iter().enumerate().skip(from).take(to - from) {
+        let y = HOME_TOP + (i as f32 - first as f32) * HOME_ROW;
         let selected = i == focus;
-        let cy = y + if selected { step / 2. + 3. } else { step / 2. };
         if selected {
-            let at = c.draw.len();
-            c.rrect(26., y + 8., 4., 34., 2., accent);
-            if interactive {
-                c.mark_focus(at);
-            }
-            // The marker glides to the chosen place (Beta 7.2).
-            let end = c.draw.len();
-            c.mark_moving(Moving::Focus {
-                start: at,
-                end,
-                y: y + 8.,
-                layer: 0,
-            });
-            c.text(
-                42.,
-                cy + Face::S28.mid_offset(),
-                &row.label,
-                Face::S28,
-                color::TEXT,
-            );
-        } else {
-            c.text(
-                42.,
-                cy + Face::L23.mid_offset(),
-                &row.label,
-                Face::L23,
-                color::DIM,
-            );
+            home_marker(c, ui, y, interactive);
         }
-        y += if selected { step + 6. } else { step };
+        // The chosen label grows in place: both looks share one centre and fade
+        // into each other, the faces being exact-size bitmaps.
+        let grown = ui.ease(
+            &format!("home:row:{}", row.key),
+            None,
+            f32::from(u8::from(selected)),
+            EXPAND_RATE,
+            0.01,
+        );
+        let cy = y + HOME_ROW / 2.;
+        if grown < 1. {
+            let (face, tint) = (Face::L23, crate::theme::fade(color::DIM, 1. - grown));
+            c.text(42., cy + face.mid_offset(), &row.label, face, tint);
+        }
+        if grown > 0. {
+            let (face, tint) = (Face::S28, crate::theme::fade(color::TEXT, grown));
+            c.text(42., cy + face.mid_offset(), &row.label, face, tint);
+        }
     }
+    c.mark_moving(Moving::List {
+        start: rows_start,
+        end: c.draw.len(),
+        top: HOME_TOP,
+        bottom: HEIGHT,
+        row_h: HOME_ROW,
+        first,
+    });
+    // More places below: the row peeking under the window fades into the page,
+    // as a list runs off the screen's edge, instead of a scroll bar.
+    let more = ui.ease(
+        "home:more",
+        None,
+        f32::from(u8::from(first + HOME_ROWS < count)),
+        crate::motion::CALM,
+        0.02,
+    );
+    if more > 0. {
+        let edge = HOME_TOP + HOME_ROWS as f32 * HOME_ROW;
+        let veil = crate::theme::fade(alpha(color::BG, 0xF0), more);
+        c.fade_from_bottom(0., edge, HOME_MENU_W, HEIGHT - edge, veil);
+    }
+}
+
+/// The accent marker beside the chosen row, as tall as the row leaves room for;
+/// it glides to the chosen place (Beta 7.2). It is centred on the capitals, not
+/// on the row: the label's capitals run from 9 px above the row's middle to 10
+/// below it, so the middle of the row put the marker 1 px too high (measured on
+/// the rendered label).
+fn home_marker(c: &mut Canvas, ui: &Ui, row_y: f32, interactive: bool) {
+    let (y, h) = (row_y + 6., HOME_ROW - 10.);
+    let at = c.draw.len();
+    c.rrect(26., y, 4., h, 2., ui.accent());
+    if interactive {
+        c.mark_focus(at);
+    }
+    let end = c.draw.len();
+    c.mark_moving(Moving::Focus {
+        start: at,
+        end,
+        y,
+        layer: 0,
+    });
 }
 
 // ---------------------------------------------------------------------- music
