@@ -71,9 +71,19 @@ impl Counted {
     }
 }
 
+/// The artist Last.fm gets from a tag of several names joined by ";" (Y2Linux #149): the first,
+/// as Last.fm has one artist per play ("A;B" would become an artist of its own called "A;B").
+/// Names with a guest ("A feat. B") go as they are: Last.fm reads those itself.
+fn lead_artist(tag: &str) -> &str {
+    tag.split(';')
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .unwrap_or("")
+}
+
 /// The play a track would be, or `None` when it can never count.
 pub fn play_of(track: &Track) -> Option<Play> {
-    let artist = track.artist.trim();
+    let artist = lead_artist(&track.artist);
     let title = track.title.trim();
     // Audiobooks and films are not scrobbled: they are not music listening.
     if track.is_radio()
@@ -86,7 +96,7 @@ pub fn play_of(track: &Track) -> Option<Play> {
     {
         return None;
     }
-    let album_artist = track.tagged_album_artist().trim();
+    let album_artist = lead_artist(track.tagged_album_artist());
     Some(Play {
         artist: artist.to_owned(),
         title: title.to_owned(),
@@ -364,6 +374,33 @@ mod tests {
         // The song's own tag, not the album's the lists use (#45).
         va.own_album_artist = Some(String::new());
         assert_eq!(play_of(&va).unwrap().album_artist, "");
+    }
+
+    #[test]
+    fn several_artists_scrobble_as_the_first() {
+        // Y2Linux #149: "A;B" was scrobbled as one artist called "A;B".
+        let mut duet = track(100_000);
+        duet.artist = "Lauryn Hill;Mary J. Blige".into();
+        assert_eq!(play_of(&duet).unwrap().artist, "Lauryn Hill");
+        duet.artist = " ; Calvin Harris ; Dillon Francis".into();
+        assert_eq!(play_of(&duet).unwrap().artist, "Calvin Harris");
+        // The album artist too, and it is left out when it is the same artist.
+        duet.album_artist = "Calvin Harris;Kelis".into();
+        assert_eq!(play_of(&duet).unwrap().album_artist, "");
+        duet.album_artist = "Various Artists".into();
+        assert_eq!(play_of(&duet).unwrap().album_artist, "Various Artists");
+        // One name, a guest and a band with a comma go as they are.
+        for name in [
+            "Soft Cell",
+            "Calvin Harris feat. Kelis",
+            "Earth, Wind & Fire",
+        ] {
+            duet.artist = name.into();
+            assert_eq!(play_of(&duet).unwrap().artist, name);
+        }
+        // Only separators: no artist, no scrobble.
+        duet.artist = " ; ".into();
+        assert!(play_of(&duet).is_none());
     }
 
     #[test]
