@@ -2925,6 +2925,124 @@ fn long_and_unicode_text_is_bounded_on_every_surface() {
     }
 }
 
+/// The Storage fixture: nine 100 MB songs inside, and on the card four 10 GB hour-long songs, a
+/// two-part book (4 GB, 10 h) and a film (3.4 GB); the card holds 84 GB of its 128 GB.
+fn storage_with_a_card() -> AppModel {
+    let mut m = app(Screen::Storage);
+    for t in &mut m.library.tracks {
+        t.size = 100_000_000;
+    }
+    let sd = |path: &str, size: u64, ms: u64, codec: &str, book: bool| Track {
+        source_id: "sd".into(),
+        path: path.into(),
+        filename: path.rsplit('/').next().unwrap_or_default().into(),
+        size,
+        duration_ms: ms,
+        codec: codec.into(),
+        book,
+        online: true,
+        ..Default::default()
+    };
+    for i in 0..4 {
+        m.library.tracks.push(sd(
+            &format!("/media/sd/Music/A/B/{i}.flac"),
+            10_000_000_000,
+            3_600_000,
+            "flac",
+            false,
+        ));
+    }
+    for part in 1..=2 {
+        m.library.tracks.push(sd(
+            &format!("/media/sd/Audiobooks/Dune/{part}.mp3"),
+            2_000_000_000,
+            18_000_000,
+            "mp3",
+            true,
+        ));
+    }
+    m.library.tracks.push(sd(
+        "/media/sd/Videos/film.mp4",
+        3_400_000_000,
+        5_000_000,
+        "h264/aac",
+        false,
+    ));
+    m.sources.push(Source {
+        id: "sd".into(),
+        kind: reborn_core::MediaSource::SdCard("card".into()),
+        root: "/media/sd".into(),
+        online: true,
+        mount: "sd".into(),
+        mount_id: None,
+    });
+    m.platform.snapshot.storage.sd = SdCard::Ready(VolumeSpace {
+        state: VolumeState::Ready,
+        free_bytes: Some(44_000_000_000),
+        total_bytes: Some(128_000_000_000),
+    });
+    m
+}
+
+#[test]
+fn storage_splits_each_volume_by_what_fills_it() {
+    let ui = radios();
+    let mut m = storage_with_a_card();
+    let tracks = m.library.tracks.clone();
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    for expected in [
+        // The card: music, the book, the film, and the rest of the 84 GB used.
+        "44.0 GB free",
+        "40.0 GB",
+        "4 songs · 4 h",
+        "4.0 GB",
+        "1 book · 10 h",
+        "Audiobooks",
+        "3.4 GB",
+        "1 video",
+        "36.6 GB",
+        "84.0 GB used of 128 GB",
+        // Inside: nine songs, nothing else but the rest of its 3.2 GB.
+        "900 MB",
+        "9 songs · 30 min",
+        "2.3 GB",
+        "3.2 GB used of 6.4 GB",
+    ] {
+        assert!(
+            text.contains(expected),
+            "{expected:?} missing from {text:?}"
+        );
+    }
+    assert_eq!(
+        text.matches("Audiobooks").count(),
+        1,
+        "only the card has books"
+    );
+    // A removed card takes its kinds off the screen with it.
+    m.platform.snapshot.storage.sd = SdCard::Absent;
+    m.sources[1].online = false;
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("No SD card") && !text.contains("Audiobooks"));
+}
+
+#[test]
+fn storage_with_both_volumes_and_two_actions_stays_on_the_screen() {
+    let ui = radios();
+    let mut m = storage_with_a_card();
+    m.platform.snapshot.usb = UsbTransfer::Ready;
+    m.platform.snapshot.storage.sd = SdCard::ReadOnly(VolumeSpace {
+        state: VolumeState::Ready,
+        free_bytes: Some(44_000_000_000),
+        total_bytes: Some(128_000_000_000),
+    });
+    let tracks = m.library.tracks.clone();
+    let quads = ui.draw(&m, &tracks, false);
+    let text = drawn_text(&quads);
+    assert!(text.contains("From a Computer") && text.contains("Repair SD Card"));
+    let bottom = quads.iter().map(|q| q.y + q.h).fold(0., f32::max);
+    assert!(bottom <= crate::theme::HEIGHT, "drawn to {bottom}");
+}
+
 #[test]
 fn storage_battery_and_pc_transfer_present_user_states() {
     let ui = radios();

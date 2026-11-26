@@ -9,10 +9,7 @@ use crate::{
     theme::{alpha, color, mix, HEIGHT, WIDTH},
     Item, RowKind, Ui, WifiStatus,
 };
-use reborn_core::{
-    platform::{SdCard, UpdatePhase},
-    AppModel, Screen, Track,
-};
+use reborn_core::{platform::UpdatePhase, AppModel, Screen, Track};
 
 pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let page = pages::page(ui, m, tracks);
@@ -38,7 +35,9 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             picker(c, ui, &page, focus, interactive)
         }
         Screen::SettingsDisplay => display(c, ui, m, &page, focus, interactive),
-        Screen::Storage => storage(c, m, &page, focus, interactive),
+        Screen::Storage => {
+            crate::views_storage::screen(c, ui, m, tracks, &page, focus, interactive)
+        }
         Screen::Update if m.navigation.filter == pages::SOFTWARE_UPDATE => {
             update(c, ui, m, &page, focus, interactive)
         }
@@ -915,108 +914,6 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
     );
 }
 
-fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
-    let snapshot = &m.platform.snapshot;
-    let volumes = [
-        (
-            "Internal Storage",
-            // Not set up yet (STORAGE-SETUP): no bar for the small Y2DATA.
-            internal_note(snapshot.internal_setup)
-                .is_none()
-                .then_some(&snapshot.storage.internal),
-            0x6EA0FFFFu32,
-        ),
-        (
-            "SD Card",
-            match &snapshot.storage.sd {
-                SdCard::Ready(space) | SdCard::ReadOnly(space) | SdCard::Unchecked(space) => {
-                    Some(space)
-                }
-                _ => None,
-            },
-            0x3CC878FF,
-        ),
-    ];
-    for (i, (name, space, tint)) in volumes.into_iter().enumerate() {
-        let y = 40. + i as f32 * 84.;
-        components::card(c, 10., y, WIDTH - 20., 76.);
-        c.text_mid(28., y + 22., 250., name, Face::S15, color::TEXT);
-        match space {
-            Some(space) => {
-                let free = space
-                    .free_bytes
-                    .map(|f| format!("{} free", reborn_core::platform::human_bytes(f)))
-                    .unwrap_or_default();
-                c.text_mid_right(WIDTH - 28., y + 22., &free, Face::R11, color::MUTED);
-                let used = match (space.free_bytes, space.total_bytes) {
-                    (Some(f), Some(t)) if t > 0 => 1. - f as f32 / t as f32,
-                    _ => 0.,
-                };
-                c.rrect(28., y + 42., WIDTH - 56., 8., 4., color::GLASS_STRONG);
-                c.rrect(
-                    28.,
-                    y + 42.,
-                    ((WIDTH - 56.) * used.clamp(0., 1.)).max(8.),
-                    8.,
-                    4.,
-                    tint,
-                );
-                if let Some(t) = space.total_bytes {
-                    c.text_mid(
-                        28.,
-                        y + 62.,
-                        250.,
-                        &format!("{} total", reborn_core::platform::human_bytes(t)),
-                        Face::R11,
-                        color::MUTED,
-                    );
-                }
-            }
-            None => {
-                let note = if i == 0 {
-                    internal_note(snapshot.internal_setup).unwrap_or("Checking…")
-                } else if matches!(snapshot.storage.sd, SdCard::Error) && i == 1 {
-                    "Card can't be read"
-                } else if matches!(snapshot.storage.sd, SdCard::NeedsRepair) && i == 1 {
-                    "Needs repair · Check it on a computer"
-                } else if matches!(snapshot.storage.sd, SdCard::CheckTimedOut) && i == 1 {
-                    "Check took too long · Insert it again"
-                } else if i == 1 {
-                    "No SD card"
-                } else {
-                    "Checking…"
-                };
-                c.text_mid(28., y + 50., 300., note, Face::R13, color::MUTED);
-            }
-        }
-    }
-    // The actions under the two volumes, straight on the screen as every list (#74).
-    let top = 40. + 2. * 84.;
-    for (i, row) in page.rows.iter().enumerate() {
-        let y = top + 2. + i as f32 * 44.;
-        if interactive && i == focus && row.enabled {
-            components::focus_row(c, 10., y + 1., WIDTH - 26., 42.);
-        }
-        let face = if interactive && i == focus {
-            Face::S15
-        } else {
-            Face::R15
-        };
-        c.text_mid(
-            28.,
-            y + 22.,
-            280.,
-            &row.label,
-            face,
-            if row.enabled { color::TEXT } else { color::DIM },
-        );
-        let value = text::fit(Face::R11, &row.secondary, 190.);
-        c.text_mid_right(WIDTH - 40., y + 22., &value, Face::R11, color::MUTED);
-        components::chevron(c, WIDTH - 22., y + 22.);
-    }
-    let _ = HEIGHT;
-}
-
 /// Where the update is: Download, Check, Install (the restart). Steps done
 /// carry a check, the current one the accent, the rest wait dimmed.
 pub(crate) fn steps(c: &mut Canvas, current: usize, accent: u32) {
@@ -1384,7 +1281,7 @@ fn update(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
 }
 
 /// The Internal Storage card while the old storage is not set up yet.
-fn internal_note(setup: reborn_core::platform::InternalSetup) -> Option<&'static str> {
+pub(crate) fn internal_note(setup: reborn_core::platform::InternalSetup) -> Option<&'static str> {
     use reborn_core::platform::InternalSetup;
     match setup {
         InternalSetup::Waiting { .. } => Some("Not set up · Your old files are kept"),

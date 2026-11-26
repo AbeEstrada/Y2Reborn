@@ -407,6 +407,81 @@ fn books_at(screen: Screen, filter: &str) -> AppModel {
     m
 }
 
+/// Storage with sizes: the fixture songs inside weigh 100 MB each; on the card sit `songs` songs,
+/// `books` audiobooks (one file each) and `films` videos, and the card's space is `used` of 128 GB.
+fn storage_library(m: &mut AppModel, songs: usize, books: usize, films: usize, used: u64) {
+    use reborn_core::platform::{SdCard, VolumeSpace, VolumeState};
+    for t in &mut m.library.tracks {
+        t.size = 100_000_000;
+    }
+    let on_card = |path: String, size: u64, ms: u64, codec: &str, book: bool| Track {
+        source_id: "uuid:CARD".into(),
+        filename: path.rsplit('/').next().unwrap_or_default().into(),
+        path: path.into(),
+        size,
+        duration_ms: ms,
+        codec: codec.into(),
+        book,
+        online: true,
+        ..Default::default()
+    };
+    for i in 0..songs {
+        let path = format!(
+            "/media/sd/Music/Artist {}/Album {}/{i}.flac",
+            i / 90,
+            i / 12
+        );
+        m.library
+            .tracks
+            .push(on_card(path, 11_300_000, 224_000, "flac", false));
+    }
+    for i in 0..books {
+        let path = format!("/media/sd/Audiobooks/Book {i}/01.mp3");
+        m.library
+            .tracks
+            .push(on_card(path, 544_000_000, 30_600_000, "mp3", true));
+    }
+    for i in 0..films {
+        let path = format!("/media/sd/Videos/Film {i}.mp4");
+        m.library
+            .tracks
+            .push(on_card(path, 380_000_000, 5_400_000, "h264/aac", false));
+    }
+    m.platform.snapshot.storage.sd = SdCard::Ready(VolumeSpace {
+        state: VolumeState::Ready,
+        free_bytes: Some(128_000_000_000 - used),
+        total_bytes: Some(128_000_000_000),
+    });
+    m.navigation.focus = 0;
+}
+
+/// A real player's Storage: 745 FLAC files on a 64 GB card and nothing in the library inside (the
+/// 889 MB used there is the radio firmware).
+fn storage_player(m: &mut AppModel) {
+    use reborn_core::platform::{SdCard, VolumeSpace, VolumeState};
+    m.library.tracks.clear();
+    for i in 0..745 {
+        m.library.tracks.push(Track {
+            source_id: "uuid:CARD".into(),
+            path: format!("/media/sd/Music/Artist/Album/{i}.flac").into(),
+            filename: format!("{i}.flac"),
+            size: 22_677_935,
+            duration_ms: 237_030,
+            codec: "flac".into(),
+            online: true,
+            ..Default::default()
+        });
+    }
+    let space = |free, total| VolumeSpace {
+        state: VolumeState::Ready,
+        free_bytes: Some(free),
+        total_bytes: Some(total),
+    };
+    m.platform.snapshot.storage.internal = space(4_796_477_440, 5_685_657_600);
+    m.platform.snapshot.storage.sd = SdCard::Ready(space(45_782_564_864, 62_692_630_528));
+    m.navigation.focus = 0;
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Each state is drawn once: rasterise every CJK glyph it needs at once.
     reborn_ui::set_glyph_budget(None);
@@ -1119,6 +1194,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("32-storage", at(Screen::Storage, ""), |_, m| m
         .navigation
         .focus = 0);
+    case!("32-storage-split", at(Screen::Storage, ""), |_, m| {
+        storage_library(m, 5_400, 18, 9, 75_400_000_000)
+    });
+    // A real player: 745 FLAC files on a 64 GB card, nothing inside but the radio firmware.
+    case!(
+        "32-storage-split-player",
+        at(Screen::Storage, ""),
+        |_, m| { storage_player(m) }
+    );
+    case!("32-storage-split-music", at(Screen::Storage, ""), |_, m| {
+        storage_library(m, 1_500, 0, 0, 17_000_000_000)
+    });
+    // The most the page can hold: every kind on both volumes, a cable in and a card to repair.
+    case!("32-storage-split-full", at(Screen::Storage, ""), |_, m| {
+        storage_library(m, 5_400, 18, 9, 84_000_000_000);
+        for (i, t) in m.library.tracks.iter_mut().take(18).enumerate() {
+            match i {
+                0..=1 => t.book = true,
+                2..=3 => t.codec = "h264/aac".into(),
+                _ => {}
+            }
+        }
+        m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Ready;
+        if let reborn_core::platform::SdCard::Ready(space) = m.platform.snapshot.storage.sd {
+            m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::ReadOnly(space);
+        }
+    });
     case!(
         "32-storage-setup-waiting",
         at(Screen::Storage, ""),
