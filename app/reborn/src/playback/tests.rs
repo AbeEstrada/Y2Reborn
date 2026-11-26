@@ -371,10 +371,8 @@ impl AudioSink for VolumeTestSink {
         0
     }
 }
-#[test]
-fn live_volume_changes_queued_pcm_without_reopening_or_losing_frames() {
-    let root = std::env::temp_dir().join(format!("reborn-live-volume-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+/// A 4096-frame stereo 32-bit 44.1 kHz WAV of the constant 1 << 28, in `root`.
+fn constant_wav(root: &std::path::Path) -> PathBuf {
     let source = root.join("constant.wav");
     let mut wav = Vec::new();
     wav.extend_from_slice(b"RIFF");
@@ -391,6 +389,13 @@ fn live_volume_changes_queued_pcm_without_reopening_or_losing_frames() {
     wav.extend_from_slice(&(4096u32 * 8).to_le_bytes());
     wav.extend_from_slice(&(1i32 << 28).to_le_bytes().repeat(4096 * 2));
     std::fs::write(&source, wav).unwrap();
+    source
+}
+#[test]
+fn live_volume_changes_queued_pcm_without_reopening_or_losing_frames() {
+    let root = std::env::temp_dir().join(format!("reborn-live-volume-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let source = constant_wav(&root);
     let frames = Arc::new(AtomicU64::new(0));
     let allowed = Arc::new(AtomicU64::new(512));
     let samples = Arc::new(Mutex::new(Vec::new()));
@@ -487,6 +492,136 @@ fn live_volume_changes_queued_pcm_without_reopening_or_losing_frames() {
         .all(|s| *s == 1 << 28));
     drop(samples);
     playback.shutdown(82).unwrap();
+}
+
+/// A headphone sink whose DAC takes the volume: `VolumeTestSink`, the headphone level it got, and
+/// every Master it was set to.
+struct DacTestSink {
+    inner: VolumeTestSink,
+    masters: Arc<Mutex<Vec<(i32, i32)>>>,
+}
+impl AudioSink for DacTestSink {
+    fn parameters(&self) -> Parameters {
+        Parameters {
+            hp_level_live: Some(1),
+            hardware_mixer_gain_db: Some(-6.0),
+            ..self.inner.parameters()
+        }
+    }
+    fn write(&mut self, data: &[u8]) -> Result<usize, String> {
+        self.inner.write(data)
+    }
+    fn discard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn delay(&self) -> u64 {
+        0
+    }
+    fn set_hardware_gain(&mut self, left_cdb: i32, right_cdb: i32) -> Result<bool, String> {
+        self.masters.lock().unwrap().push((left_cdb, right_cdb));
+        Ok(true)
+    }
+}
+#[test]
+fn a_wired_dac_that_takes_the_volume_gets_the_stream_unscaled() {
+    use crate::volume::hardware_gain;
+    let root = std::env::temp_dir().join(format!("reborn-dac-volume-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let source = constant_wav(&root);
+    let frames = Arc::new(AtomicU64::new(0));
+    let allowed = Arc::new(AtomicU64::new(512));
+    let samples = Arc::new(Mutex::new(Vec::new()));
+    let masters = Arc::new(Mutex::new(Vec::new()));
+    let (f, a, c, m) = (
+        frames.clone(),
+        allowed.clone(),
+        samples.clone(),
+        masters.clone(),
+    );
+    let mut playback = Playback::with_sink(
+        Observer::new(&root).unwrap(),
+        root.clone(),
+        Box::new(move |_, _, _| {
+            Ok(Box::new(DacTestSink {
+                inner: VolumeTestSink {
+                    captured: c.clone(),
+                    allowed: a.clone(),
+                    frames: f.clone(),
+                },
+                masters: m.clone(),
+            }))
+        }),
+    )
+    .unwrap();
+    playback
+        .load(
+            Track {
+                source_id: "internal".into(),
+                path: source,
+                ..Default::default()
+            },
+            vec![],
+            0,
+            spec(AudioOutput::Wired, 44_100),
+            91,
+            DspConfig::with_volume(0),
+            91,
+        )
+        .unwrap();
+    for (limit, volume) in [(512, 100), (1024, 0), (1536, 25), (2048, 100)] {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while frames.load(Ordering::Acquire) < limit {
+            for event in playback.events.try_iter() {
+                if let PlaybackEvent::Core(Event::PlaybackError { message, .. }) = event {
+                    panic!("{message}")
+                }
+            }
+            assert!(Instant::now() < deadline, "PCM progress stopped");
+            thread::sleep(Duration::from_millis(1));
+        }
+        playback.set_volume(volume);
+        allowed.store(
+            if limit == 2048 { 4096 } else { limit + 512 },
+            Ordering::Release,
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match playback.events.recv_timeout(Duration::from_millis(50)) {
+            Ok(PlaybackEvent::Core(Event::TrackEnded { generation: 91 })) => break,
+            Ok(PlaybackEvent::Core(Event::PlaybackError { message, .. })) => panic!("{message}"),
+            _ => {}
+        }
+        assert!(Instant::now() < deadline, "stream did not finish");
+    }
+    // The DAC followed the volume (the headphone level's own Master is -6 dB) ...
+    let master = |volume| {
+        let gain = hardware_gain(-600, volume, 0);
+        (gain.left_cdb, gain.right_cdb)
+    };
+    assert_eq!(
+        *masters.lock().unwrap(),
+        [master(0), master(100), master(0), master(25), master(100)]
+    );
+    // ... so the stream reached it as decoded at every volume but 0, which is silence by the ramp.
+    let settled_after = 73 + 44_100 / 200;
+    let samples = samples.lock().unwrap();
+    assert!(samples[..512].iter().all(|s| *s == 0));
+    assert!(samples[512 + settled_after..1024]
+        .iter()
+        .all(|s| *s == 1 << 28));
+    assert!(samples[1024 + settled_after..1536].iter().all(|s| *s == 0));
+    assert!(
+        samples[1536 + settled_after..2048]
+            .iter()
+            .all(|s| *s == 1 << 28),
+        "volume 25 must not scale the stream"
+    );
+    assert!(samples[2048 + settled_after..]
+        .iter()
+        .all(|s| *s == 1 << 28));
+    drop(samples);
+    playback.shutdown(92).unwrap();
 }
 
 #[test]

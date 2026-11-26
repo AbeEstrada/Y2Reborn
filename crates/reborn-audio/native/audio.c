@@ -545,6 +545,23 @@ fail:
 int rb_sink_write(RbSink *s, const uint8_t *p, int frames) {
   return (int)snd_pcm_writei(s->pcm, p, frames);
 }
+/* The DAC's Master (centi-dB) for each channel on the headphone sink: the user
+ * volume lives here, after the 16-bit stream, so quiet listening keeps all 16
+ * bits. Rounds toward quieter on the DAC's 0.5 dB grid. -ENOTSUP where there
+ * is no such mixer (Bluetooth) or the output is the speaker. */
+int rb_sink_set_master(RbSink *s, int left_cdb, int right_cdb) {
+  if (!s || !s->mixer || !s->pin || strcmp(s->pin, "Headphone"))
+    return -ENOTSUP;
+  snd_mixer_elem_t *m = element(s, "Master");
+  if (!m)
+    return -ENOENT;
+  int r = snd_mixer_selem_set_playback_dB(m, SND_MIXER_SCHN_FRONT_LEFT,
+                                          left_cdb, -1);
+  if (r < 0)
+    return r;
+  return snd_mixer_selem_set_playback_dB(m, SND_MIXER_SCHN_FRONT_RIGHT,
+                                         right_cdb, -1);
+}
 int rb_sink_wait(RbSink *s, int ms) { return snd_pcm_wait(s->pcm, ms); }
 int rb_sink_recover(RbSink *s, int code) { return snd_pcm_recover(s->pcm, code, 1); }
 int rb_sink_drop(RbSink *s) {

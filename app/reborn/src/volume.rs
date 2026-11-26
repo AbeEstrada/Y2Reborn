@@ -20,6 +20,9 @@ pub(crate) struct VolumeRamp {
     /// Both channels carry (L+R)/2: the internal speaker plays one channel
     /// (the DAC's speaker route takes the left slot only, #28).
     mono: bool,
+    /// The output applies the volume and the balance itself (the DAC's Master): the
+    /// steady gain is unity (silence at volume 0), so the stream stays as decoded.
+    hardware: bool,
 }
 impl VolumeRamp {
     pub(crate) fn new(volume: u8, rate: u32) -> Self {
@@ -33,6 +36,39 @@ impl VolumeRamp {
             fading: false,
             channels: [1.0; 2],
             mono: false,
+            hardware: false,
+        }
+    }
+    /// The steady gain at `volume`: the volume's own, or with the output applying it
+    /// unity, and silence at volume 0 (the DAC's lowest step is not silence).
+    fn target_gain(&self, volume: u8) -> f64 {
+        if !self.hardware {
+            Self::gain(volume)
+        } else if volume == 0 {
+            0.0
+        } else {
+            1.0
+        }
+    }
+    /// Hand the volume to the output (`on`) or take it back. A fade-in keeps its
+    /// place: the same fraction of the new steady gain.
+    pub(crate) fn hardware_volume(&mut self, on: bool, volume: u8) {
+        if on == self.hardware {
+            return;
+        }
+        let fraction = if self.target > 0.0 {
+            self.gain / self.target
+        } else {
+            1.0
+        };
+        self.hardware = on;
+        self.target = self.target_gain(volume);
+        self.gain = self.target * fraction;
+        if self.remaining > 0 {
+            self.step = (self.target - self.gain) / self.remaining as f64;
+        }
+        if on {
+            self.channels = [1.0; 2];
         }
     }
     /// Start from silence and reach `volume` over `ms`: the first stream after
@@ -71,7 +107,7 @@ impl VolumeRamp {
         reborn_core::volume_gain(volume)
     }
     pub(crate) fn target(&mut self, volume: u8) {
-        let target = Self::gain(volume);
+        let target = self.target_gain(volume);
         if target != self.target {
             self.target = target;
             if self.fading && self.remaining > 0 && target > self.gain {
@@ -86,6 +122,9 @@ impl VolumeRamp {
     }
     /// The balance in dB: negative lowers the right, positive the left.
     pub(crate) fn balance(&mut self, db: i8) {
+        if self.hardware {
+            return; // the DAC's left and right Master carry it
+        }
         let db = db.clamp(-MAX_BALANCE, MAX_BALANCE);
         let lower = 10f64.powf(-f64::from(db.unsigned_abs()) / 20.0);
         self.channels = match db.signum() {
@@ -140,6 +179,36 @@ impl VolumeRamp {
         self.gain = self.at(frames);
         self.remaining = self.remaining.saturating_sub(frames);
         self.fading &= self.remaining > 0;
+    }
+}
+
+/// The DAC's Master steps in centi-dB (CS43131 PCM volume: 0.5 dB) and its lowest setting.
+const DAC_STEP_CDB: i32 = 50;
+const DAC_FLOOR_CDB: i32 = -12_750;
+
+/// What the DAC's Master gets per channel (centi-dB) for the user's volume and balance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HardwareGain {
+    pub(crate) left_cdb: i32,
+    pub(crate) right_cdb: i32,
+}
+
+/// The Master for `volume` and `balance` on top of the headphone level's own `trim_cdb`: the
+/// volume's dB, the balance lowering the side away from it (as `VolumeRamp::balance` does).
+/// Rounded toward quieter to the DAC's 0.5 dB grid, so it is never louder than the exact
+/// value the safe volume is worked out from. Volume 0 is silence by the ramp, not by this.
+pub(crate) fn hardware_gain(trim_cdb: i32, volume: u8, balance: i8) -> HardwareGain {
+    let balance = balance.clamp(-MAX_BALANCE, MAX_BALANCE);
+    let lowered = f64::from(balance.unsigned_abs()) * 100.0;
+    let channel = |extra: f64| {
+        let cdb = f64::from(trim_cdb) + reborn_core::volume_db(volume) * 100.0 - extra;
+        // The small allowance keeps a value that is a step up to rounding error on that step.
+        let steps = (cdb / f64::from(DAC_STEP_CDB) + 1e-6).floor() as i32;
+        (steps * DAC_STEP_CDB).clamp(DAC_FLOOR_CDB, 0)
+    };
+    HardwareGain {
+        left_cdb: channel(if balance > 0 { lowered } else { 0.0 }),
+        right_cdb: channel(if balance < 0 { lowered } else { 0.0 }),
     }
 }
 
@@ -261,6 +330,89 @@ mod tests {
             assert!((step - 3.0).abs() < 1e-9, "{v}: {step}");
         }
         assert!((20.0 * VolumeRamp::gain(1).log10() + 81.0).abs() < 1e-9);
+    }
+    #[test]
+    fn hardware_gain_follows_the_volume_on_the_dac_grid_and_never_runs_louder() {
+        // The headphone level's own Master is the base: volume 100 is exactly that.
+        for trim in [-2400, -900, -600, 0] {
+            let gain = hardware_gain(trim, 100, 0);
+            assert_eq!(
+                gain,
+                HardwareGain {
+                    left_cdb: trim,
+                    right_cdb: trim
+                }
+            );
+        }
+        let mut quieter_than = i32::MAX;
+        for volume in (1..=100u8).rev() {
+            let gain = hardware_gain(-900, volume, 0);
+            let exact = -900.0 + reborn_core::volume_db(volume) * 100.0;
+            assert_eq!(gain.left_cdb % 50, 0, "{volume}");
+            assert!(f64::from(gain.left_cdb) <= exact + 1e-6, "{volume}: louder");
+            assert!(
+                f64::from(gain.left_cdb) > exact - 50.0 - 1e-6,
+                "{volume}: far quieter"
+            );
+            assert!(gain.left_cdb <= quieter_than, "{volume}: not monotonic");
+            quieter_than = gain.left_cdb;
+        }
+        // 0.6 dB steps land on the 0.5 dB grid, rounded down (-6 dB is a step already).
+        assert_eq!(hardware_gain(-600, 90, 0).left_cdb, -1200);
+        assert_eq!(hardware_gain(-600, 99, 0).left_cdb, -700); // -6.6 dB
+                                                               // The DAC's lowest step.
+        assert_eq!(hardware_gain(-2400, 1, 0).left_cdb, -10_500);
+        assert_eq!(hardware_gain(-12_000, 1, 0).left_cdb, -12_750);
+    }
+    #[test]
+    fn hardware_balance_lowers_the_far_channel_as_the_ramp_does() {
+        let gain = hardware_gain(0, 100, -3); // left louder: the right is 3 dB lower
+        assert_eq!((gain.left_cdb, gain.right_cdb), (0, -300));
+        let gain = hardware_gain(-600, 90, 4);
+        assert_eq!((gain.left_cdb, gain.right_cdb), (-1600, -1200));
+        // Beyond the settings' range it stops at the largest balance.
+        assert_eq!(hardware_gain(0, 100, i8::MIN).right_cdb, -1000);
+        assert_eq!(hardware_gain(0, 100, i8::MAX).left_cdb, -1000);
+    }
+    #[test]
+    fn with_the_volume_in_the_dac_the_stream_passes_unchanged() {
+        let input = stereo16(12_345, 4);
+        let mut ramp = VolumeRamp::new(50, 1000); // -30 dB in software
+        ramp.hardware_volume(true, 50);
+        ramp.balance(8); // the DAC carries the balance
+        ramp.target(50);
+        assert_eq!(ramp.render(&input, PcmFormat::S16LE), input);
+        // Volume 0 is silence by the ramp: the DAC's lowest step is not silence.
+        ramp.target(0);
+        ramp.advance(5);
+        assert!(ramp
+            .render(&input, PcmFormat::S16LE)
+            .iter()
+            .all(|b| *b == 0));
+        // Handing the volume back restores the software gain and balance.
+        ramp.hardware_volume(false, 50);
+        ramp.target(50);
+        ramp.balance(0);
+        ramp.advance(1000);
+        let scaled = values(&ramp.render(&input, PcmFormat::S16LE));
+        assert!((380..440).contains(&scaled[0]), "{scaled:?}");
+    }
+    #[test]
+    fn a_fade_in_keeps_its_place_when_the_volume_moves_to_the_dac() {
+        let mut ramp = VolumeRamp::fade_in(50, 1000, 2000);
+        ramp.advance(1000); // half way
+        ramp.hardware_volume(true, 50);
+        let (fraction, ms) = ramp.fade_progress(1000).expect("still fading");
+        assert!(
+            (fraction - 0.5).abs() < 1e-9 && ms == 1000,
+            "{fraction} {ms}"
+        );
+        ramp.advance(1000);
+        assert_eq!(
+            values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
+            [10_000, 10_000],
+            "the fade ends at unity, the DAC holds the volume"
+        );
     }
     #[test]
     fn mono_carries_both_channels_on_each_and_ignores_the_balance() {
